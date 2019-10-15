@@ -1,0 +1,222 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.9~svn20110310	//
+ADDR_RESOLVED	krping.c	/^	ADDR_RESOLVED,$/;"	e	enum:test_state	file:
+CONNECTED	krping.c	/^	CONNECTED,$/;"	e	enum:test_state	file:
+CONNECT_REQUEST	krping.c	/^	CONNECT_REQUEST,$/;"	e	enum:test_state	file:
+DEBUG_LOG	krping.c	66;"	d	file:
+DEBUG_LOG	rmm.c	19;"	d	file:
+ERROR	krping.c	/^	ERROR$/;"	e	enum:test_state	file:
+IDLE	krping.c	/^	IDLE = 1,$/;"	e	enum:test_state	file:
+KOBJ	Makefile	/^KOBJ=\/lib\/modules\/$(shell uname -r)\/build$/;"	m
+KSRC	Makefile	/^KSRC=\/lib\/modules\/$(shell uname -r)\/build$/;"	m
+MAX_NUM_NODES	common.h	17;"	d
+MAX_RECV_DEPTH	rmm.c	13;"	d	file:
+MAX_SEND_DEPTH	rmm.c	14;"	d	file:
+NR_RDMA_SLOTS	rmm.c	16;"	d	file:
+OPT_INT	getopt.h	8;"	d
+OPT_NOPARAM	getopt.h	7;"	d
+OPT_STRING	getopt.h	9;"	d
+PFX	krping.c	60;"	d	file:
+PFX	rmm.c	18;"	d	file:
+RDMA_ADDR_RESOLVED	rmm.c	/^		RDMA_ADDR_RESOLVED,$/;"	e	enum:rdma_handle::__anon1	file:
+RDMA_ADDR_RESOLVE_TIMEOUT_MS	rmm.c	11;"	d	file:
+RDMA_CLOSED	rmm.c	/^		RDMA_CLOSED,$/;"	e	enum:rdma_handle::__anon1	file:
+RDMA_CLOSING	rmm.c	/^		RDMA_CLOSING,$/;"	e	enum:rdma_handle::__anon1	file:
+RDMA_CONNECTED	rmm.c	/^		RDMA_CONNECTED,$/;"	e	enum:rdma_handle::__anon1	file:
+RDMA_CONNECTING	rmm.c	/^		RDMA_CONNECTING,$/;"	e	enum:rdma_handle::__anon1	file:
+RDMA_INIT	rmm.c	/^		RDMA_INIT,$/;"	e	enum:rdma_handle::__anon1	file:
+RDMA_PORT	rmm.c	10;"	d	file:
+RDMA_READ_ADV	krping.c	/^	RDMA_READ_ADV,$/;"	e	enum:test_state	file:
+RDMA_READ_COMPLETE	krping.c	/^	RDMA_READ_COMPLETE,$/;"	e	enum:test_state	file:
+RDMA_ROUTE_RESOLVED	rmm.c	/^		RDMA_ROUTE_RESOLVED,$/;"	e	enum:rdma_handle::__anon1	file:
+RDMA_SLOT_SIZE	rmm.c	15;"	d	file:
+RDMA_WRITE_ADV	krping.c	/^	RDMA_WRITE_ADV,$/;"	e	enum:test_state	file:
+RDMA_WRITE_COMPLETE	krping.c	/^	RDMA_WRITE_COMPLETE,$/;"	e	enum:test_state	file:
+ROUTE_RESOLVED	krping.c	/^	ROUTE_RESOLVED,$/;"	e	enum:test_state	file:
+RPING_BUFSIZE	krping.c	169;"	d	file:
+RPING_SQ_DEPTH	krping.c	170;"	d	file:
+_KRPING_GETOPT_H	getopt.h	5;"	d
+_MSG_LAYER_COMMON_H_	common.h	9;"	d
+__MSG_LAYER_CONFIG_H__	config.h	2;"	d
+__accept_client	rmm.c	/^static int __accept_client(int nid)$/;"	f	file:
+__connect_to_server	rmm.c	/^static int __connect_to_server(int nid)$/;"	f	file:
+__establish_connections	rmm.c	/^static int __establish_connections(void)$/;"	f	file:
+__get_host_ip	common.h	/^static uint32_t __init __get_host_ip(void)$/;"	f
+__listen_to_connection	rmm.c	/^static int __listen_to_connection(void)$/;"	f	file:
+__on_client_connected	rmm.c	/^static int __on_client_connected(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)$/;"	f	file:
+__on_client_connecting	rmm.c	/^static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)$/;"	f	file:
+__on_client_disconnected	rmm.c	/^static int __on_client_disconnected(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)$/;"	f	file:
+__rdma_sink_addr	rmm.c	/^static char *__rdma_sink_addr;$/;"	v	file:
+__rdma_sink_dma_addr	rmm.c	/^static dma_addr_t __rdma_sink_dma_addr;$/;"	v	file:
+__send_request_pool_addr	rmm.c	/^static int __send_request_pool_addr(struct rdma_handles *rh)$/;"	f	file:
+__setup_buffers_and_pools	rmm.c	/^static __init int __setup_buffers_and_pools(struct rdma_handler *rh)$/;"	f	file:
+__setup_pd_cq_qp	rmm.c	/^static __init int __setup_pd_cq_qp(struct rdma_handle *rh)$/;"	f	file:
+__setup_recv_request	rmm.c	/^static __init int __setup_recv_request(struct rdma_handle *rh)$/;"	f	file:
+__setup_work_request_pools	rmm.c	/^static int __init __setup_work_request_pools(void)$/;"	f	file:
+addr	krping.c	/^	u8 addr[16];			\/* dst addr in NBO *\/$/;"	m	struct:krping_cb	file:
+addr	rmm.c	/^	dma_addr_t addr;$/;"	m	struct:request_pool	file:
+addr_str	krping.c	/^	char *addr_str;			\/* dst addr string *\/$/;"	m	struct:krping_cb	file:
+addr_type	krping.c	/^	uint8_t addr_type;		\/* ADDR_FAMILY - IPv4\/V6 *\/$/;"	m	struct:krping_cb	file:
+buf	krping.c	/^	uint64_t buf;$/;"	m	struct:krping_rdma_info	file:
+buffer_size	rmm.c	/^	size_t buffer_size;$/;"	m	struct:rdma_handle	file:
+bw	krping.c	/^	int bw;				\/* run bw test *\/$/;"	m	struct:krping_cb	file:
+bw_test	krping.c	/^static void bw_test(struct krping_cb *cb)$/;"	f	file:
+child_cm_id	krping.c	/^	struct rdma_cm_id *child_cm_id;	\/* connection on server side *\/$/;"	m	struct:krping_cb	typeref:struct:krping_cb::rdma_cm_id	file:
+client_recv	krping.c	/^static int client_recv(struct krping_cb *cb, struct ib_wc *wc)$/;"	f	file:
+cm_client_event_handler	rmm.c	/^int cm_client_event_handler(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)$/;"	f
+cm_done	rmm.c	/^	struct completion cm_done;$/;"	m	struct:rdma_handle	typeref:struct:rdma_handle::completion	file:
+cm_id	krping.c	/^	struct rdma_cm_id *cm_id;	\/* connection on client side,*\/$/;"	m	struct:krping_cb	typeref:struct:krping_cb::rdma_cm_id	file:
+cm_id	rmm.c	/^	struct rdma_cm_id *cm_id;$/;"	m	struct:rdma_handle	typeref:struct:rdma_handle::rdma_cm_id	file:
+cm_server_event_handler	rmm.c	/^int cm_server_event_handler(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)$/;"	f
+count	krping.c	/^	int count;			\/* ping count *\/$/;"	m	struct:krping_cb	file:
+cq	krping.c	/^	struct ib_cq *cq;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_cq	file:
+cq	rmm.c	/^	struct ib_cq *cq;$/;"	m	struct:rdma_handle	typeref:struct:rdma_handle::ib_cq	file:
+cq_comp_handler	rmm.c	/^void cq_comp_handler(struct ib_cq *cq, void *context)$/;"	f
+debug	krping.c	/^static int debug = 0;$/;"	v	file:
+debug	rmm.c	/^static int debug = 0;$/;"	v	file:
+device	rmm.c	/^	struct ib_device *device;$/;"	m	struct:rdma_handle	typeref:struct:rdma_handle::ib_device	file:
+dma_mr	krping.c	/^	struct ib_mr *dma_mr;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_mr	file:
+duplex	krping.c	/^	int duplex;			\/* run bw full duplex test *\/$/;"	m	struct:krping_cb	file:
+exit_kmsg_rdma	rmm.c	/^module_exit(exit_kmsg_rdma);$/;"	v
+exit_rmm_rdma	rmm.c	/^void __exit exit_rmm_rdma(void)$/;"	f
+fill_sockaddr	krping.c	/^static void fill_sockaddr(struct sockaddr_storage *sin, struct krping_cb *cb)$/;"	f	file:
+flush_qp	krping.c	/^static void flush_qp(struct krping_cb *cb)$/;"	f	file:
+frtest	krping.c	/^	int frtest;			\/* reg test *\/$/;"	m	struct:krping_cb	file:
+has_arg	getopt.h	/^	unsigned int has_arg;$/;"	m	struct:krping_option
+htonll	krping.c	108;"	d	file:
+identify_myself	common.h	/^bool __init identify_myself(void)$/;"	f
+init_kmsg_rdma	rmm.c	/^module_init(init_kmsg_rdma);$/;"	v
+init_rmm_rdma	rmm.c	/^int __init init_rmm_rdma(void)$/;"	f
+invalidate_wr	krping.c	/^	struct ib_send_wr invalidate_wr;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_send_wr	file:
+ip6_ndev_name	krping.c	/^	char ip6_ndev_name[128];	\/* IPv6 netdev name *\/$/;"	m	struct:krping_cb	file:
+ip_addresses	config.h	/^const char *ip_addresses[] = {$/;"	v
+ip_table	common.h	/^static uint32_t ip_table[MAX_NUM_NODES] = { 0 };$/;"	v
+is_registered	krping.c	/^	int is_registered;$/;"	m	struct:krping_cb	file:
+key	krping.c	/^	u8 key;$/;"	m	struct:krping_cb	file:
+krping_accept	krping.c	/^static int krping_accept(struct krping_cb *cb)$/;"	f	file:
+krping_bind_client	krping.c	/^static int krping_bind_client(struct krping_cb *cb)$/;"	f	file:
+krping_bind_server	krping.c	/^static int krping_bind_server(struct krping_cb *cb)$/;"	f	file:
+krping_bw_test_client	krping.c	/^static void krping_bw_test_client(struct krping_cb *cb)$/;"	f	file:
+krping_bw_test_server	krping.c	/^static void krping_bw_test_server(struct krping_cb *cb)$/;"	f	file:
+krping_cb	krping.c	/^struct krping_cb {$/;"	s	file:
+krping_cma_event_handler	krping.c	/^static int krping_cma_event_handler(struct rdma_cm_id *cma_id,$/;"	f	file:
+krping_connect_client	krping.c	/^static int krping_connect_client(struct krping_cb *cb)$/;"	f	file:
+krping_cq_event_handler	krping.c	/^static void krping_cq_event_handler(struct ib_cq *cq, void *ctx)$/;"	f	file:
+krping_create_qp	krping.c	/^static int krping_create_qp(struct krping_cb *cb)$/;"	f	file:
+krping_doit	krping.c	/^int krping_doit(char *cmd)$/;"	f
+krping_exit	krping.c	/^module_exit(krping_exit);$/;"	v
+krping_exit	krping.c	/^static void __exit krping_exit(void)$/;"	f	file:
+krping_format_send	krping.c	/^static void krping_format_send(struct krping_cb *cb, u64 buf)$/;"	f	file:
+krping_fr_test	krping.c	/^static void krping_fr_test(struct krping_cb *cb)$/;"	f	file:
+krping_free_buffers	krping.c	/^static void krping_free_buffers(struct krping_cb *cb)$/;"	f	file:
+krping_free_qp	krping.c	/^static void krping_free_qp(struct krping_cb *cb)$/;"	f	file:
+krping_getopt	getopt.c	/^int krping_getopt(const char *caller, char **options, $/;"	f
+krping_init	krping.c	/^module_init(krping_init);$/;"	v
+krping_init	krping.c	/^static int __init krping_init(void)$/;"	f	file:
+krping_ops	krping.c	/^static struct file_operations krping_ops = {$/;"	v	typeref:struct:file_operations	file:
+krping_option	getopt.h	/^struct krping_option {$/;"	s
+krping_opts	krping.c	/^static const struct krping_option krping_opts[] = {$/;"	v	typeref:struct:krping_option	file:
+krping_proc	krping.c	/^static struct proc_dir_entry *krping_proc;$/;"	v	typeref:struct:proc_dir_entry	file:
+krping_rdma_info	krping.c	/^struct krping_rdma_info {$/;"	s	file:
+krping_rdma_rkey	krping.c	/^static u32 krping_rdma_rkey(struct krping_cb *cb, u64 buf, int post_inv)$/;"	f	file:
+krping_read_open	krping.c	/^static int krping_read_open(struct inode *inode, struct file *file)$/;"	f	file:
+krping_read_proc	krping.c	/^static int krping_read_proc(struct seq_file *seq, void *v)$/;"	f	file:
+krping_run_client	krping.c	/^static void krping_run_client(struct krping_cb *cb)$/;"	f	file:
+krping_run_server	krping.c	/^static void krping_run_server(struct krping_cb *cb)$/;"	f	file:
+krping_setup_buffers	krping.c	/^static int krping_setup_buffers(struct krping_cb *cb)$/;"	f	file:
+krping_setup_qp	krping.c	/^static int krping_setup_qp(struct krping_cb *cb, struct rdma_cm_id *cm_id)$/;"	f	file:
+krping_setup_wr	krping.c	/^static void krping_setup_wr(struct krping_cb *cb)$/;"	f	file:
+krping_stats	krping.c	/^struct krping_stats {$/;"	s	file:
+krping_test_client	krping.c	/^static void krping_test_client(struct krping_cb *cb)$/;"	f	file:
+krping_test_client_message	krping.c	/^static void krping_test_client_message(struct krping_cb *cb)$/;"	f	file:
+krping_test_server	krping.c	/^static void krping_test_server(struct krping_cb *cb)$/;"	f	file:
+krping_test_server_message	krping.c	/^static void krping_test_server_message(struct krping_cb *cb)$/;"	f	file:
+krping_wait_for_completion	krping.c	/^static int krping_wait_for_completion(struct krping_cb *cb, enum ib_wc_opcode exit_condition)$/;"	f	file:
+krping_write_proc	krping.c	/^static ssize_t krping_write_proc(struct file * file, const char __user * buffer,$/;"	f	file:
+list	krping.c	/^	struct list_head list;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::list_head	file:
+local_dma_lkey	krping.c	/^	int local_dma_lkey;		\/* use 0 for lkey *\/$/;"	m	struct:krping_cb	file:
+message	krping.c	/^	int message;$/;"	m	struct:krping_cb	file:
+mr	rmm.c	/^	struct ib_mr *mr;$/;"	m	struct:rdma_handle	typeref:struct:rdma_handle::ib_mr	file:
+name	getopt.h	/^	const char *name;$/;"	m	struct:krping_option
+nid	rmm.c	/^	int nid;$/;"	m	struct:rdma_handle	file:
+ntohll	krping.c	109;"	d	file:
+page_list	krping.c	/^	struct ib_fast_reg_page_list *page_list;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_fast_reg_page_list	file:
+page_list_len	krping.c	/^	int page_list_len;$/;"	m	struct:krping_cb	file:
+pd	krping.c	/^	struct ib_pd *pd;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_pd	file:
+poll	krping.c	/^	int poll;			\/* poll or block for rlat test *\/$/;"	m	struct:krping_cb	file:
+polling	krping.c	/^static int polling = 0;$/;"	v	file:
+port	krping.c	/^	uint16_t port;			\/* dst port in NBO *\/$/;"	m	struct:krping_cb	file:
+qp	krping.c	/^	struct ib_qp *qp;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_qp	file:
+qp	rmm.c	/^	struct ib_qp *qp;$/;"	m	struct:rdma_handle	typeref:struct:rdma_handle::ib_qp	file:
+rdma_buf	krping.c	/^	char *rdma_buf;			\/* used as rdma sink *\/$/;"	m	struct:krping_cb	file:
+rdma_dma_addr	krping.c	/^	u64  rdma_dma_addr;$/;"	m	struct:krping_cb	file:
+rdma_handle	rmm.c	/^struct rdma_handle {$/;"	s	file:
+rdma_handles	rmm.c	/^static struct rdma_handle *rdma_handles[MAX_NUM_NODES] = { NULL };$/;"	v	typeref:struct:rdma_handle	file:
+rdma_handles_evic	rmm.c	/^static struct rdma_handle *rdma_handles_evic[MAX_NUM_NODES] = { NULL };$/;"	v	typeref:struct:rdma_handle	file:
+rdma_mapping	krping.c	/^	dma_addr_t rdma_mapping;$/;"	m	struct:krping_cb	file:
+rdma_mr	krping.c	/^	struct ib_mr *rdma_mr;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_mr	file:
+rdma_mr	rmm.c	/^static struct ib_mr *rdma_mr = NULL;$/;"	v	typeref:struct:ib_mr	file:
+rdma_pd	rmm.c	/^static struct ib_pd *rdma_pd = NULL;$/;"	v	typeref:struct:ib_pd	file:
+rdma_rmm-y	Makefile	/^rdma_rmm-y := rmm.o$/;"	m
+rdma_sgl	krping.c	/^	struct ib_sge rdma_sgl;		\/* rdma single SGE *\/$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_sge	file:
+rdma_sq_wr	krping.c	/^	struct ib_rdma_wr rdma_sq_wr;	\/* rdma work request record *\/$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_rdma_wr	file:
+read_bytes	krping.c	/^	unsigned long long read_bytes;$/;"	m	struct:krping_stats	file:
+read_inv	krping.c	/^	int read_inv;$/;"	m	struct:krping_cb	file:
+read_msgs	krping.c	/^	unsigned long long read_msgs;$/;"	m	struct:krping_stats	file:
+recv_buffer	rmm.c	/^	void *recv_buffer;$/;"	m	struct:rdma_handle	file:
+recv_buffer_dma_addr	rmm.c	/^	dma_addr_t recv_buffer_dma_addr;$/;"	m	struct:rdma_handle	file:
+recv_bytes	krping.c	/^	unsigned long long recv_bytes;$/;"	m	struct:krping_stats	file:
+recv_dma_addr	krping.c	/^	u64 recv_dma_addr;$/;"	m	struct:krping_cb	file:
+recv_mapping	krping.c	/^	dma_addr_t recv_mapping;$/;"	m	struct:krping_cb	file:
+recv_msgs	krping.c	/^	unsigned long long recv_msgs;$/;"	m	struct:krping_stats	file:
+recv_sgl	krping.c	/^	struct ib_sge recv_sgl;		\/* recv single SGE *\/$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_sge	file:
+recv_works	rmm.c	/^	struct recv_work *recv_works;$/;"	m	struct:rdma_handle	typeref:struct:rdma_handle::recv_work	file:
+reg_mr	krping.c	/^	struct ib_mr *reg_mr;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_mr	file:
+reg_mr_wr	krping.c	/^	struct ib_reg_wr reg_mr_wr;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_reg_wr	file:
+reg_supported	krping.c	/^static int reg_supported(struct ib_device *dev)$/;"	f	file:
+remote_addr	krping.c	/^	uint64_t remote_addr;		\/* remote guys TO *\/$/;"	m	struct:krping_cb	file:
+remote_len	krping.c	/^	uint32_t remote_len;		\/* remote guys LEN *\/$/;"	m	struct:krping_cb	file:
+remote_rkey	krping.c	/^	uint32_t remote_rkey;		\/* remote guys RKEY *\/$/;"	m	struct:krping_cb	file:
+request_buffer	rmm.c	/^	void *request_buffer;$/;"	m	struct:rdma_handle	file:
+request_buffer_dma_addr	rmm.c	/^	dma_addr_t request_buffer_dma_addr;$/;"	m	struct:rdma_handle	file:
+request_pool	rmm.c	/^struct request_pool {$/;"	s	file:
+request_pools	rmm.c	/^static struct request_pool request_pools[MAX_NUM_NODES] = { 0 };$/;"	v	typeref:struct:request_pool	file:
+rkey	krping.c	/^	uint32_t rkey;$/;"	m	struct:krping_rdma_info	file:
+rkey	rmm.c	/^	u32 rkey;$/;"	m	struct:request_pool	file:
+rlat	krping.c	/^	int rlat;			\/* run rlat test *\/$/;"	m	struct:krping_cb	file:
+rmm_wait_for_completion	rmm.c	/^static int rmm_wait_for_completion(struct rdma_handle *rh, enum ib_wc_opcode exit_condition)$/;"	f	file:
+rq_wr	krping.c	/^	struct ib_recv_wr rq_wr;	\/* recv work request record *\/$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_recv_wr	file:
+sem	krping.c	/^	wait_queue_head_t sem;$/;"	m	struct:krping_cb	file:
+send_bytes	krping.c	/^	unsigned long long send_bytes;$/;"	m	struct:krping_stats	file:
+send_dma_addr	krping.c	/^	u64 send_dma_addr;$/;"	m	struct:krping_cb	file:
+send_mapping	krping.c	/^	dma_addr_t send_mapping;$/;"	m	struct:krping_cb	file:
+send_msgs	krping.c	/^	unsigned long long send_msgs;$/;"	m	struct:krping_stats	file:
+send_sgl	krping.c	/^	struct ib_sge send_sgl;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_sge	file:
+server	krping.c	/^	int server;			\/* 0 iff client *\/$/;"	m	struct:krping_cb	file:
+server	rmm.c	/^static int server = 0;$/;"	v	file:
+server_invalidate	krping.c	/^	int server_invalidate;$/;"	m	struct:krping_cb	file:
+server_recv	krping.c	/^static int server_recv(struct krping_cb *cb, struct ib_wc *wc)$/;"	f	file:
+size	krping.c	/^	int size;			\/* ping data size *\/$/;"	m	struct:krping_cb	file:
+size	krping.c	/^	uint32_t size;$/;"	m	struct:krping_rdma_info	file:
+size	rmm.c	/^	size_t size;$/;"	m	struct:request_pool	file:
+sq_wr	krping.c	/^	struct ib_send_wr sq_wr;	\/* send work requrest record *\/$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_send_wr	file:
+start_buf	krping.c	/^	char *start_buf;		\/* rdma read src *\/$/;"	m	struct:krping_cb	file:
+start_dma_addr	krping.c	/^	u64  start_dma_addr;$/;"	m	struct:krping_cb	file:
+start_mapping	krping.c	/^	dma_addr_t start_mapping;$/;"	m	struct:krping_cb	file:
+start_mr	krping.c	/^	struct ib_mr *start_mr;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_mr	file:
+state	krping.c	/^	enum test_state state;		\/* used for cond\/signalling *\/$/;"	m	struct:krping_cb	typeref:enum:krping_cb::test_state	file:
+state	rmm.c	/^	} state;$/;"	m	struct:rdma_handle	typeref:enum:rdma_handle::__anon1	file:
+stats	krping.c	/^	struct krping_stats stats;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::krping_stats	file:
+test_state	krping.c	/^enum test_state {$/;"	g	file:
+tos	krping.c	/^	int tos;			\/* type of service *\/$/;"	m	struct:krping_cb	file:
+txdepth	krping.c	/^	int txdepth;			\/* SQ depth *\/$/;"	m	struct:krping_cb	file:
+val	getopt.h	/^	int val;$/;"	m	struct:krping_option
+validate	krping.c	/^	int validate;			\/* validate ping data *\/$/;"	m	struct:krping_cb	file:
+verbose	krping.c	/^	int verbose;			\/* verbose logging *\/$/;"	m	struct:krping_cb	file:
+wlat	krping.c	/^	int wlat;			\/* run wlat test *\/$/;"	m	struct:krping_cb	file:
+write_bytes	krping.c	/^	unsigned long long write_bytes;$/;"	m	struct:krping_stats	file:
+write_msgs	krping.c	/^	unsigned long long write_msgs;$/;"	m	struct:krping_stats	file:

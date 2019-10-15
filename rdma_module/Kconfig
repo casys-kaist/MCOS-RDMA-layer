@@ -1,0 +1,5 @@
+config RMM
+	tristate "Remote Memory Manager over RDMA"
+	depends on INFINIBAND 
+	---help---
+	  Module implementing a RDMA remote memory access.
