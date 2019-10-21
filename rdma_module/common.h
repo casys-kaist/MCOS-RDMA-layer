@@ -14,10 +14,14 @@
 
 #include "config.h"
 
-#define MAX_NUM_NODES		ARRAY_SIZE(ip_addresses)
-#define MAX_CLIENT_NODES	40
+#ifndef __SERVER__
 
-static uint32_t ip_table[MAX_NUM_NODES+1] = { 0 };
+#define MAX_NUM_NODES		(ARRAY_SIZE(ip_addresses))
+#else
+#define MAX_NUM_NODES	(40)
+#endif
+
+static uint32_t ip_table[MAX_NUM_NODES] = { 0 };
 
 static uint32_t __init __get_host_ip(void)
 {
@@ -38,19 +42,17 @@ static uint32_t __init __get_host_ip(void)
 	return -1;
 }
 
-bool __init identify_myself(void)
+bool __init identify_myself(uint32_t *my_ip)
 {
 	int i;
-	uint32_t my_ip;
 
 	printk("RMM: Loading node configuration...");
 
-	for (i = 1; i < MAX_NUM_NODES; i++) {
+	for (i = 0; i < MAX_NUM_NODES; i++) {
 		ip_table[i] = in_aton(ip_addresses[i]);
 	}
 
-	my_ip = __get_host_ip();
-	ip_table[0] = my_ip;
+	*my_ip = __get_host_ip();
 
 	/*
 	for (i = 0; i < MAX_NUM_NODES; i++) {

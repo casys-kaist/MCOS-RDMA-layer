@@ -1,8 +1,8 @@
-cmd_/home/yoonjae/rmm/rmm.o := gcc -Wp,-MD,/home/yoonjae/rmm/.rmm.o.d  -nostdinc -isystem /usr/lib/gcc/x86_64-linux-gnu/7/include -I./arch/x86/include -I./arch/x86/include/generated  -I./include -I./arch/x86/include/uapi -I./arch/x86/include/generated/uapi -I./include/uapi -I./include/generated/uapi -include ./include/linux/kconfig.h -include ./include/linux/compiler_types.h -D__KERNEL__ -Wall -Wundef -Werror=strict-prototypes -Wno-trigraphs -fno-strict-aliasing -fno-common -fshort-wchar -fno-PIE -Werror=implicit-function-declaration -Werror=implicit-int -Wno-format-security -std=gnu89 -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx -m64 -falign-jumps=1 -falign-loops=1 -mno-80387 -mno-fp-ret-in-387 -mpreferred-stack-boundary=3 -mskip-rax-setup -mtune=generic -mno-red-zone -mcmodel=kernel -DCONFIG_X86_X32_ABI -DCONFIG_AS_CFI=1 -DCONFIG_AS_CFI_SIGNAL_FRAME=1 -DCONFIG_AS_CFI_SECTIONS=1 -DCONFIG_AS_SSSE3=1 -DCONFIG_AS_AVX=1 -DCONFIG_AS_AVX2=1 -DCONFIG_AS_AVX512=1 -DCONFIG_AS_SHA1_NI=1 -DCONFIG_AS_SHA256_NI=1 -Wno-sign-compare -fno-asynchronous-unwind-tables -mindirect-branch=thunk-extern -mindirect-branch-register -fno-jump-tables -fno-delete-null-pointer-checks -Wno-frame-address -Wno-format-truncation -Wno-format-overflow -Wno-int-in-bool-context -O2 --param=allow-store-data-races=0 -Wframe-larger-than=1024 -fstack-protector -Wno-unused-but-set-variable -Wno-unused-const-variable -fno-omit-frame-pointer -fno-optimize-sibling-calls -fno-var-tracking-assignments -g -gdwarf-4 -pg -mrecord-mcount -mfentry -DCC_USING_FENTRY -Wdeclaration-after-statement -Wvla -Wno-pointer-sign -fno-strict-overflow -fno-merge-all-constants -fmerge-constants -fno-stack-check -fconserve-stack -Werror=date-time -Werror=incompatible-pointer-types -Werror=designated-init  -DMODULE  -DKBUILD_BASENAME='"rmm"' -DKBUILD_MODNAME='"rdma_rmm"' -c -o /home/yoonjae/rmm/rmm.o /home/yoonjae/rmm/rmm.c
+cmd_/home/yoonjae/rmm/rdma_module/rmm.o := gcc -Wp,-MD,/home/yoonjae/rmm/rdma_module/.rmm.o.d  -nostdinc -isystem /usr/lib/gcc/x86_64-linux-gnu/7/include -I./arch/x86/include -I./arch/x86/include/generated  -I./include -I./arch/x86/include/uapi -I./arch/x86/include/generated/uapi -I./include/uapi -I./include/generated/uapi -include ./include/linux/kconfig.h -include ./include/linux/compiler_types.h -D__KERNEL__ -Wall -Wundef -Werror=strict-prototypes -Wno-trigraphs -fno-strict-aliasing -fno-common -fshort-wchar -fno-PIE -Werror=implicit-function-declaration -Werror=implicit-int -Wno-format-security -std=gnu89 -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx -m64 -falign-jumps=1 -falign-loops=1 -mno-80387 -mno-fp-ret-in-387 -mpreferred-stack-boundary=3 -mskip-rax-setup -mtune=generic -mno-red-zone -mcmodel=kernel -DCONFIG_X86_X32_ABI -DCONFIG_AS_CFI=1 -DCONFIG_AS_CFI_SIGNAL_FRAME=1 -DCONFIG_AS_CFI_SECTIONS=1 -DCONFIG_AS_SSSE3=1 -DCONFIG_AS_AVX=1 -DCONFIG_AS_AVX2=1 -DCONFIG_AS_AVX512=1 -DCONFIG_AS_SHA1_NI=1 -DCONFIG_AS_SHA256_NI=1 -Wno-sign-compare -fno-asynchronous-unwind-tables -mindirect-branch=thunk-extern -mindirect-branch-register -fno-jump-tables -fno-delete-null-pointer-checks -Wno-frame-address -Wno-format-truncation -Wno-format-overflow -Wno-int-in-bool-context -O2 --param=allow-store-data-races=0 -Wframe-larger-than=1024 -fstack-protector -Wno-unused-but-set-variable -Wno-unused-const-variable -fno-omit-frame-pointer -fno-optimize-sibling-calls -fno-var-tracking-assignments -g -gdwarf-4 -pg -mrecord-mcount -mfentry -DCC_USING_FENTRY -Wdeclaration-after-statement -Wvla -Wno-pointer-sign -fno-strict-overflow -fno-merge-all-constants -fmerge-constants -fno-stack-check -fconserve-stack -Werror=date-time -Werror=incompatible-pointer-types -Werror=designated-init  -DMODULE  -DKBUILD_BASENAME='"rmm"' -DKBUILD_MODNAME='"rdma_rmm"' -c -o /home/yoonjae/rmm/rdma_module/rmm.o /home/yoonjae/rmm/rdma_module/rmm.c
 
-source_/home/yoonjae/rmm/rmm.o := /home/yoonjae/rmm/rmm.c
+source_/home/yoonjae/rmm/rdma_module/rmm.o := /home/yoonjae/rmm/rdma_module/rmm.c
 
-deps_/home/yoonjae/rmm/rmm.o := \
+deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
   include/linux/kconfig.h \
     $(wildcard include/config/cpu/big/endian.h) \
     $(wildcard include/config/booger.h) \
@@ -16,7 +16,6 @@ deps_/home/yoonjae/rmm/rmm.o := \
   include/linux/compiler-gcc.h \
     $(wildcard include/config/retpoline.h) \
     $(wildcard include/config/arch/use/builtin/bswap.h) \
-  include/generated/uapi/linux/version.h \
   include/linux/module.h \
     $(wildcard include/config/modules.h) \
     $(wildcard include/config/sysfs.h) \
@@ -664,18 +663,7 @@ deps_/home/yoonjae/rmm/rmm.o := \
     $(wildcard include/config/modules/use/elf/rel.h) \
     $(wildcard include/config/modules/use/elf/rela.h) \
   arch/x86/include/asm/orc_types.h \
-  include/linux/slab.h \
-    $(wildcard include/config/debug/slab.h) \
-    $(wildcard include/config/failslab.h) \
-    $(wildcard include/config/memcg/kmem.h) \
-    $(wildcard include/config/have/hardened/usercopy/allocator.h) \
-    $(wildcard include/config/slab.h) \
-    $(wildcard include/config/slub.h) \
-    $(wildcard include/config/slob.h) \
-  include/linux/kasan.h \
-    $(wildcard include/config/kasan/generic.h) \
-  include/linux/parser.h \
-  include/linux/proc_fs.h \
+  include/linux/seq_file.h \
   include/linux/fs.h \
     $(wildcard include/config/fs/posix/acl.h) \
     $(wildcard include/config/security.h) \
@@ -707,6 +695,7 @@ deps_/home/yoonjae/rmm/rmm.o := \
     $(wildcard include/config/have/arch/hash.h) \
   include/linux/path.h \
   include/linux/list_lru.h \
+    $(wildcard include/config/memcg/kmem.h) \
   include/linux/shrinker.h \
   include/linux/pid.h \
   include/linux/capability.h \
@@ -836,26 +825,19 @@ deps_/home/yoonjae/rmm/rmm.o := \
   include/linux/projid.h \
   include/uapi/linux/quota.h \
   include/linux/nfs_fs_i.h \
-  include/linux/inet.h \
-  include/net/net_namespace.h \
-    $(wildcard include/config/nf/conntrack.h) \
-    $(wildcard include/config/ipv6.h) \
-    $(wildcard include/config/ieee802154/6lowpan.h) \
-    $(wildcard include/config/ip/sctp.h) \
-    $(wildcard include/config/ip/dccp.h) \
-    $(wildcard include/config/netfilter.h) \
-    $(wildcard include/config/nf/tables.h) \
-    $(wildcard include/config/nf/defrag/ipv6.h) \
-    $(wildcard include/config/netfilter/netlink/acct.h) \
-    $(wildcard include/config/nf/ct/netlink/timeout.h) \
-    $(wildcard include/config/wext/core.h) \
-    $(wildcard include/config/xfrm.h) \
-    $(wildcard include/config/ip/vs.h) \
-    $(wildcard include/config/mpls.h) \
-    $(wildcard include/config/can.h) \
-    $(wildcard include/config/xdp/sockets.h) \
-    $(wildcard include/config/net/ns.h) \
-  include/net/flow.h \
+  include/linux/cred.h \
+    $(wildcard include/config/debug/credentials.h) \
+    $(wildcard include/config/keys.h) \
+  include/linux/key.h \
+  include/linux/assoc_array.h \
+    $(wildcard include/config/associative/array.h) \
+  include/linux/sched/user.h \
+    $(wildcard include/config/fanotify.h) \
+    $(wildcard include/config/posix/mqueue.h) \
+    $(wildcard include/config/bpf/syscall.h) \
+    $(wildcard include/config/net.h) \
+  include/linux/ratelimit.h \
+  include/rdma/rdma_cm.h \
   include/linux/socket.h \
   arch/x86/include/generated/uapi/asm/socket.h \
   include/uapi/asm-generic/socket.h \
@@ -867,6 +849,15 @@ deps_/home/yoonjae/rmm/rmm.o := \
   include/crypto/hash.h \
   include/linux/crypto.h \
     $(wildcard include/config/crypto/stats.h) \
+  include/linux/slab.h \
+    $(wildcard include/config/debug/slab.h) \
+    $(wildcard include/config/failslab.h) \
+    $(wildcard include/config/have/hardened/usercopy/allocator.h) \
+    $(wildcard include/config/slab.h) \
+    $(wildcard include/config/slub.h) \
+    $(wildcard include/config/slob.h) \
+  include/linux/kasan.h \
+    $(wildcard include/config/kasan/generic.h) \
   include/linux/uaccess.h \
   arch/x86/include/asm/uaccess.h \
     $(wildcard include/config/x86/intel/usercopy.h) \
@@ -878,68 +869,13 @@ deps_/home/yoonjae/rmm/rmm.o := \
   include/linux/in6.h \
   include/uapi/linux/in6.h \
   include/uapi/linux/libc-compat.h \
-  include/net/flow_dissector.h \
-  include/uapi/linux/if_ether.h \
-  include/net/netns/core.h \
-  include/net/netns/mib.h \
-    $(wildcard include/config/xfrm/statistics.h) \
-  include/net/snmp.h \
-  include/uapi/linux/snmp.h \
-  include/linux/u64_stats_sync.h \
-  include/net/netns/unix.h \
-  include/net/netns/packet.h \
-  include/net/netns/ipv4.h \
-    $(wildcard include/config/ip/multiple/tables.h) \
-    $(wildcard include/config/ip/route/classid.h) \
-    $(wildcard include/config/net/l3/master/dev.h) \
-    $(wildcard include/config/ip/mroute.h) \
-    $(wildcard include/config/ip/mroute/multiple/tables.h) \
-    $(wildcard include/config/ip/route/multipath.h) \
-  include/net/inet_frag.h \
-  include/linux/siphash.h \
-    $(wildcard include/config/have/efficient/unaligned/access.h) \
-  include/net/netns/ipv6.h \
-    $(wildcard include/config/ipv6/multiple/tables.h) \
-    $(wildcard include/config/ipv6/mroute.h) \
-    $(wildcard include/config/ipv6/mroute/multiple/tables.h) \
-  include/net/dst_ops.h \
-  include/net/netns/ieee802154_6lowpan.h \
-  include/net/netns/sctp.h \
-  include/net/netns/dccp.h \
-  include/net/netns/netfilter.h \
-    $(wildcard include/config/netfilter/family/arp.h) \
-    $(wildcard include/config/netfilter/family/bridge.h) \
-    $(wildcard include/config/decnet.h) \
-    $(wildcard include/config/nf/defrag/ipv4.h) \
-  include/linux/netfilter_defs.h \
-  include/uapi/linux/netfilter.h \
+  include/rdma/ib_addr.h \
   include/linux/in.h \
   include/uapi/linux/in.h \
-  include/net/netns/x_tables.h \
-    $(wildcard include/config/bridge/nf/ebtables.h) \
-  include/net/netns/conntrack.h \
-    $(wildcard include/config/nf/ct/proto/dccp.h) \
-    $(wildcard include/config/nf/ct/proto/sctp.h) \
-    $(wildcard include/config/nf/ct/proto/gre.h) \
-    $(wildcard include/config/nf/conntrack/events.h) \
-    $(wildcard include/config/nf/conntrack/labels.h) \
-  include/linux/list_nulls.h \
-  include/linux/netfilter/nf_conntrack_tcp.h \
-  include/uapi/linux/netfilter/nf_conntrack_tcp.h \
-  include/linux/netfilter/nf_conntrack_dccp.h \
-  include/uapi/linux/netfilter/nf_conntrack_tuple_common.h \
-  include/linux/netfilter/nf_conntrack_common.h \
-  include/uapi/linux/netfilter/nf_conntrack_common.h \
-  include/linux/netfilter/nf_conntrack_sctp.h \
-  include/uapi/linux/netfilter/nf_conntrack_sctp.h \
-  include/net/netns/nftables.h \
-  include/net/netns/xfrm.h \
-  include/uapi/linux/xfrm.h \
-  include/net/netns/mpls.h \
-  include/net/netns/can.h \
-  include/net/netns/xdp.h \
-  include/linux/ns_common.h \
+  include/linux/if_arp.h \
+    $(wildcard include/config/firewire/net.h) \
   include/linux/skbuff.h \
+    $(wildcard include/config/nf/conntrack.h) \
     $(wildcard include/config/bridge/netfilter.h) \
     $(wildcard include/config/skb/extensions.h) \
     $(wildcard include/config/ipv6/ndisc/nodetype.h) \
@@ -950,9 +886,12 @@ deps_/home/yoonjae/rmm/rmm.o := \
     $(wildcard include/config/net/rx/busy/poll.h) \
     $(wildcard include/config/xps.h) \
     $(wildcard include/config/network/secmark.h) \
-    $(wildcard include/config/net.h) \
+    $(wildcard include/config/have/efficient/unaligned/access.h) \
     $(wildcard include/config/network/phy/timestamping.h) \
+    $(wildcard include/config/xfrm.h) \
     $(wildcard include/config/netfilter/xt/target/trace.h) \
+    $(wildcard include/config/nf/tables.h) \
+    $(wildcard include/config/ip/vs.h) \
   include/linux/net.h \
   include/linux/random.h \
     $(wildcard include/config/gcc/plugin/latent/entropy.h) \
@@ -994,7 +933,6 @@ deps_/home/yoonjae/rmm/rmm.o := \
     $(wildcard include/config/pm.h) \
     $(wildcard include/config/pm/clk.h) \
     $(wildcard include/config/pm/generic/domains.h) \
-  include/linux/ratelimit.h \
   arch/x86/include/asm/device.h \
     $(wildcard include/config/intel/iommu.h) \
     $(wildcard include/config/amd/iommu.h) \
@@ -1073,95 +1011,13 @@ deps_/home/yoonjae/rmm/rmm.o := \
   include/linux/sched/clock.h \
     $(wildcard include/config/have/unstable/sched/clock.h) \
     $(wildcard include/config/irq/time/accounting.h) \
+  include/net/flow_dissector.h \
+  include/uapi/linux/if_ether.h \
   include/linux/splice.h \
   include/linux/pipe_fs_i.h \
   include/uapi/linux/if_packet.h \
-  include/linux/seq_file_net.h \
-  include/linux/seq_file.h \
-  include/linux/cred.h \
-    $(wildcard include/config/debug/credentials.h) \
-    $(wildcard include/config/keys.h) \
-  include/linux/key.h \
-  include/linux/assoc_array.h \
-    $(wildcard include/config/associative/array.h) \
-  include/linux/sched/user.h \
-    $(wildcard include/config/fanotify.h) \
-    $(wildcard include/config/posix/mqueue.h) \
-    $(wildcard include/config/bpf/syscall.h) \
-  include/linux/pci.h \
-    $(wildcard include/config/pci/iov.h) \
-    $(wildcard include/config/pcieaer.h) \
-    $(wildcard include/config/pcieaspm.h) \
-    $(wildcard include/config/hotplug/pci/pcie.h) \
-    $(wildcard include/config/pcie/ptm.h) \
-    $(wildcard include/config/pci/ats.h) \
-    $(wildcard include/config/pci/pri.h) \
-    $(wildcard include/config/pci/pasid.h) \
-    $(wildcard include/config/pci/domains/generic.h) \
-    $(wildcard include/config/pcieportbus.h) \
-    $(wildcard include/config/pcie/ecrc.h) \
-    $(wildcard include/config/pci/quirks.h) \
-    $(wildcard include/config/hibernate/callbacks.h) \
-    $(wildcard include/config/acpi/mcfg.h) \
-    $(wildcard include/config/hotplug/pci.h) \
-    $(wildcard include/config/eeh.h) \
-  include/linux/mod_devicetable.h \
-  include/linux/interrupt.h \
-    $(wildcard include/config/irq/forced/threading.h) \
-    $(wildcard include/config/generic/irq/probe.h) \
-    $(wildcard include/config/irq/timings.h) \
-  include/linux/irqreturn.h \
-  include/linux/hardirq.h \
-  include/linux/ftrace_irq.h \
-    $(wildcard include/config/ftrace/nmi/enter.h) \
-    $(wildcard include/config/hwlat/tracer.h) \
-  include/linux/vtime.h \
-    $(wildcard include/config/virt/cpu/accounting.h) \
-  include/linux/context_tracking_state.h \
-    $(wildcard include/config/context/tracking.h) \
-  arch/x86/include/asm/irq.h \
-  arch/x86/include/asm/sections.h \
-  include/asm-generic/sections.h \
-  include/linux/io.h \
-  include/linux/resource_ext.h \
-  include/uapi/linux/pci.h \
-  include/uapi/linux/pci_regs.h \
-  include/linux/pci_ids.h \
-  include/linux/dmapool.h \
-  arch/x86/include/asm/pci.h \
-    $(wildcard include/config/pci/msi/irq/domain.h) \
-    $(wildcard include/config/vmd.h) \
-  arch/x86/include/asm/pat.h \
-  arch/x86/include/asm/pci_64.h \
-    $(wildcard include/config/calgary/iommu.h) \
-  include/asm-generic/pci.h \
-  include/linux/pci-dma-compat.h \
-  include/linux/sched/signal.h \
-    $(wildcard include/config/sched/autogroup.h) \
-    $(wildcard include/config/bsd/process/acct.h) \
-    $(wildcard include/config/taskstats.h) \
-  include/linux/signal.h \
-  include/linux/sched/jobctl.h \
-  include/linux/sched/task.h \
-    $(wildcard include/config/have/copy/thread/tls.h) \
-    $(wildcard include/config/have/exit/thread.h) \
-    $(wildcard include/config/arch/wants/dynamic/task/struct.h) \
-    $(wildcard include/config/have/arch/thread/struct/whitelist.h) \
-  include/rdma/ib_verbs.h \
-    $(wildcard include/config/cgroup/rdma.h) \
-    $(wildcard include/config/infiniband/user/access.h) \
-  include/linux/irq_poll.h \
-  include/net/ipv6.h \
-  include/linux/ipv6.h \
-    $(wildcard include/config/ipv6/router/pref.h) \
-    $(wildcard include/config/ipv6/route/info.h) \
-    $(wildcard include/config/ipv6/optimistic/dad.h) \
-    $(wildcard include/config/ipv6/seg6/hmac.h) \
-    $(wildcard include/config/ipv6/mip6.h) \
-    $(wildcard include/config/ipv6/subtrees.h) \
-  include/uapi/linux/ipv6.h \
-  include/linux/icmpv6.h \
-  include/uapi/linux/icmpv6.h \
+  include/net/flow.h \
+  include/uapi/linux/if_arp.h \
   include/linux/netdevice.h \
     $(wildcard include/config/dcb.h) \
     $(wildcard include/config/hyperv/net.h) \
@@ -1174,6 +1030,7 @@ deps_/home/yoonjae/rmm/rmm.o := \
     $(wildcard include/config/ipv6/tunnel.h) \
     $(wildcard include/config/rps.h) \
     $(wildcard include/config/netpoll.h) \
+    $(wildcard include/config/xdp/sockets.h) \
     $(wildcard include/config/bql.h) \
     $(wildcard include/config/rfs/accel.h) \
     $(wildcard include/config/fcoe.h) \
@@ -1181,11 +1038,14 @@ deps_/home/yoonjae/rmm/rmm.o := \
     $(wildcard include/config/net/poll/controller.h) \
     $(wildcard include/config/libfcoe.h) \
     $(wildcard include/config/wireless/ext.h) \
+    $(wildcard include/config/net/l3/master/dev.h) \
+    $(wildcard include/config/ipv6.h) \
     $(wildcard include/config/vlan/8021q.h) \
     $(wildcard include/config/net/dsa.h) \
     $(wildcard include/config/tipc.h) \
     $(wildcard include/config/irda.h) \
     $(wildcard include/config/atalk.h) \
+    $(wildcard include/config/decnet.h) \
     $(wildcard include/config/mpls/routing.h) \
     $(wildcard include/config/netfilter/ingress.h) \
     $(wildcard include/config/garp.h) \
@@ -1214,6 +1074,73 @@ deps_/home/yoonjae/rmm/rmm.o := \
   arch/x86/include/asm/syscall_wrapper.h \
   include/uapi/linux/ethtool.h \
   include/linux/if_ether.h \
+  include/net/net_namespace.h \
+    $(wildcard include/config/ieee802154/6lowpan.h) \
+    $(wildcard include/config/ip/sctp.h) \
+    $(wildcard include/config/ip/dccp.h) \
+    $(wildcard include/config/netfilter.h) \
+    $(wildcard include/config/nf/defrag/ipv6.h) \
+    $(wildcard include/config/netfilter/netlink/acct.h) \
+    $(wildcard include/config/nf/ct/netlink/timeout.h) \
+    $(wildcard include/config/wext/core.h) \
+    $(wildcard include/config/mpls.h) \
+    $(wildcard include/config/can.h) \
+    $(wildcard include/config/net/ns.h) \
+  include/net/netns/core.h \
+  include/net/netns/mib.h \
+    $(wildcard include/config/xfrm/statistics.h) \
+  include/net/snmp.h \
+  include/uapi/linux/snmp.h \
+  include/linux/u64_stats_sync.h \
+  include/net/netns/unix.h \
+  include/net/netns/packet.h \
+  include/net/netns/ipv4.h \
+    $(wildcard include/config/ip/multiple/tables.h) \
+    $(wildcard include/config/ip/route/classid.h) \
+    $(wildcard include/config/ip/mroute.h) \
+    $(wildcard include/config/ip/mroute/multiple/tables.h) \
+    $(wildcard include/config/ip/route/multipath.h) \
+  include/net/inet_frag.h \
+  include/linux/siphash.h \
+  include/net/netns/ipv6.h \
+    $(wildcard include/config/ipv6/multiple/tables.h) \
+    $(wildcard include/config/ipv6/mroute.h) \
+    $(wildcard include/config/ipv6/mroute/multiple/tables.h) \
+  include/net/dst_ops.h \
+  include/net/netns/ieee802154_6lowpan.h \
+  include/net/netns/sctp.h \
+  include/net/netns/dccp.h \
+  include/net/netns/netfilter.h \
+    $(wildcard include/config/netfilter/family/arp.h) \
+    $(wildcard include/config/netfilter/family/bridge.h) \
+    $(wildcard include/config/nf/defrag/ipv4.h) \
+  include/linux/netfilter_defs.h \
+  include/uapi/linux/netfilter.h \
+  include/net/netns/x_tables.h \
+    $(wildcard include/config/bridge/nf/ebtables.h) \
+  include/net/netns/conntrack.h \
+    $(wildcard include/config/nf/ct/proto/dccp.h) \
+    $(wildcard include/config/nf/ct/proto/sctp.h) \
+    $(wildcard include/config/nf/ct/proto/gre.h) \
+    $(wildcard include/config/nf/conntrack/events.h) \
+    $(wildcard include/config/nf/conntrack/labels.h) \
+  include/linux/list_nulls.h \
+  include/linux/netfilter/nf_conntrack_tcp.h \
+  include/uapi/linux/netfilter/nf_conntrack_tcp.h \
+  include/linux/netfilter/nf_conntrack_dccp.h \
+  include/uapi/linux/netfilter/nf_conntrack_tuple_common.h \
+  include/linux/netfilter/nf_conntrack_common.h \
+  include/uapi/linux/netfilter/nf_conntrack_common.h \
+  include/linux/netfilter/nf_conntrack_sctp.h \
+  include/uapi/linux/netfilter/nf_conntrack_sctp.h \
+  include/net/netns/nftables.h \
+  include/net/netns/xfrm.h \
+  include/uapi/linux/xfrm.h \
+  include/net/netns/mpls.h \
+  include/net/netns/can.h \
+  include/net/netns/xdp.h \
+  include/linux/ns_common.h \
+  include/linux/seq_file_net.h \
   include/net/dcbnl.h \
   include/uapi/linux/dcbnl.h \
   include/net/netprio_cgroup.h \
@@ -1229,6 +1156,22 @@ deps_/home/yoonjae/rmm/rmm.o := \
     $(wildcard include/config/inotify/user.h) \
     $(wildcard include/config/persistent/keyrings.h) \
   include/linux/kernel_stat.h \
+  include/linux/interrupt.h \
+    $(wildcard include/config/irq/forced/threading.h) \
+    $(wildcard include/config/generic/irq/probe.h) \
+    $(wildcard include/config/irq/timings.h) \
+  include/linux/irqreturn.h \
+  include/linux/hardirq.h \
+  include/linux/ftrace_irq.h \
+    $(wildcard include/config/ftrace/nmi/enter.h) \
+    $(wildcard include/config/hwlat/tracer.h) \
+  include/linux/vtime.h \
+    $(wildcard include/config/virt/cpu/accounting.h) \
+  include/linux/context_tracking_state.h \
+    $(wildcard include/config/context/tracking.h) \
+  arch/x86/include/asm/irq.h \
+  arch/x86/include/asm/sections.h \
+  include/asm-generic/sections.h \
   include/linux/cgroup-defs.h \
   include/linux/bpf-cgroup.h \
     $(wildcard include/config/cgroup/bpf.h) \
@@ -1248,6 +1191,7 @@ deps_/home/yoonjae/rmm/rmm.o := \
     $(wildcard include/config/cgroup/perf.h) \
     $(wildcard include/config/cgroup/hugetlb.h) \
     $(wildcard include/config/cgroup/pids.h) \
+    $(wildcard include/config/cgroup/rdma.h) \
     $(wildcard include/config/cgroup/debug.h) \
   include/net/xdp.h \
   include/uapi/linux/neighbour.h \
@@ -1259,6 +1203,17 @@ deps_/home/yoonjae/rmm/rmm.o := \
     $(wildcard include/config/security/network/xfrm.h) \
     $(wildcard include/config/security/path.h) \
     $(wildcard include/config/securityfs.h) \
+  include/linux/sched/signal.h \
+    $(wildcard include/config/sched/autogroup.h) \
+    $(wildcard include/config/bsd/process/acct.h) \
+    $(wildcard include/config/taskstats.h) \
+  include/linux/signal.h \
+  include/linux/sched/jobctl.h \
+  include/linux/sched/task.h \
+    $(wildcard include/config/have/copy/thread/tls.h) \
+    $(wildcard include/config/have/exit/thread.h) \
+    $(wildcard include/config/arch/wants/dynamic/task/struct.h) \
+    $(wildcard include/config/have/arch/thread/struct/whitelist.h) \
   include/uapi/linux/netlink.h \
   include/uapi/linux/netdevice.h \
   include/linux/if_link.h \
@@ -1268,6 +1223,31 @@ deps_/home/yoonjae/rmm/rmm.o := \
     $(wildcard include/config/net/cls/ind.h) \
   include/uapi/linux/pkt_sched.h \
   include/linux/hashtable.h \
+  include/linux/inetdevice.h \
+  include/linux/ip.h \
+  include/uapi/linux/ip.h \
+  include/linux/rtnetlink.h \
+    $(wildcard include/config/net/ingress.h) \
+    $(wildcard include/config/net/egress.h) \
+  include/uapi/linux/rtnetlink.h \
+  include/uapi/linux/if_addr.h \
+  include/linux/if_vlan.h \
+  include/linux/etherdevice.h \
+  arch/x86/include/asm/unaligned.h \
+  include/linux/unaligned/access_ok.h \
+  include/linux/unaligned/generic.h \
+  include/uapi/linux/if_vlan.h \
+  include/net/ipv6.h \
+  include/linux/ipv6.h \
+    $(wildcard include/config/ipv6/router/pref.h) \
+    $(wildcard include/config/ipv6/route/info.h) \
+    $(wildcard include/config/ipv6/optimistic/dad.h) \
+    $(wildcard include/config/ipv6/seg6/hmac.h) \
+    $(wildcard include/config/ipv6/mip6.h) \
+    $(wildcard include/config/ipv6/subtrees.h) \
+  include/uapi/linux/ipv6.h \
+  include/linux/icmpv6.h \
+  include/uapi/linux/icmpv6.h \
   include/linux/tcp.h \
     $(wildcard include/config/smc.h) \
     $(wildcard include/config/bpf.h) \
@@ -1303,17 +1283,6 @@ deps_/home/yoonjae/rmm/rmm.o := \
   include/asm-generic/set_memory.h \
   include/linux/kallsyms.h \
     $(wildcard include/config/kallsyms/all.h) \
-  include/linux/if_vlan.h \
-  include/linux/etherdevice.h \
-  arch/x86/include/asm/unaligned.h \
-  include/linux/unaligned/access_ok.h \
-  include/linux/unaligned/generic.h \
-  include/linux/rtnetlink.h \
-    $(wildcard include/config/net/ingress.h) \
-    $(wildcard include/config/net/egress.h) \
-  include/uapi/linux/rtnetlink.h \
-  include/uapi/linux/if_addr.h \
-  include/uapi/linux/if_vlan.h \
   include/net/sch_generic.h \
   include/uapi/linux/pkt_cls.h \
   include/net/gen_stats.h \
@@ -1349,17 +1318,15 @@ deps_/home/yoonjae/rmm/rmm.o := \
   include/uapi/linux/udp.h \
   include/net/if_inet6.h \
   include/net/ndisc.h \
-  include/linux/if_arp.h \
-    $(wildcard include/config/firewire/net.h) \
-  include/uapi/linux/if_arp.h \
   include/net/ip.h \
-  include/linux/ip.h \
-  include/uapi/linux/ip.h \
   include/net/route.h \
   include/net/inetpeer.h \
   include/net/ip_fib.h \
   include/uapi/linux/in_route.h \
   include/uapi/linux/route.h \
+  include/rdma/ib_verbs.h \
+    $(wildcard include/config/infiniband/user/access.h) \
+  include/linux/irq_poll.h \
   include/linux/mmu_notifier.h \
   include/linux/cgroup_rdma.h \
   include/uapi/rdma/ib_user_verbs.h \
@@ -1372,9 +1339,6 @@ deps_/home/yoonjae/rmm/rmm.o := \
   include/uapi/rdma/rdma_user_ioctl_cmds.h \
   include/uapi/rdma/ib_user_ioctl_verbs.h \
   include/uapi/rdma/ib_user_verbs.h \
-  include/rdma/rdma_cm.h \
-  include/rdma/ib_addr.h \
-  include/linux/inetdevice.h \
   include/rdma/ib_pack.h \
   include/rdma/ib_sa.h \
   include/rdma/ib_mad.h \
@@ -1384,8 +1348,12 @@ deps_/home/yoonjae/rmm/rmm.o := \
   include/rdma/ib_smi.h \
   include/uapi/rdma/rdma_user_cm.h \
   include/uapi/rdma/ib_user_sa.h \
-  /home/yoonjae/rmm/getopt.h \
+  /home/yoonjae/rmm/rdma_module/common.h \
+  include/linux/inet.h \
+  /home/yoonjae/rmm/rdma_module/config.h \
+  /home/yoonjae/rmm/rdma_module/ring_buffer.h \
+    $(wildcard include/config/popcorn/stat.h) \
 
-/home/yoonjae/rmm/rmm.o: $(deps_/home/yoonjae/rmm/rmm.o)
+/home/yoonjae/rmm/rdma_module/rmm.o: $(deps_/home/yoonjae/rmm/rdma_module/rmm.o)
 
-$(deps_/home/yoonjae/rmm/rmm.o):
+$(deps_/home/yoonjae/rmm/rdma_module/rmm.o):
