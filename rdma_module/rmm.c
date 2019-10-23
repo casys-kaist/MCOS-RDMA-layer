@@ -2,6 +2,7 @@
 #include <linux/bitmap.h>
 #include <linux/seq_file.h>
 #include <linux/atomic.h>
+#include <linux/proc_fs.h>
 
 #include <rdma/rdma_cm.h>
 
@@ -25,7 +26,7 @@
 #define RPC_OP_FECTCH	0
 #define RPC_OP_EVICT	1
 
-#define PFX "RMM: "
+#define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
 
 static int debug = 0;
@@ -113,6 +114,9 @@ static dma_addr_t remote_sink_dma_addr;
 static size_t remote_sink_size;
 static u32 sink_rkey;
 
+/*proc file for control */
+static struct proc_dir_entry *rmm_proc;
+
 /*Variables for server */
 static uint32_t my_ip;
 
@@ -161,6 +165,7 @@ static int rmm_wait_for_completion(struct rdma_handle *rh, enum ib_wc_opcode exi
 	//const struct ib_recv_wr *bad_wr;
 	int ret;
 
+	DEBUG_LOG(PFX "Wait CQE: %d\n", exit_condition);
 	while ((ret = ib_poll_cq(rh->cq, 1, &wc)) >= 0) {
 		if (ret == 0) {
 			if (rh->state == RDMA_CLOSED)
@@ -256,14 +261,16 @@ retry:
 /****************************************************************************
  * Setup connections
  */
+
+/*setup qp*/
 static int __setup_pd_cq_qp(struct rdma_handle *rh)
 {
 	int ret;
-	struct rdma_handle *rh_evic = rdma_handles_evic[rh->nid];
 
 	BUG_ON(rh->state != RDMA_ROUTE_RESOLVED && "for rh->device");
 
 	/* Create global pd if it is not allocated yet */
+	DEBUG_LOG(PFX "alloc pd\n");
 	if (!rdma_pd) {
 		rdma_pd = ib_alloc_pd(rh->device, 0);
 		if (IS_ERR(rdma_pd)) {
@@ -273,7 +280,8 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 		}
 	}
 
-	/* create completion queue */
+	/* Create global completion queue */
+	DEBUG_LOG(PFX "alloc cq\n");
 	if (!rdma_cq) {
 		struct ib_cq_init_attr cq_attr = {
 			.cqe = (MAX_SEND_DEPTH + MAX_RECV_DEPTH + NR_RDMA_SLOTS) * 3,
@@ -286,6 +294,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 			ret = PTR_ERR(rdma_cq);
 			goto out_err;
 		}
+		rh->cq = rdma_cq;
 
 		/*
 		   ret = ib_req_notify_cq(rh->cq, IB_CQ_NEXT_COMP);
@@ -294,36 +303,17 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 	}
 
 	/* create queue pair */
+	DEBUG_LOG(PFX "create qp\n");
 	{
 		struct ib_qp_init_attr qp_attr = {
 			.event_handler = NULL, // qp_event_handler,
 			.qp_context = rh,
 			.cap = {
 				.max_send_wr = MAX_SEND_DEPTH,
-				.max_recv_wr = MAX_RECV_DEPTH + NR_RDMA_SLOTS,
+				.max_recv_wr = MAX_RECV_DEPTH,
 				.max_send_sge = 10,
 				.max_recv_sge = 10,
-			},
-			.sq_sig_type = IB_SIGNAL_REQ_WR,
-			.qp_type = IB_QPT_RC,
-			.send_cq = rh->cq,
-			.recv_cq = rh->cq,
-		};
-
-		ret = rdma_create_qp(rh->cm_id, rdma_pd, &qp_attr);
-		if (ret) 
-			goto out_err;
-		rh->qp = rh->cm_id->qp;
-	}
-	{
-		struct ib_qp_init_attr qp_attr = {
-			.event_handler = NULL, // qp_event_handler,
-			.qp_context = rh_evic,
-			.cap = {
-				.max_send_wr = MAX_SEND_DEPTH * 8,
-				.max_recv_wr = MAX_RECV_DEPTH + NR_RDMA_SLOTS,
-				.max_send_sge = 10,
-				.max_recv_sge = 10,
+				.max_inline_data = 32,
 			},
 			.sq_sig_type = IB_SIGNAL_REQ_WR,
 			.qp_type = IB_QPT_RC,
@@ -331,10 +321,10 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 			.recv_cq = rdma_cq,
 		};
 
-		ret = rdma_create_qp(rh_evic->cm_id, rdma_pd, &qp_attr);
+		ret = rdma_create_qp(rh->cm_id, rdma_pd, &qp_attr);
 		if (ret) 
 			goto out_err;
-		rh_evic->qp = rh_evic->cm_id->qp;
+		rh->qp = rh->cm_id->qp;
 	}
 
 	return 0;
@@ -423,7 +413,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_id_type wr_id)
 	dma_addr_t dma_addr;
 	struct ib_recv_wr wr;
 	const struct ib_recv_wr *bad_wr = NULL;
-	struct ib_sge sgl;
+	struct ib_sge sgl = {0};
 	struct pool_info *pp;
 
 	if (wr_id == WR_ID_RPC_ADDR)
@@ -432,6 +422,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_id_type wr_id)
 		pp = &sink_pool;
 
 	/*Post receive request for recieve request pool info*/
+	DEBUG_LOG(PFX "map recv region\n");
 	dma_addr = ib_dma_map_single(rh->device, pp, sizeof(struct pool_info), DMA_FROM_DEVICE);
 	ret = ib_dma_mapping_error(rh->device, dma_addr);
 	if (ret) 
@@ -451,6 +442,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_id_type wr_id)
 	else
 		sp_dma_addr = dma_addr;
 
+	DEBUG_LOG(PFX "post recv\n");
 	ret = ib_post_recv(rh->qp, &wr, &bad_wr);
 	if (ret || bad_wr) 
 		goto out_free;
@@ -458,6 +450,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_id_type wr_id)
 	return ret;
 
 out_free:
+	ib_dma_unmap_single(rh->device, dma_addr, sizeof(struct pool_info), DMA_FROM_DEVICE);
 	return ret;
 }
 
@@ -561,6 +554,8 @@ int cm_client_event_handler(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_e
 			complete(&rh->cm_done);
 			break;
 		case RDMA_CM_EVENT_ADDR_ERROR:
+			printk(PFX "addr error\n");
+			break;
 		case RDMA_CM_EVENT_ROUTE_ERROR:
 		case RDMA_CM_EVENT_UNREACHABLE:
 		default:
@@ -579,6 +574,7 @@ static int __connect_to_server(int nid)
 	struct rdma_handle *rh_evic = rdma_handles_evic[nid];
 
 	step = "create rdma id";
+	DEBUG_LOG(PFX "%s\n", step);
 	rh->cm_id = rdma_create_id(&init_net,
 			cm_client_event_handler, rh, RDMA_PS_IB, IB_QPT_RC);
 	if (IS_ERR(rh->cm_id)) 
@@ -590,13 +586,15 @@ static int __connect_to_server(int nid)
 		goto out_err;
 
 	step = "resolve server address";
+	DEBUG_LOG(PFX "%s\n", step);
 	{
 		struct sockaddr_in addr = {
 			.sin_family = AF_INET,
 			.sin_port = htons(RDMA_PORT),
 			.sin_addr.s_addr = ip_table[nid],
 		};
-
+		
+		DEBUG_LOG(PFX "resolve normal\n");
 		ret = rdma_resolve_addr(rh->cm_id, NULL,
 				(struct sockaddr *)&addr, RDMA_ADDR_RESOLVE_TIMEOUT_MS);
 		if (ret) 
@@ -605,6 +603,7 @@ static int __connect_to_server(int nid)
 		if (ret || rh->state != RDMA_ADDR_RESOLVED) 
 			goto out_err;
 
+		DEBUG_LOG(PFX "resolve evic\n");
 		ret = rdma_resolve_addr(rh_evic->cm_id, NULL,
 				(struct sockaddr *)&addr, RDMA_ADDR_RESOLVE_TIMEOUT_MS);
 		if (ret) 
@@ -615,6 +614,7 @@ static int __connect_to_server(int nid)
 	}
 
 	step = "resolve routing path";
+	DEBUG_LOG(PFX "%s\n", step);
 	ret = rdma_resolve_route(rh->cm_id, RDMA_ADDR_RESOLVE_TIMEOUT_MS);
 	if (ret) 
 		goto out_err;
@@ -634,6 +634,7 @@ static int __connect_to_server(int nid)
 	rh_evic->device = rh_evic->cm_id->device;
 
 	step = "setup ib";
+	DEBUG_LOG(PFX "%s\n", step);
 	ret = __setup_pd_cq_qp(rh);
 	if (ret) 
 		goto out_err;
@@ -643,6 +644,7 @@ static int __connect_to_server(int nid)
 		goto out_err;
 
 	step = "setup buffers and pools";
+	DEBUG_LOG(PFX "%s\n", step);
 	ret = __setup_recv_addr(rh, WR_ID_RPC_ADDR);
 	if (ret) 
 		goto out_err;
@@ -658,6 +660,7 @@ static int __connect_to_server(int nid)
 		goto out_err;
 
 	step = "connect";
+	DEBUG_LOG(PFX "%s\n", step);
 	connect_type = CONNECT_NORMAL;
 	{
 		struct rdma_conn_param conn_param = {
@@ -691,11 +694,13 @@ static int __connect_to_server(int nid)
 		}
 	}
 
-	step = "setupe global sink buffer";
-	if (rh->nid == 1)
+	step = "setup global sink buffer";
+	DEBUG_LOG(PFX "%s\n", step);
+	if (rh->nid == 0)
 		__setup_sink_buffer();
 
 	step = "send pool addr";
+	DEBUG_LOG(PFX "%s\n", step);
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, RPC_BUFFER_SIZE);
 	if (ret)
 		goto out_err;
@@ -890,21 +895,24 @@ static int __accept_client(int nid, int connect_type)
 static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)
 {
 	int connect_type = *(int *)cm_event->param.conn.private_data;
-	static atomic_t num_request = ATOMIC_INIT(0);
-	static atomic_t num_request_evic = ATOMIC_INIT(0);
+	static atomic_t num_request = ATOMIC_INIT(-1);
+	static atomic_t num_request_evic = ATOMIC_INIT(-1);
+	int nid = 0;
 	struct rdma_handle *rh;
 
 	if (connect_type == CONNECT_NORMAL) {
 
-		if (atomic_read(&num_request) == MAX_NUM_NODES)
+		nid = atomic_inc_return(&num_request);
+		if (nid == MAX_NUM_NODES)
 			return 0;
-		rh = rdma_handles[atomic_inc_return(&num_request)];
+		rh = rdma_handles[nid];
 		rh->nid = atomic_read(&num_request);
 	}
 	else {
-		if (atomic_read(&num_request_evic) == MAX_NUM_NODES)
+		nid = atomic_inc_return(&num_request_evic);
+		if (nid == MAX_NUM_NODES)
 			return 0;
-		rh = rdma_handles_evic[atomic_inc_return(&num_request_evic)];
+		rh = rdma_handles_evic[nid];
 		rh->nid = atomic_read(&num_request_evic);
 	}
 	cm_id->context = rh;
@@ -994,14 +1002,14 @@ static int __establish_connections(void)
 	int i, ret;
 	int num_client;
 
+	DEBUG_LOG(PFX "establish connection\n");
 	if (server) {
 		ret = __listen_to_connection();
 		if (ret) 
 			return ret;
 
 		for (num_client = 0; num_client < MAX_NUM_NODES; num_client++) {
-			printk(KERN_INFO PFX "Cannot accepts no more clients\n");
-
+			DEBUG_LOG(PFX "accept client\n");
 			if ((ret = __accept_client(num_client, CONNECT_NORMAL))) 
 				return ret;
 			if ((ret = __accept_client(num_client, CONNECT_EVICT))) 
@@ -1011,9 +1019,11 @@ static int __establish_connections(void)
 			rmm_wait_for_completion(rdma_handles[num_client], IB_WC_RECV);
 			rmm_wait_for_completion(rdma_handles_evic[num_client], IB_WC_RECV);
 		}
+		printk(KERN_INFO PFX "Cannot accepts more clients\n");
 	}
 	else {
-		for (i = 0; i < MAX_NUM_NODES; i++) {
+		for (i = 0; i < MAX_NUM_NODES; i++) { 
+			DEBUG_LOG(PFX "connect to server\n");
 			if ((ret = __connect_to_server(i))) 
 				return ret;
 			/*wait for recv request pool addr */
@@ -1032,6 +1042,7 @@ void __exit exit_rmm_rdma(void)
 
 	/* Detach from upper layer to prevent race condition during exit */
 
+	remove_proc_entry("rmm", NULL);
 	for (i = 0; i < MAX_NUM_NODES; i++) {
 		struct rdma_handle *rh = rdma_handles[i];
 		if (!rh) continue;
@@ -1054,6 +1065,7 @@ void __exit exit_rmm_rdma(void)
 
 		kfree(rdma_handles[i]);
 
+		/*free evic */
 		rh = rdma_handles_evic[i];
 		if (!rh) continue;
 
@@ -1103,17 +1115,51 @@ void __exit exit_rmm_rdma(void)
 	   struct rdma_work *rw = rdma_work_pool;
 	   rdma_work_pool = rw->next;
 	   kfree(rw);
-	   }
+	    
 	 */
 
 	printk(KERN_INFO PFX "RDMA unloaded\n");
 	return;
 }
 
+static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
+		size_t count, loff_t *ppos)
+{
+	char *cmd;
+
+	cmd = kmalloc(count, GFP_KERNEL);
+	if (cmd == NULL) {
+		printk(KERN_ERR PFX "kmalloc failure\n");
+		return -ENOMEM;
+	}
+	if (copy_from_user(cmd, buffer, count)) {
+		kfree(cmd);
+		return -EFAULT;
+	}
+	cmd[count-1] = 0;
+	DEBUG_LOG(KERN_INFO PFX "proc write: %s\n", cmd);
+
+	if (strcmp("exit", cmd) == 0)
+		exit_rmm_rdma();
+
+	return 0;
+}
+
+static struct file_operations rmm_ops = {
+	.owner = THIS_MODULE,
+	.write = rmm_write_proc,
+};
 
 int __init init_rmm_rdma(void)
 {
 	int i;
+
+	printk(PFX "init rmm rdma\n");
+	rmm_proc = proc_create("rmm", 0666, NULL, &rmm_ops);
+	if (rmm_proc == NULL) {
+		printk(KERN_ERR PFX "cannot create /proc/rmm\n");
+		return -ENOMEM;
+	}
 
 	if (!identify_myself(&my_ip)) 
 		return -EINVAL;

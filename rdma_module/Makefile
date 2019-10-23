@@ -6,7 +6,7 @@ obj-m += rdma_rmm.o
 rdma_rmm-y := rmm.o
 
 default:
-	make -C $(KSRC) M=$(PWD) modules
+	make -C $(KSRC) M=$(PWD) modules 
 
 install:
 	make -C $(KSRC) M=$(PWD) modules_install INSTALL_MOD_STRIP=1

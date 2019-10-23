@@ -837,6 +837,7 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
     $(wildcard include/config/bpf/syscall.h) \
     $(wildcard include/config/net.h) \
   include/linux/ratelimit.h \
+  include/linux/proc_fs.h \
   include/rdma/rdma_cm.h \
   include/linux/socket.h \
   arch/x86/include/generated/uapi/asm/socket.h \

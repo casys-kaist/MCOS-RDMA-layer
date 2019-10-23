@@ -14,6 +14,8 @@
 
 #include "config.h"
 
+#define SERVER 
+
 #ifndef __SERVER__
 
 #define MAX_NUM_NODES		(ARRAY_SIZE(ip_addresses))
@@ -46,7 +48,7 @@ bool __init identify_myself(uint32_t *my_ip)
 {
 	int i;
 
-	printk("RMM: Loading node configuration...");
+	printk("rmm: Loading node configuration...");
 
 	for (i = 0; i < MAX_NUM_NODES; i++) {
 		ip_table[i] = in_aton(ip_addresses[i]);
