@@ -354,7 +354,10 @@ static  int __setup_rpc_buffer(struct rdma_handle *rh)
 	const struct ib_send_wr *bad_wr;
 	struct scatterlist sg = {};
 	struct ib_mr *mr;
+	char *step = NULL;
 
+
+	step = "alloc rpc buffer";
 	/*rpc buffer */
 	rh->rpc_buffer = kmalloc(buffer_size, GFP_KERNEL);
 	if (!rh->rpc_buffer) {
@@ -366,6 +369,7 @@ static  int __setup_rpc_buffer(struct rdma_handle *rh)
 	if (ret)
 		goto out_free;
 
+	step = "alloc mr";
 	mr = ib_alloc_mr(rdma_pd, IB_MR_TYPE_MEM_REG, buffer_size / PAGE_SIZE);
 	if (IS_ERR(mr)) {
 		ret = PTR_ERR(mr);
@@ -375,17 +379,19 @@ static  int __setup_rpc_buffer(struct rdma_handle *rh)
 	sg_dma_address(&sg) = dma_addr;
 	sg_dma_len(&sg) = buffer_size;
 
+	step = "map mr";
 	ret = ib_map_mr_sg(mr, &sg, 1, NULL, buffer_size);
 	if (ret != 1) {
-		printk("Cannot map scatterlist to mr, %d\n", ret);
+		printk(PFX "Cannot map scatterlist to mr, %d\n", ret);
 		goto out_dereg;
 	}
 	reg_wr.mr = mr;
 	reg_wr.key = mr->rkey;
 
+	step = "post reg mr";
 	ret = ib_post_send(rh->qp, &reg_wr.wr, &bad_wr);
 	if (ret || bad_wr) {
-		printk("Cannot register mr, %d %p\n", ret, bad_wr);
+		printk(PFX "Cannot register mr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
 		goto
@@ -396,13 +402,15 @@ static  int __setup_rpc_buffer(struct rdma_handle *rh)
 
 	rh->mr = mr;
 	rh->rpc_buffer_size = RPC_BUFFER_SIZE;
+
+	return 0;
 out_dereg:
 	ib_dereg_mr(mr);
-	return ret;
 
 out_free:
 	if (rh->rpc_buffer)
 		kfree(rh->rpc_buffer);
+	printk(KERN_ERR PFX "fail at %s\n", step);
 	return ret;
 }
 
@@ -430,7 +438,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_id_type wr_id)
 
 	sgl.lkey = rdma_pd->local_dma_lkey;
 	sgl.addr = dma_addr;
-	sgl.length = sizeof(struct pool_info);
+	sgl.length = sizeof(struct pool_info) - 1;
 
 	wr.sg_list = &sgl;
 	wr.num_sge = 1;
@@ -568,7 +576,7 @@ int cm_client_event_handler(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_e
 static int __connect_to_server(int nid)
 {
 	int ret = 0;
-	int connect_type;
+	static int connect_type;
 	const char *step;
 	struct rdma_handle *rh = rdma_handles[nid];
 	struct rdma_handle *rh_evic = rdma_handles_evic[nid];
@@ -643,22 +651,6 @@ static int __connect_to_server(int nid)
 	if (ret) 
 		goto out_err;
 
-	step = "setup buffers and pools";
-	DEBUG_LOG(PFX "%s\n", step);
-	ret = __setup_recv_addr(rh, WR_ID_RPC_ADDR);
-	if (ret) 
-		goto out_err;
-	ret = __setup_rpc_buffer(rh);
-	if (ret)
-		goto out_err;
-
-	ret = __setup_recv_addr(rh_evic, WR_ID_RPC_ADDR);
-	if (ret) 
-		goto out_err;
-	ret = __setup_rpc_buffer(rh_evic);
-	if (ret)
-		goto out_err;
-
 	step = "connect";
 	DEBUG_LOG(PFX "%s\n", step);
 	connect_type = CONNECT_NORMAL;
@@ -693,6 +685,24 @@ static int __connect_to_server(int nid)
 			goto out_err;
 		}
 	}
+
+	/*Because we need to register rpc regions to mr, 
+	  those functions had to call after connection*/
+	step = "setup buffers and pools";
+	DEBUG_LOG(PFX "%s\n", step);
+	ret = __setup_recv_addr(rh, WR_ID_RPC_ADDR);
+	if (ret) 
+		goto out_err;
+	ret = __setup_rpc_buffer(rh);
+	if (ret)
+		goto out_err;
+
+	ret = __setup_recv_addr(rh_evic, WR_ID_RPC_ADDR);
+	if (ret) 
+		goto out_err;
+	ret = __setup_rpc_buffer(rh_evic);
+	if (ret)
+		goto out_err;
 
 	step = "setup global sink buffer";
 	DEBUG_LOG(PFX "%s\n", step);
@@ -851,6 +861,7 @@ static int __accept_client(int nid, int connect_type)
 {
 	struct rdma_handle *rh;
 	struct rdma_conn_param conn_param = {};
+	char *step = NULL;
 	int ret;
 
 	if (connect_type == CONNECT_NORMAL)
@@ -858,38 +869,49 @@ static int __accept_client(int nid, int connect_type)
 	else
 		rh = rdma_handles_evic[nid];
 
+	DEBUG_LOG(PFX "accept client %d connect_type %d\n", nid, connect_type);
 	ret = wait_for_completion_interruptible(&rh->cm_done);
+	DEBUG_LOG(PFX "wake up\n");
 	if (!ret) return -ETIMEDOUT;
 	if (rh->state != RDMA_ROUTE_RESOLVED) return -EINVAL;
 
+	step = "setup pd cq qp";
 	ret = __setup_pd_cq_qp(rh);
-	if (ret) return ret;
+	if (ret) goto out_err;
 
-	ret = __setup_rpc_buffer(rh);
-	if (ret) return ret;
-
+	step = "post recv";
 	ret = __setup_recv_addr(rh, WR_ID_RPC_ADDR);
-	if (ret) return ret;
+	if (ret)  goto out_err;
 
 	ret = __setup_recv_addr(rh, WR_ID_SINK_ADDR);
-	if (ret) return ret;
+	if (ret)  goto out_err;
 
+	step = "accept";
 	rh->state = RDMA_CONNECTING;
 	ret = rdma_accept(rh->cm_id, &conn_param);
-	if (ret) return ret;
+	if (ret)  goto out_err;
+
+	step = "setup rpc buffer";
+	ret = __setup_rpc_buffer(rh);
+	if (ret)  goto out_err;
 
 	ret = wait_for_completion_interruptible(&rh->cm_done);
-	if (ret) return ret;
+	if (ret)  goto out_err;
 
+	step = "post send";
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, RPC_BUFFER_SIZE);
-	if (ret) return ret;
+	if (ret)  goto out_err;
 
 	if (connect_type == CONNECT_NORMAL) {
 		ret = __send_dma_addr(rh, sink_dma_addr, SINK_BUFFER_SIZE);
-		if (ret) return ret;
+		if (ret)  goto out_err;
 	}
 
 	return 0;
+
+out_err:
+	printk(KERN_ERR PFX "Failed at %s, %d\n", step, ret);
+	return ret;
 }
 
 static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)
@@ -901,25 +923,27 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 	struct rdma_handle *rh;
 
 	if (connect_type == CONNECT_NORMAL) {
-
+		DEBUG_LOG(PFX "atomic inc\n");
 		nid = atomic_inc_return(&num_request);
+		DEBUG_LOG(PFX "nid: %d\n", nid);
 		if (nid == MAX_NUM_NODES)
 			return 0;
 		rh = rdma_handles[nid];
-		rh->nid = atomic_read(&num_request);
+		//rh->nid = nid;
 	}
 	else {
 		nid = atomic_inc_return(&num_request_evic);
 		if (nid == MAX_NUM_NODES)
 			return 0;
 		rh = rdma_handles_evic[nid];
-		rh->nid = atomic_read(&num_request_evic);
+		//rh->nid = nid;
 	}
 	cm_id->context = rh;
 	rh->cm_id = cm_id;
 	rh->device = cm_id->device;
 	rh->state = RDMA_ROUTE_RESOLVED;
 
+	DEBUG_LOG(PFX "connecting done\n");
 	complete(&rh->cm_done);
 	return 0;
 }
@@ -1009,7 +1033,6 @@ static int __establish_connections(void)
 			return ret;
 
 		for (num_client = 0; num_client < MAX_NUM_NODES; num_client++) {
-			DEBUG_LOG(PFX "accept client\n");
 			if ((ret = __accept_client(num_client, CONNECT_NORMAL))) 
 				return ret;
 			if ((ret = __accept_client(num_client, CONNECT_EVICT))) 
@@ -1155,11 +1178,13 @@ int __init init_rmm_rdma(void)
 	int i;
 
 	printk(PFX "init rmm rdma\n");
+	/*
 	rmm_proc = proc_create("rmm", 0666, NULL, &rmm_ops);
 	if (rmm_proc == NULL) {
 		printk(KERN_ERR PFX "cannot create /proc/rmm\n");
 		return -ENOMEM;
 	}
+	*/
 
 	if (!identify_myself(&my_ip)) 
 		return -EINVAL;

@@ -6,22 +6,22 @@
 !_TAG_PROGRAM_VERSION	5.9~svn20110310	//
 ADDR_RESOLVED	krping.c	/^	ADDR_RESOLVED,$/;"	e	enum:test_state	file:
 CONNECTED	krping.c	/^	CONNECTED,$/;"	e	enum:test_state	file:
-CONNECT_EVICT	rmm.c	23;"	d	file:
-CONNECT_NORMAL	rmm.c	22;"	d	file:
+CONNECT_EVICT	rmm.c	24;"	d	file:
+CONNECT_NORMAL	rmm.c	23;"	d	file:
 CONNECT_REQUEST	krping.c	/^	CONNECT_REQUEST,$/;"	e	enum:test_state	file:
 DEBUG_LOG	krping.c	66;"	d	file:
-DEBUG_LOG	rmm.c	29;"	d	file:
+DEBUG_LOG	rmm.c	30;"	d	file:
 ERROR	krping.c	/^	ERROR$/;"	e	enum:test_state	file:
 IDLE	krping.c	/^	IDLE = 1,$/;"	e	enum:test_state	file:
 KOBJ	Makefile	/^KOBJ=\/lib\/modules\/$(shell uname -r)\/build$/;"	m
 KSRC	Makefile	/^KSRC=\/lib\/modules\/$(shell uname -r)\/build$/;"	m
-MAX_CLIENT_NODES	common.h	18;"	d
-MAX_NUM_NODES	common.h	17;"	d
-MAX_RECV_DEPTH	rmm.c	17;"	d	file:
-MAX_SEND_DEPTH	rmm.c	18;"	d	file:
-NR_RDMA_SLOTS	rmm.c	20;"	d	file:
+MAX_NUM_NODES	common.h	21;"	d
+MAX_NUM_NODES	common.h	23;"	d
+MAX_RECV_DEPTH	rmm.c	18;"	d	file:
+MAX_SEND_DEPTH	rmm.c	19;"	d	file:
+NR_RDMA_SLOTS	rmm.c	21;"	d	file:
 PFX	krping.c	60;"	d	file:
-PFX	rmm.c	28;"	d	file:
+PFX	rmm.c	29;"	d	file:
 RB_ALIGN	ring_buffer.c	10;"	d	file:
 RB_CHUNK_ORDER	ring_buffer.h	5;"	d
 RB_CHUNK_SIZE	ring_buffer.h	6;"	d
@@ -29,34 +29,35 @@ RB_HEADER_MAGIC	ring_buffer.c	8;"	d	file:
 RB_MAX_CHUNKS	ring_buffer.h	4;"	d
 RB_NR_CHUNKS	ring_buffer.c	11;"	d	file:
 RDMA_ADDR_RESOLVED	rmm.c	/^		RDMA_ADDR_RESOLVED,$/;"	e	enum:rdma_handle::__anon1	file:
-RDMA_ADDR_RESOLVE_TIMEOUT_MS	rmm.c	12;"	d	file:
+RDMA_ADDR_RESOLVE_TIMEOUT_MS	rmm.c	13;"	d	file:
 RDMA_CLOSED	rmm.c	/^		RDMA_CLOSED,$/;"	e	enum:rdma_handle::__anon1	file:
 RDMA_CLOSING	rmm.c	/^		RDMA_CLOSING,$/;"	e	enum:rdma_handle::__anon1	file:
 RDMA_CONNECTED	rmm.c	/^		RDMA_CONNECTED,$/;"	e	enum:rdma_handle::__anon1	file:
 RDMA_CONNECTING	rmm.c	/^		RDMA_CONNECTING,$/;"	e	enum:rdma_handle::__anon1	file:
 RDMA_INIT	rmm.c	/^		RDMA_INIT,$/;"	e	enum:rdma_handle::__anon1	file:
-RDMA_PORT	rmm.c	11;"	d	file:
+RDMA_PORT	rmm.c	12;"	d	file:
 RDMA_READ_ADV	krping.c	/^	RDMA_READ_ADV,$/;"	e	enum:test_state	file:
 RDMA_READ_COMPLETE	krping.c	/^	RDMA_READ_COMPLETE,$/;"	e	enum:test_state	file:
 RDMA_ROUTE_RESOLVED	rmm.c	/^		RDMA_ROUTE_RESOLVED,$/;"	e	enum:rdma_handle::__anon1	file:
-RDMA_SLOT_SIZE	rmm.c	19;"	d	file:
+RDMA_SLOT_SIZE	rmm.c	20;"	d	file:
 RDMA_WRITE_ADV	krping.c	/^	RDMA_WRITE_ADV,$/;"	e	enum:test_state	file:
 RDMA_WRITE_COMPLETE	krping.c	/^	RDMA_WRITE_COMPLETE,$/;"	e	enum:test_state	file:
 ROUTE_RESOLVED	krping.c	/^	ROUTE_RESOLVED,$/;"	e	enum:test_state	file:
-RPC_BUFFER_SIZE	rmm.c	15;"	d	file:
-RPC_OP_EVICT	rmm.c	26;"	d	file:
-RPC_OP_FECTCH	rmm.c	25;"	d	file:
+RPC_BUFFER_SIZE	rmm.c	16;"	d	file:
+RPC_OP_EVICT	rmm.c	27;"	d	file:
+RPC_OP_FECTCH	rmm.c	26;"	d	file:
 RPING_BUFSIZE	krping.c	169;"	d	file:
 RPING_SQ_DEPTH	krping.c	170;"	d	file:
-SINK_BUFFER_SIZE	rmm.c	14;"	d	file:
+SINK_BUFFER_SIZE	rmm.c	15;"	d	file:
 WR_ID_REG	rmm.c	/^	WR_ID_REG,$/;"	e	enum:wr_id_type	file:
 WR_ID_RPC	rmm.c	/^	WR_ID_RPC,$/;"	e	enum:wr_id_type	file:
-WR_ID_RPC_ADD	rmm.c	/^	WR_ID_RPC_ADD,$/;"	e	enum:wr_id_type	file:
+WR_ID_RPC_ADDR	rmm.c	/^	WR_ID_RPC_ADDR,$/;"	e	enum:wr_id_type	file:
 WR_ID_SINK_ADDR	rmm.c	/^	WR_ID_SINK_ADDR,$/;"	e	enum:wr_id_type	file:
 _MSG_LAYER_COMMON_H_	common.h	9;"	d
 __MSG_LAYER_CONFIG_H__	config.h	2;"	d
 __POPCORN_RING_BUFFER_H__	ring_buffer.h	2;"	d
 __RMM_H__	rmm.h	2;"	d
+__SERVER__	common.h	17;"	d
 __accept_client	rmm.c	/^static int __accept_client(int nid, int connect_type)$/;"	f	file:
 __connect_to_server	rmm.c	/^static int __connect_to_server(int nid)$/;"	f	file:
 __establish_connections	rmm.c	/^static int __establish_connections(void)$/;"	f	file:
@@ -68,8 +69,6 @@ __listen_to_connection	rmm.c	/^static int __listen_to_connection(void)$/;"	f	fil
 __on_client_connected	rmm.c	/^static int __on_client_connected(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)$/;"	f	file:
 __on_client_connecting	rmm.c	/^static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)$/;"	f	file:
 __on_client_disconnected	rmm.c	/^static int __on_client_disconnected(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)$/;"	f	file:
-__rdma_sink_addr	rmm.c	/^static char *__rdma_sink_addr;$/;"	v	file:
-__rdma_sink_dma_addr	rmm.c	/^static dma_addr_t __rdma_sink_dma_addr;$/;"	v	file:
 __send_dma_addr	rmm.c	/^static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)$/;"	f	file:
 __set_header	ring_buffer.c	/^static inline void __set_header(struct ring_buffer_header *header, bool reclaim, size_t size) {$/;"	f	file:
 __setup_pd_cq_qp	rmm.c	/^static int __setup_pd_cq_qp(struct rdma_handle *rh)$/;"	f	file:
@@ -113,13 +112,13 @@ frtest	krping.c	/^	int frtest;			\/* reg test *\/$/;"	m	struct:krping_cb	file:
 head	ring_buffer.h	/^	void *head;$/;"	m	struct:ring_buffer
 head_chunk	ring_buffer.h	/^	unsigned short head_chunk;$/;"	m	struct:ring_buffer
 htonll	krping.c	108;"	d	file:
-identify_myself	common.h	/^bool __init identify_myself(void)$/;"	f
-init_rmm_rdma	rmm.c	/^int init_rmm_rdma(void)$/;"	f
+identify_myself	common.h	/^bool __init identify_myself(uint32_t *my_ip)$/;"	f
+init_rmm_rdma	rmm.c	/^int __init init_rmm_rdma(void)$/;"	f
 init_rmm_rdma	rmm.c	/^module_init(init_rmm_rdma);$/;"	v
 invalidate_wr	krping.c	/^	struct ib_send_wr invalidate_wr;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_send_wr	file:
 ip6_ndev_name	krping.c	/^	char ip6_ndev_name[128];	\/* IPv6 netdev name *\/$/;"	m	struct:krping_cb	file:
 ip_addresses	config.h	/^const char *ip_addresses[] = {$/;"	v
-ip_table	common.h	/^static uint32_t ip_table[MAX_NUM_NODES+1] = { 0 };$/;"	v
+ip_table	common.h	/^static uint32_t ip_table[MAX_NUM_NODES] = { 0 };$/;"	v
 is_registered	krping.c	/^	int is_registered;$/;"	m	struct:krping_cb	file:
 key	krping.c	/^	u8 key;$/;"	m	struct:krping_cb	file:
 krping_accept	krping.c	/^static int krping_accept(struct krping_cb *cb)$/;"	f	file:
@@ -166,11 +165,11 @@ lock	ring_buffer.h	/^	spinlock_t lock;$/;"	m	struct:ring_buffer
 magic	ring_buffer.c	/^	unsigned int magic:8;$/;"	m	struct:ring_buffer_header	file:
 message	krping.c	/^	int message;$/;"	m	struct:krping_cb	file:
 mr	rmm.c	/^	struct ib_mr *mr;$/;"	m	struct:rdma_handle	typeref:struct:rdma_handle::ib_mr	file:
+my_ip	rmm.c	/^static uint32_t my_ip;$/;"	v	file:
 name	ring_buffer.h	/^	char name[80];$/;"	m	struct:ring_buffer
 nid	rmm.c	/^	int nid;$/;"	m	struct:rdma_handle	file:
 nr_chunks	ring_buffer.h	/^	unsigned int nr_chunks;$/;"	m	struct:ring_buffer
 ntohll	krping.c	109;"	d	file:
-num_client	rmm.c	/^static int num_client = 0;$/;"	v	file:
 page_list	krping.c	/^	struct ib_fast_reg_page_list *page_list;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_fast_reg_page_list	file:
 page_list_len	krping.c	/^	int page_list_len;$/;"	m	struct:krping_cb	file:
 pd	krping.c	/^	struct ib_pd *pd;$/;"	m	struct:krping_cb	typeref:struct:krping_cb::ib_pd	file:
@@ -217,6 +216,7 @@ remote_rkey	krping.c	/^	uint32_t remote_rkey;		\/* remote guys RKEY *\/$/;"	m	st
 remote_rpc_dma_addr	rmm.c	/^	dma_addr_t remote_rpc_dma_addr;$/;"	m	struct:rdma_handle	file:
 remote_rpc_size	rmm.c	/^	size_t remote_rpc_size;$/;"	m	struct:rdma_handle	file:
 remote_sink_dma_addr	rmm.c	/^static dma_addr_t remote_sink_dma_addr;$/;"	v	file:
+remote_sink_size	rmm.c	/^static size_t remote_sink_size;$/;"	v	file:
 ring_buffer	ring_buffer.h	/^struct ring_buffer {$/;"	s
 ring_buffer_create	ring_buffer.c	/^struct ring_buffer *ring_buffer_create(const char *namefmt, ...)$/;"	f
 ring_buffer_destroy	ring_buffer.c	/^void ring_buffer_destroy(struct ring_buffer *rb)$/;"	f
@@ -229,7 +229,10 @@ ring_buffer_usage	ring_buffer.c	/^size_t ring_buffer_usage(struct ring_buffer *r
 rkey	krping.c	/^	uint32_t rkey;$/;"	m	struct:krping_rdma_info	file:
 rkey	rmm.c	/^	u32 rkey;$/;"	m	struct:pool_info	file:
 rlat	krping.c	/^	int rlat;			\/* run rlat test *\/$/;"	m	struct:krping_cb	file:
+rmm_ops	rmm.c	/^static struct file_operations rmm_ops = {$/;"	v	typeref:struct:file_operations	file:
+rmm_proc	rmm.c	/^static struct proc_dir_entry *rmm_proc;$/;"	v	typeref:struct:proc_dir_entry	file:
 rmm_wait_for_completion	rmm.c	/^static int rmm_wait_for_completion(struct rdma_handle *rh, enum ib_wc_opcode exit_condition)$/;"	f	file:
+rmm_write_proc	rmm.c	/^static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,$/;"	f	file:
 rpc_buffer	rmm.c	/^	void *rpc_buffer;$/;"	m	struct:rdma_handle	file:
 rpc_buffer_size	rmm.c	/^	size_t rpc_buffer_size;$/;"	m	struct:rdma_handle	file:
 rpc_dma_addr	rmm.c	/^	dma_addr_t rpc_dma_addr;$/;"	m	struct:rdma_handle	file:
@@ -246,8 +249,11 @@ server	krping.c	/^	int server;			\/* 0 iff client *\/$/;"	m	struct:krping_cb	fil
 server	rmm.c	/^static int server = 0;$/;"	v	file:
 server_invalidate	krping.c	/^	int server_invalidate;$/;"	m	struct:krping_cb	file:
 server_recv	krping.c	/^static int server_recv(struct krping_cb *cb, struct ib_wc *wc)$/;"	f	file:
+server_rh	rmm.c	/^static struct rdma_handle server_rh;$/;"	v	typeref:struct:rdma_handle	file:
+sink_addr	rmm.c	/^static char *sink_addr;$/;"	v	file:
 sink_buffer	rmm.c	/^	void *sink_buffer;$/;"	m	struct:rdma_handle	file:
-sink_pool	rmm.c	/^static pool_info sink_pool;$/;"	v	file:
+sink_dma_addr	rmm.c	/^static dma_addr_t sink_dma_addr;$/;"	v	file:
+sink_pool	rmm.c	/^static struct pool_info sink_pool;$/;"	v	typeref:struct:pool_info	file:
 sink_rkey	rmm.c	/^static u32 sink_rkey;$/;"	v	file:
 size	krping.c	/^	int size;			\/* ping data size *\/$/;"	m	struct:krping_cb	file:
 size	krping.c	/^	uint32_t size;$/;"	m	struct:krping_rdma_info	file:
