@@ -1,6 +1,7 @@
 set -x
 
 sudo modprobe -r rdma_rmm || true
+make clean
 make
 if [ $? -ne 0 ]; then
     echo "Fail(make) ... $?"
