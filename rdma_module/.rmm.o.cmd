@@ -838,6 +838,67 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
     $(wildcard include/config/net.h) \
   include/linux/ratelimit.h \
   include/linux/proc_fs.h \
+  include/linux/kthread.h \
+  include/linux/cgroup.h \
+    $(wildcard include/config/cgroup/cpuacct.h) \
+    $(wildcard include/config/sock/cgroup/data.h) \
+    $(wildcard include/config/cgroup/net/prio.h) \
+    $(wildcard include/config/cgroup/net/classid.h) \
+    $(wildcard include/config/cgroup/data.h) \
+  include/uapi/linux/cgroupstats.h \
+  include/uapi/linux/taskstats.h \
+  include/linux/ns_common.h \
+  include/linux/nsproxy.h \
+  include/linux/user_namespace.h \
+    $(wildcard include/config/inotify/user.h) \
+    $(wildcard include/config/persistent/keyrings.h) \
+  include/linux/kernel_stat.h \
+  include/linux/interrupt.h \
+    $(wildcard include/config/irq/forced/threading.h) \
+    $(wildcard include/config/generic/irq/probe.h) \
+    $(wildcard include/config/irq/timings.h) \
+  include/linux/irqreturn.h \
+  include/linux/irqnr.h \
+  include/uapi/linux/irqnr.h \
+  include/linux/hardirq.h \
+  include/linux/ftrace_irq.h \
+    $(wildcard include/config/ftrace/nmi/enter.h) \
+    $(wildcard include/config/hwlat/tracer.h) \
+  include/linux/vtime.h \
+    $(wildcard include/config/virt/cpu/accounting.h) \
+    $(wildcard include/config/irq/time/accounting.h) \
+  include/linux/context_tracking_state.h \
+    $(wildcard include/config/context/tracking.h) \
+  arch/x86/include/asm/irq.h \
+  arch/x86/include/asm/sections.h \
+  include/asm-generic/sections.h \
+  arch/x86/include/asm/extable.h \
+  include/linux/cgroup-defs.h \
+  include/linux/percpu-refcount.h \
+  include/linux/u64_stats_sync.h \
+  include/linux/bpf-cgroup.h \
+    $(wildcard include/config/cgroup/bpf.h) \
+  include/linux/bpf.h \
+    $(wildcard include/config/bpf/stream/parser.h) \
+    $(wildcard include/config/xdp/sockets.h) \
+    $(wildcard include/config/inet.h) \
+  include/uapi/linux/bpf.h \
+    $(wildcard include/config/efficient/unaligned/access.h) \
+    $(wildcard include/config/ip/route/classid.h) \
+    $(wildcard include/config/bpf/kprobe/override.h) \
+    $(wildcard include/config/xfrm.h) \
+    $(wildcard include/config/bpf/lirc/mode2.h) \
+  include/uapi/linux/bpf_common.h \
+  include/linux/file.h \
+  include/linux/bpf_types.h \
+  include/linux/cgroup_subsys.h \
+    $(wildcard include/config/cgroup/device.h) \
+    $(wildcard include/config/cgroup/freezer.h) \
+    $(wildcard include/config/cgroup/perf.h) \
+    $(wildcard include/config/cgroup/hugetlb.h) \
+    $(wildcard include/config/cgroup/pids.h) \
+    $(wildcard include/config/cgroup/rdma.h) \
+    $(wildcard include/config/cgroup/debug.h) \
   include/rdma/rdma_cm.h \
   include/linux/socket.h \
   arch/x86/include/generated/uapi/asm/socket.h \
@@ -863,7 +924,6 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
   arch/x86/include/asm/uaccess.h \
     $(wildcard include/config/x86/intel/usercopy.h) \
   arch/x86/include/asm/smap.h \
-  arch/x86/include/asm/extable.h \
   arch/x86/include/asm/uaccess_64.h \
   include/uapi/linux/uio.h \
   include/uapi/linux/socket.h \
@@ -889,7 +949,6 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
     $(wildcard include/config/network/secmark.h) \
     $(wildcard include/config/have/efficient/unaligned/access.h) \
     $(wildcard include/config/network/phy/timestamping.h) \
-    $(wildcard include/config/xfrm.h) \
     $(wildcard include/config/netfilter/xt/target/trace.h) \
     $(wildcard include/config/nf/tables.h) \
     $(wildcard include/config/ip/vs.h) \
@@ -899,8 +958,6 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
     $(wildcard include/config/arch/random.h) \
   include/linux/once.h \
   include/uapi/linux/random.h \
-  include/linux/irqnr.h \
-  include/uapi/linux/irqnr.h \
   arch/x86/include/asm/archrandom.h \
   include/uapi/linux/net.h \
   include/linux/textsearch.h \
@@ -967,7 +1024,6 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
     $(wildcard include/config/debug/pagealloc.h) \
     $(wildcard include/config/hibernation.h) \
     $(wildcard include/config/hugetlbfs.h) \
-  include/linux/percpu-refcount.h \
   include/linux/page_ext.h \
     $(wildcard include/config/idle/page/tracking.h) \
   include/linux/stacktrace.h \
@@ -1011,7 +1067,6 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
   include/linux/netdev_features.h \
   include/linux/sched/clock.h \
     $(wildcard include/config/have/unstable/sched/clock.h) \
-    $(wildcard include/config/irq/time/accounting.h) \
   include/net/flow_dissector.h \
   include/uapi/linux/if_ether.h \
   include/linux/splice.h \
@@ -1031,7 +1086,6 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
     $(wildcard include/config/ipv6/tunnel.h) \
     $(wildcard include/config/rps.h) \
     $(wildcard include/config/netpoll.h) \
-    $(wildcard include/config/xdp/sockets.h) \
     $(wildcard include/config/bql.h) \
     $(wildcard include/config/rfs/accel.h) \
     $(wildcard include/config/fcoe.h) \
@@ -1051,7 +1105,6 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
     $(wildcard include/config/netfilter/ingress.h) \
     $(wildcard include/config/garp.h) \
     $(wildcard include/config/mrp.h) \
-    $(wildcard include/config/cgroup/net/prio.h) \
     $(wildcard include/config/net/flow/limit.h) \
   include/linux/delay.h \
   arch/x86/include/asm/delay.h \
@@ -1092,12 +1145,10 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
     $(wildcard include/config/xfrm/statistics.h) \
   include/net/snmp.h \
   include/uapi/linux/snmp.h \
-  include/linux/u64_stats_sync.h \
   include/net/netns/unix.h \
   include/net/netns/packet.h \
   include/net/netns/ipv4.h \
     $(wildcard include/config/ip/multiple/tables.h) \
-    $(wildcard include/config/ip/route/classid.h) \
     $(wildcard include/config/ip/mroute.h) \
     $(wildcard include/config/ip/mroute/multiple/tables.h) \
     $(wildcard include/config/ip/route/multipath.h) \
@@ -1140,60 +1191,10 @@ deps_/home/yoonjae/rmm/rdma_module/rmm.o := \
   include/net/netns/mpls.h \
   include/net/netns/can.h \
   include/net/netns/xdp.h \
-  include/linux/ns_common.h \
   include/linux/seq_file_net.h \
   include/net/dcbnl.h \
   include/uapi/linux/dcbnl.h \
   include/net/netprio_cgroup.h \
-  include/linux/cgroup.h \
-    $(wildcard include/config/cgroup/cpuacct.h) \
-    $(wildcard include/config/sock/cgroup/data.h) \
-    $(wildcard include/config/cgroup/net/classid.h) \
-    $(wildcard include/config/cgroup/data.h) \
-  include/uapi/linux/cgroupstats.h \
-  include/uapi/linux/taskstats.h \
-  include/linux/nsproxy.h \
-  include/linux/user_namespace.h \
-    $(wildcard include/config/inotify/user.h) \
-    $(wildcard include/config/persistent/keyrings.h) \
-  include/linux/kernel_stat.h \
-  include/linux/interrupt.h \
-    $(wildcard include/config/irq/forced/threading.h) \
-    $(wildcard include/config/generic/irq/probe.h) \
-    $(wildcard include/config/irq/timings.h) \
-  include/linux/irqreturn.h \
-  include/linux/hardirq.h \
-  include/linux/ftrace_irq.h \
-    $(wildcard include/config/ftrace/nmi/enter.h) \
-    $(wildcard include/config/hwlat/tracer.h) \
-  include/linux/vtime.h \
-    $(wildcard include/config/virt/cpu/accounting.h) \
-  include/linux/context_tracking_state.h \
-    $(wildcard include/config/context/tracking.h) \
-  arch/x86/include/asm/irq.h \
-  arch/x86/include/asm/sections.h \
-  include/asm-generic/sections.h \
-  include/linux/cgroup-defs.h \
-  include/linux/bpf-cgroup.h \
-    $(wildcard include/config/cgroup/bpf.h) \
-  include/linux/bpf.h \
-    $(wildcard include/config/bpf/stream/parser.h) \
-    $(wildcard include/config/inet.h) \
-  include/uapi/linux/bpf.h \
-    $(wildcard include/config/efficient/unaligned/access.h) \
-    $(wildcard include/config/bpf/kprobe/override.h) \
-    $(wildcard include/config/bpf/lirc/mode2.h) \
-  include/uapi/linux/bpf_common.h \
-  include/linux/file.h \
-  include/linux/bpf_types.h \
-  include/linux/cgroup_subsys.h \
-    $(wildcard include/config/cgroup/device.h) \
-    $(wildcard include/config/cgroup/freezer.h) \
-    $(wildcard include/config/cgroup/perf.h) \
-    $(wildcard include/config/cgroup/hugetlb.h) \
-    $(wildcard include/config/cgroup/pids.h) \
-    $(wildcard include/config/cgroup/rdma.h) \
-    $(wildcard include/config/cgroup/debug.h) \
   include/net/xdp.h \
   include/uapi/linux/neighbour.h \
   include/linux/netlink.h \

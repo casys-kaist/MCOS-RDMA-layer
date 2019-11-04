@@ -3,6 +3,7 @@
 #include <linux/seq_file.h>
 #include <linux/atomic.h>
 #include <linux/proc_fs.h>
+#include <linux/kthread.h>
 
 #include <rdma/rdma_cm.h>
 
@@ -12,10 +13,12 @@
 #define RDMA_PORT 11453
 #define RDMA_ADDR_RESOLVE_TIMEOUT_MS 5000
 
+#define IMM_DATA_SIZE 32
+
 #define SINK_BUFFER_SIZE	(PAGE_SIZE * 12)
 #define RPC_BUFFER_SIZE		PAGE_SIZE
 
-#define MAX_RECV_DEPTH	(8)
+#define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
 #define MAX_SEND_DEPTH	(8)
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
 #define NR_RDMA_SLOTS	((PAGE_SIZE << (MAX_ORDER - 1)) / RDMA_SLOT_SIZE)
@@ -36,12 +39,31 @@ static int server = 0;
 module_param(server, int, 0);
 MODULE_PARM_DESC(server, "0=client, 1=server");
 
-enum wr_id_type {
-	WR_ID_REG,
-	WR_ID_RPC_ADDR,
-	WR_ID_SINK_ADDR,
-	WR_ID_RPC,
-	WR_ID_SEND_ADDR,
+enum wr_type {
+	WORK_TYPE_REG,
+	WORK_TYPE_RPC_ADDR,
+	WORK_TYPE_SINK_ADDR,
+	WORK_TYPE_RPC_RECV,
+	WORK_TYPE_SEND_ADDR,
+};
+
+struct recv_work {
+	enum wr_type work_type;
+	struct rdma_handle *rh;
+	struct ib_sge sgl;
+	struct ib_recv_wr wr;
+	dma_addr_t dma_addr;
+	void *addr;
+};
+
+struct send_work {
+	enum wr_type wokr_type;
+	struct send_work *next;
+	struct ib_sge sgl;
+	struct ib_send_wr wr;
+	void *addr;
+	unsigned long flags;
+	struct completion *done;
 };
 
 struct pool_info {
@@ -70,13 +92,10 @@ struct rdma_handle {
 	void *recv_buffer;
 	void *rpc_buffer;
 	void *sink_buffer;
-	dma_addr_t recv_dma_addr;
+	dma_addr_t recv_buffer_dma_addr;
 	dma_addr_t rpc_dma_addr;
 	size_t recv_buffer_size;
 	size_t rpc_buffer_size;
-
-	/*temp dma addr, only used init */
-	dma_addr_t pool1;
 
 	/* remote */
 	dma_addr_t remote_rpc_dma_addr;
@@ -92,6 +111,9 @@ struct rdma_handle {
 
 static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size);
 static int __setup_sink_buffer(struct rdma_handle *rh);
+static int __setup_recv_works(struct rdma_handle *rh);
+static int __accept_client(int nid, int connect_type);
+static int accept_client(void * args);
 
 /* RDMA handle for each node */
 static struct rdma_handle server_rh;
@@ -110,7 +132,6 @@ static struct ib_cq *rdma_cq = NULL;
 static DEFINE_SPINLOCK(__rdma_slots_lock);
 static DECLARE_BITMAP(__rdma_slots, NR_RDMA_SLOTS) = {0};
 static struct pool_info *sink_pool;
-static dma_addr_t sp_dma_addr;
 static char *sink_addr;
 static dma_addr_t sink_dma_addr;
 static dma_addr_t remote_sink_dma_addr;
@@ -123,14 +144,19 @@ static struct proc_dir_entry *rmm_proc;
 /*Variables for server */
 static uint32_t my_ip;
 
-static int __handle_recv(struct rdma_handle *rh, struct ib_wc *wc)
+static int __handle_recv(struct ib_wc *wc)
 {
 	int ret = 0;
 	struct pool_info *rp;
+	struct recv_work *rw;
+	struct rdma_handle *rh;
+	const struct ib_recv_wr *bad_wr;
 
-	switch (wc->wr_id) {
-		case WR_ID_RPC_ADDR:
-			ib_dma_unmap_single(rh->device, rh->rpc_dma_addr, 
+	rw = (struct recv_work *) wc->wr_id;
+	rh = rw->rh;
+	switch (rw->work_type) {
+		case WORK_TYPE_RPC_ADDR:
+			ib_dma_unmap_single(rh->device, rw->dma_addr, 
 					sizeof(struct pool_info), DMA_FROM_DEVICE);
 			if (rh->connection_type == CONNECT_FETCH)
 				rp = rpc_pools[rh->nid];
@@ -139,17 +165,25 @@ static int __handle_recv(struct rdma_handle *rh, struct ib_wc *wc)
 			rh->remote_rpc_dma_addr = rp->addr;
 			rh->remote_rpc_size = rp->size;
 			rh->rpc_rkey = rp->rkey;
+			kfree(rw);
 			DEBUG_LOG(PFX "recv rpc addr %llx %x\n", rp->addr, rp->rkey);
 			break;
 
-		case WR_ID_SINK_ADDR:
-			ib_dma_unmap_single(rh->device, sp_dma_addr, 
+		case WORK_TYPE_SINK_ADDR:
+			ib_dma_unmap_single(rh->device, rw->dma_addr, 
 					sizeof(struct pool_info), DMA_FROM_DEVICE);
 			rp = sink_pool;
 			remote_sink_dma_addr = rp->addr;
 			remote_sink_size = rp->size;
 			sink_rkey = rp->rkey;
+			kfree(rw);
 			DEBUG_LOG(PFX "recv sink addr %llx %x\n", rp->addr, rp->rkey);
+			break;
+
+		case WORK_TYPE_RPC_RECV:
+			ret = ib_post_recv(rh->qp, &rw->wr, &bad_wr);
+			if (ret || bad_wr)
+				return -1;
 			break;
 
 		default:
@@ -191,9 +225,9 @@ static int rmm_wait_for_completion(struct rdma_handle *rh, enum ib_wc_opcode exi
 		switch (wc.opcode) {
 			case IB_WC_SEND:
 				DEBUG_LOG(PFX "send completion\n");
-				if (wc.wr_id == WR_ID_RPC_ADDR)
+				if (wc.wr_id == WORK_TYPE_RPC_ADDR)
 					DEBUG_LOG(PFX "send rpc addr %llx\n", rh->rpc_dma_addr);
-				else if (wc.wr_id == WR_ID_SINK_ADDR)
+				else if (wc.wr_id == WORK_TYPE_SINK_ADDR)
 					DEBUG_LOG(PFX "send sink addr %llx\n", sink_dma_addr);
 				break;
 
@@ -207,7 +241,7 @@ static int rmm_wait_for_completion(struct rdma_handle *rh, enum ib_wc_opcode exi
 
 			case IB_WC_RECV:
 				DEBUG_LOG(PFX "recv completion\n");
-				__handle_recv(rh, &wc);
+				__handle_recv(&wc);
 				break;
 
 			case IB_WC_REG_MR:
@@ -318,7 +352,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 				.max_recv_wr = MAX_RECV_DEPTH,
 				.max_send_sge = 10,
 				.max_recv_sge = 10,
-				.max_inline_data = 32,
+				.max_inline_data = IMM_DATA_SIZE,
 			},
 			.sq_sig_type = IB_SIGNAL_REQ_WR,
 			.qp_type = IB_QPT_RC,
@@ -348,7 +382,7 @@ static  int __setup_rpc_buffer(struct rdma_handle *rh)
 		.wr = {
 			.opcode = IB_WR_REG_MR,
 			.send_flags = IB_SEND_SIGNALED,
-			.wr_id = WR_ID_REG,
+			.wr_id = WORK_TYPE_REG,
 		},
 		.access = IB_ACCESS_REMOTE_WRITE,
 		/*
@@ -424,16 +458,17 @@ out_free:
 }
 
 
-static int __setup_recv_addr(struct rdma_handle *rh, enum wr_id_type wr_id)
+static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type wr_id)
 {
 	int ret = 0;
 	dma_addr_t dma_addr;
-	struct ib_recv_wr wr;
+	struct ib_recv_wr *wr;
 	const struct ib_recv_wr *bad_wr = NULL;
 	struct ib_sge sgl = {0};
 	struct pool_info *pp;
+	struct recv_work *rw;
 
-	if (wr_id == WR_ID_RPC_ADDR) {
+	if (wr_id == WORK_TYPE_RPC_ADDR) {
 		if (rh->connection_type == CONNECT_FETCH)
 			pp = rpc_pools[rh->nid];
 		else
@@ -443,27 +478,32 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_id_type wr_id)
 		pp = sink_pool;
 	}
 
+	rw = kmalloc(sizeof(struct recv_work), GFP_KERNEL);
+	if (!rw)
+		return -ENOMEM;
+
 	/*Post receive request for recieve request pool info*/
 	dma_addr = ib_dma_map_single(rh->device, pp, sizeof(struct pool_info), DMA_FROM_DEVICE);
 	ret = ib_dma_mapping_error(rh->device, dma_addr);
 	if (ret) 
 		goto out_free;
 
+	rw->work_type = WORK_TYPE_RPC_RECV;
+	rw->dma_addr = dma_addr;
+	rw->addr = pp;
+	rw->rh = rh;
+
 	sgl.lkey = rdma_pd->local_dma_lkey;
 	sgl.addr = dma_addr;
 	sgl.length = sizeof(struct pool_info);
 
-	wr.sg_list = &sgl;
-	wr.num_sge = 1;
-	wr.next = NULL;
-	wr.wr_id = (u64) wr_id; 
+	wr = &rw->wr;
+	wr->sg_list = &sgl;
+	wr->num_sge = 1;
+	wr->next = NULL;
+	wr->wr_id = (u64) rw; 
 
-	if (wr_id == WR_ID_RPC_ADDR)
-		rh->pool1 = dma_addr;
-	else
-		sp_dma_addr = dma_addr;
-
-	ret = ib_post_recv(rh->qp, &wr, &bad_wr);
+	ret = ib_post_recv(rh->qp, wr, &bad_wr);
 	if (ret || bad_wr) 
 		goto out_free;
 
@@ -471,6 +511,79 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_id_type wr_id)
 
 out_free:
 	ib_dma_unmap_single(rh->device, dma_addr, sizeof(struct pool_info), DMA_FROM_DEVICE);
+	return ret;
+}
+
+static int __setup_recv_works(struct rdma_handle *rh)
+{
+	int ret = 0, i;
+	dma_addr_t dma_addr;
+	char *recv_buffer = NULL;
+	struct recv_work *rws = NULL;
+	const size_t buffer_size = PAGE_SIZE;
+
+	ret = __setup_recv_addr(rh, WORK_TYPE_RPC_ADDR);
+	if (ret)
+		return ret;
+
+	if (rh->connection_type == CONNECT_FETCH) {
+		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
+		if (ret)
+			return ret;
+	}
+
+	/* Initalize receive buffers */
+	recv_buffer = kmalloc(buffer_size, GFP_KERNEL);
+	if (!recv_buffer) {
+		return -ENOMEM;
+	}
+	rws = kmalloc(sizeof(*rws) * (buffer_size / IMM_DATA_SIZE), GFP_KERNEL);
+	if (!rws) {
+		ret = -ENOMEM;
+		goto out_free;
+	}
+
+	/* Populate receive buffer and work requests */
+	dma_addr = ib_dma_map_single(
+			rh->device, recv_buffer, buffer_size, DMA_FROM_DEVICE);
+	ret = ib_dma_mapping_error(rh->device, dma_addr);
+	if (ret) goto out_free;
+
+	/* receive work request pre-post */
+	for (i = 0; i < MAX_RECV_DEPTH; i++) {
+		struct recv_work *rw = rws + i;
+		struct ib_recv_wr *wr;
+		const struct ib_recv_wr *bad_wr = NULL;
+		struct ib_sge *sgl;
+
+		rw->work_type = WORK_TYPE_RPC_RECV;
+		rw->dma_addr = dma_addr + IMM_DATA_SIZE * i;
+		rw->addr = recv_buffer + IMM_DATA_SIZE * i;
+		rw->rh = rh;
+
+		sgl = &rw->sgl;
+		sgl->lkey = rdma_pd->local_dma_lkey;
+		sgl->addr = rw->dma_addr;
+		sgl->length = IMM_DATA_SIZE;
+
+		wr = &rw->wr;
+		wr->sg_list = sgl;
+		wr->num_sge = 1;
+		wr->next = NULL;
+		wr->wr_id = (u64) rw;
+
+		ret = ib_post_recv(rh->qp, wr, &bad_wr);
+		if (ret || bad_wr) goto out_free;
+	}
+	rh->recv_works = rws;
+	rh->recv_buffer = recv_buffer;
+	rh->recv_buffer_dma_addr = dma_addr;
+
+	return ret;
+
+out_free:
+	if (recv_buffer) kfree(recv_buffer);
+	if (rws) kfree(rws);
 	return ret;
 }
 
@@ -640,11 +753,8 @@ static int __connect_to_server(int nid, int connect_type)
 	if (ret) 
 		goto out_err;
 
-	step = "post recv";
-	ret = __setup_recv_addr(rh, WR_ID_RPC_ADDR);
-	if (ret) 
-		goto out_err;
-	ret = __setup_recv_addr(rh, WR_ID_SINK_ADDR);
+	step = "post recv works";
+	ret = __setup_recv_works(rh);
 	if (ret) 
 		goto out_err;
 
@@ -812,7 +922,7 @@ static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)
 	wr.send_flags = IB_SEND_SIGNALED;
 	wr.sg_list = &sgl;
 	wr.num_sge = 1;
-	wr.wr_id = WR_ID_SEND_ADDR;
+	wr.wr_id = WORK_TYPE_SEND_ADDR;
 	wr.next = NULL;
 
 	ret = ib_post_send(rh->qp, &wr, &bad_wr);
@@ -834,6 +944,30 @@ err:
 	return ret;
 }
 
+static int accept_client(void *args)
+{
+	int num_client;
+	int ret = 0;
+
+	for (num_client = 0; num_client < MAX_NUM_NODES; num_client++) {
+		if ((ret = __accept_client(num_client, CONNECT_FETCH))) 
+			return ret;
+		if (!rdma_handles[num_client]->remote_rpc_dma_addr)
+			rmm_wait_for_completion(rdma_handles[num_client], IB_WC_RECV);
+		if (!remote_sink_dma_addr)
+			rmm_wait_for_completion(rdma_handles[num_client], IB_WC_RECV);
+
+		if ((ret = __accept_client(num_client, CONNECT_EVICT))) 
+			return ret;
+		if (!rdma_handles_evic[num_client]->remote_rpc_dma_addr)
+			rmm_wait_for_completion(rdma_handles_evic[num_client], IB_WC_RECV);
+	}
+	printk(KERN_INFO PFX "Cannot accepts more clients\n");
+
+	return 0;
+}
+
+
 static int __accept_client(int nid, int connect_type)
 {
 	struct rdma_handle *rh;
@@ -854,14 +988,10 @@ static int __accept_client(int nid, int connect_type)
 	ret = __setup_pd_cq_qp(rh);
 	if (ret) goto out_err;
 
-	step = "post recv";
-	ret = __setup_recv_addr(rh, WR_ID_RPC_ADDR);
+	step = "post recv works";
+	ret = __setup_recv_works(rh);
 	if (ret)  goto out_err;
 
-	if (connect_type == CONNECT_FETCH) {
-		ret = __setup_recv_addr(rh, WR_ID_SINK_ADDR);
-		if (ret)  goto out_err;
-	}
 
 	step = "accept";
 	rh->state = RDMA_CONNECTING;
@@ -1005,28 +1135,16 @@ static int __listen_to_connection(void)
 static int __establish_connections(void)
 {
 	int i, ret;
-	int num_client;
+	struct task_struct *k = NULL;
 
 	DEBUG_LOG(PFX "establish connection\n");
 	if (server) {
 		ret = __listen_to_connection();
 		if (ret) 
 			return ret;
-
-		for (num_client = 0; num_client < MAX_NUM_NODES; num_client++) {
-			if ((ret = __accept_client(num_client, CONNECT_FETCH))) 
-				return ret;
-			if (!rdma_handles[num_client]->remote_rpc_dma_addr)
-				rmm_wait_for_completion(rdma_handles[num_client], IB_WC_RECV);
-			if (!remote_sink_dma_addr)
-				rmm_wait_for_completion(rdma_handles[num_client], IB_WC_RECV);
-
-			if ((ret = __accept_client(num_client, CONNECT_EVICT))) 
-				return ret;
-			if (!rdma_handles_evic[num_client]->remote_rpc_dma_addr)
-				rmm_wait_for_completion(rdma_handles_evic[num_client], IB_WC_RECV);
-		}
-		printk(KERN_INFO PFX "Cannot accepts more clients\n");
+		k = kthread_run(accept_client, NULL, "accept thread");
+		if (!k)
+			return -ENOMEM;
 	}
 	else {
 		for (i = 0; i < MAX_NUM_NODES; i++) { 
@@ -1061,7 +1179,7 @@ void __exit exit_rmm_rdma(void)
 		if (!rh) continue;
 
 		if (rh->recv_buffer) {
-			ib_dma_unmap_single(rh->device, rh->recv_dma_addr,
+			ib_dma_unmap_single(rh->device, rh->recv_buffer_dma_addr,
 					PAGE_SIZE, DMA_FROM_DEVICE);
 			kfree(rh->recv_buffer);
 		}
@@ -1084,8 +1202,8 @@ void __exit exit_rmm_rdma(void)
 		if (!rh) continue;
 
 		if (rh->recv_buffer) {
-			ib_dma_unmap_single(rh->device, rh->recv_dma_addr,
-					PAGE_SIZE * 16, DMA_FROM_DEVICE);
+			ib_dma_unmap_single(rh->device, rh->recv_buffer_dma_addr,
+					PAGE_SIZE, DMA_FROM_DEVICE);
 			kfree(rh->recv_buffer);
 		}
 
@@ -1214,21 +1332,6 @@ int __init init_rmm_rdma(void)
 
 	if (__establish_connections())
 		goto out_free;
-
-	/*
-	if (!server) {
-		if (__setup_sink_buffer(rdma_handles[0]))
-			goto out_free;
-
-		for (i = 0; i < MAX_NUM_NODES; i++)
-			__send_dma_addr(rdma_handles[i], sink_dma_addr, SINK_BUFFER_SIZE);
-	}
-	*/
-
-	/*
-	   if (__setup_work_request_pools())
-	   goto out_free;
-	 */
 
 	printk("Ready on InfiniBand RDMA\n");
 	return 0;
