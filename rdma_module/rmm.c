@@ -488,7 +488,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type wr_id)
 	if (ret) 
 		goto out_free;
 
-	rw->work_type = WORK_TYPE_RPC_RECV;
+	rw->work_type = wr_id;
 	rw->dma_addr = dma_addr;
 	rw->addr = pp;
 	rw->rh = rh;
@@ -1161,9 +1161,9 @@ static int __establish_connections(void)
 			if (!rdma_handles_evic[i]->remote_rpc_dma_addr)
 				rmm_wait_for_completion(rdma_handles_evic[i], IB_WC_RECV);
 		}
+		printk(PFX "Connections are established.\n");
 	}
 
-	printk(PFX "Connections are established.\n");
 	return 0;
 }
 
