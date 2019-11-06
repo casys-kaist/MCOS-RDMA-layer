@@ -95,13 +95,17 @@ struct rdma_handle {
 	void *sink_buffer;
 	dma_addr_t recv_buffer_dma_addr;
 	dma_addr_t rpc_dma_addr;
+	dma_addr_t sink_dma_addr;
 	size_t recv_buffer_size;
 	size_t rpc_buffer_size;
 
 	/* remote */
 	dma_addr_t remote_rpc_dma_addr;
+	dma_addr_t remote_sink_dma_addr;
 	size_t remote_rpc_size;
+	size_t remote_sink_size;
 	u32 rpc_rkey;
+	u32 sink_rkey;
 
 	struct rdma_cm_id *cm_id;
 	struct ib_device *device;
@@ -122,6 +126,8 @@ static struct rdma_handle *rdma_handles[MAX_NUM_NODES] = { NULL };
 static struct rdma_handle *rdma_handles_evic[MAX_NUM_NODES] = { NULL };
 static struct pool_info *rpc_pools[MAX_NUM_NODES] = { NULL };
 static struct pool_info *rpc_pools_evic[MAX_NUM_NODES] = { NULL  };
+static struct pool_info *sink_pools[MAX_NUM_NODES] = { NULL };
+static struct pool_info *sink_pools_evic[MAX_NUM_NODES] = { NULL };
 
 /* Global protection domain (pd) and memory region (mr) */
 static struct ib_pd *rdma_pd = NULL;
@@ -132,12 +138,6 @@ static struct ib_cq *rdma_cq = NULL;
 /* Global RDMA sink */
 static DEFINE_SPINLOCK(__rdma_slots_lock);
 static DECLARE_BITMAP(__rdma_slots, NR_RDMA_SLOTS) = {0};
-static struct pool_info *sink_pool;
-static char *sink_addr;
-static dma_addr_t sink_dma_addr;
-static dma_addr_t remote_sink_dma_addr;
-static size_t remote_sink_size;
-static u32 sink_rkey;
 
 static struct task_struct *accept_k = NULL;
 static struct task_struct *polling_k = NULL;
@@ -170,18 +170,21 @@ static int __handle_recv(struct ib_wc *wc)
 			rh->remote_rpc_size = rp->size;
 			rh->rpc_rkey = rp->rkey;
 			kfree(rw);
-			DEBUG_LOG(PFX "recv rpc addr %llx %x\n", rh->remote_rpc_dma_addr, rp->rkey);
+			DEBUG_LOG(PFX "recv rpc addr %llx %x\n", rh->remote_rpc_dma_addr, rh->rpc_rkey);
 			break;
 
 		case WORK_TYPE_SINK_ADDR:
 			ib_dma_unmap_single(rh->device, rw->dma_addr, 
 					sizeof(struct pool_info), DMA_FROM_DEVICE);
-			rp = sink_pool;
-			remote_sink_dma_addr = rp->addr;
-			remote_sink_size = rp->size;
-			sink_rkey = rp->rkey;
+			if (rh->connection_type == CONNECT_FETCH)
+				rp = sink_pools[rh->nid];
+			else
+				rp = sink_pools_evic[rh->nid];
+			rh->remote_sink_dma_addr = rp->addr;
+			rh->remote_sink_size = rp->size;
+			rh->sink_rkey = rp->rkey;
 			kfree(rw);
-			DEBUG_LOG(PFX "recv sink addr %llx %x\n", remote_sink_dma_addr, rp->rkey);
+			DEBUG_LOG(PFX "recv sink addr %llx %x\n", rh->remote_sink_dma_addr, rh->sink_rkey);
 			break;
 
 		case WORK_TYPE_RPC_RECV:
@@ -580,7 +583,10 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 			pp = rpc_pools_evic[rh->nid];
 	}
 	else {
-		pp = sink_pool;
+		if (rh->connection_type == CONNECT_FETCH)
+			pp = sink_pools[rh->nid];
+		else
+			pp = sink_pools_evic[rh->nid];
 	}
 
 	rw = kmalloc(sizeof(struct recv_work), GFP_KERNEL);
@@ -631,11 +637,9 @@ static int __setup_recv_works(struct rdma_handle *rh)
 	if (ret)
 		return ret;
 
-	if (rh->connection_type == CONNECT_FETCH) {
-		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
-		if (ret)
-			return ret;
-	}
+	ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
+	if (ret)
+		return ret;
 
 	/* Initalize receive buffers */
 	recv_buffer = kmalloc(buffer_size, GFP_KERNEL);
@@ -895,19 +899,17 @@ static int __connect_to_server(int nid, int connect_type)
 
 	step = "setup sink buffer";
 	DEBUG_LOG(PFX "%s\n", step);
-	if (rh->nid == 0 && connect_type == CONNECT_FETCH)
-		__setup_sink_buffer(rh);
+	__setup_sink_buffer(rh);
 
 	step = "send pool addr";
-	DEBUG_LOG(PFX "%s %llx %llx\n", step, rh->rpc_dma_addr, sink_dma_addr);
+	DEBUG_LOG(PFX "%s %llx %llx\n", step, rh->rpc_dma_addr, rh->sink_dma_addr);
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, RPC_BUFFER_SIZE);
 	if (ret)
 		goto out_err;
-	if (connect_type == CONNECT_FETCH) {
-		ret = __send_dma_addr(rh, sink_dma_addr, SINK_BUFFER_SIZE);
-		if (ret)
-			goto out_err;
-	}
+
+	ret = __send_dma_addr(rh, rh->sink_dma_addr, SINK_BUFFER_SIZE);
+	if (ret)
+		goto out_err;
 
 	printk(PFX "Connected to %d\n", nid);
 	return 0;
@@ -936,13 +938,14 @@ static int __setup_sink_buffer(struct rdma_handle *rh)
 		 */
 	};
 	struct scatterlist sg = {};
-	//char *step = NULL;
+	void *sink_buffer;
+	dma_addr_t sink_dma_addr;
 
-	sink_addr = (void *) kmalloc(SINK_BUFFER_SIZE, GFP_KERNEL);
-	if (!sink_addr) return -ENOMEM;
+	sink_buffer = (void *) kmalloc(SINK_BUFFER_SIZE, GFP_KERNEL);
+	if (!sink_buffer) return -ENOMEM;
 
 	sink_dma_addr = ib_dma_map_single(
-			rdma_pd->device, sink_addr, SINK_BUFFER_SIZE,
+			rdma_pd->device, sink_buffer, SINK_BUFFER_SIZE,
 			DMA_FROM_DEVICE);
 	ret = ib_dma_mapping_error(rdma_pd->device, sink_dma_addr);
 	if (ret) goto out_free;
@@ -971,16 +974,10 @@ static int __setup_sink_buffer(struct rdma_handle *rh)
 		goto out_dereg;
 	}
 
-	/*
-	ret = rmm_wait_for_completion(rh, IB_WC_REG_MR);
-	if (ret < 0) {
-		printk(KERN_ERR PFX "failed to register rpc mr\n");
-		goto out_dereg;
-	}
-	*/
-
 	rdma_mr = mr;
-	//printk("lkey: %x, rkey: %x, length: %x\n", mr->lkey, mr->rkey, mr->length);
+	rh->sink_dma_addr = sink_dma_addr;
+	rh->sink_buffer = sink_buffer;
+
 	return 0;
 
 out_dereg:
@@ -988,8 +985,7 @@ out_dereg:
 	return ret;
 
 out_free:
-	kfree(sink_addr);
-	sink_addr = NULL;
+	kfree(sink_buffer);
 	return ret;
 }
 
@@ -1053,10 +1049,10 @@ static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)
 			unmap;
 	}
 	/*
-	ret = rmm_wait_for_completion(rh, IB_WC_SEND);
-	if (ret)
-		goto unmap;
-		*/
+	   ret = rmm_wait_for_completion(rh, IB_WC_SEND);
+	   if (ret)
+	   goto unmap;
+	 */
 	return 0;
 
 unmap:
@@ -1119,8 +1115,7 @@ static int __accept_client(int nid, int connect_type)
 	if (ret)  goto out_err;
 
 	step = "setup sink buffer";
-	if ((nid == 0) && (connect_type == CONNECT_FETCH))
-		ret = __setup_sink_buffer(rh);
+	ret = __setup_sink_buffer(rh);
 	if (ret) goto out_err;
 
 	step = "setup rpc buffer";
@@ -1132,10 +1127,8 @@ static int __accept_client(int nid, int connect_type)
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, RPC_BUFFER_SIZE);
 	if (ret)  goto out_err;
 
-	if (connect_type == CONNECT_FETCH) {
-		ret = __send_dma_addr(rh, sink_dma_addr, SINK_BUFFER_SIZE);
-		if (ret)  goto out_err;
-	}
+	ret = __send_dma_addr(rh, rh->sink_dma_addr, SINK_BUFFER_SIZE);
+	if (ret)  goto out_err;
 
 	return 0;
 
@@ -1291,7 +1284,7 @@ void __exit exit_rmm_rdma(void)
 		kthread_stop(accept_k);
 	}
 
-	//remove_proc_entry("rmm", NULL);
+	remove_proc_entry("rmm", NULL);
 	for (i = 0; i < MAX_NUM_NODES; i++) {
 		struct rdma_handle *rh = rdma_handles[i];
 		if (!rh) continue;
@@ -1304,8 +1297,14 @@ void __exit exit_rmm_rdma(void)
 
 		if (rh->rpc_buffer) {
 			ib_dma_unmap_single(rh->device, rh->rpc_dma_addr,
-					PAGE_SIZE, DMA_FROM_DEVICE);
+					RPC_BUFFER_SIZE, DMA_FROM_DEVICE);
 			kfree(rh->rpc_buffer);
+		}
+
+		if (rh->sink_buffer) {
+			ib_dma_unmap_single(rh->device, rh->sink_dma_addr,
+					SINK_BUFFER_SIZE, DMA_FROM_DEVICE);
+			kfree(rh->sink_buffer);
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
@@ -1314,6 +1313,7 @@ void __exit exit_rmm_rdma(void)
 
 		kfree(rdma_handles[i]);
 		kfree(rpc_pools[i]);
+		kfree(sink_pools[i]);
 
 		/*free evic */
 		rh = rdma_handles_evic[i];
@@ -1331,20 +1331,24 @@ void __exit exit_rmm_rdma(void)
 			kfree(rh->rpc_buffer);
 		}
 
+		if (rh->sink_buffer) {
+			ib_dma_unmap_single(rh->device, rh->sink_dma_addr,
+					SINK_BUFFER_SIZE, DMA_FROM_DEVICE);
+			kfree(rh->sink_buffer);
+		}
+
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
 		if (rh->cq && !IS_ERR(rh->cq)) ib_destroy_cq(rh->cq);
 		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
 
 		kfree(rdma_handles[i]);
 		kfree(rpc_pools_evic[i]);
+		kfree(sink_pools_evic[i]);
 	}
 
 	/* MR is set correctly iff rdma buffer and pd are correctly allocated */
 	if (rdma_mr && !IS_ERR(rdma_mr)) {
 		ib_dereg_mr(rdma_mr);
-		ib_dma_unmap_single(rdma_pd->device, sink_dma_addr,
-				SINK_BUFFER_SIZE, DMA_FROM_DEVICE);
-		kfree(sink_addr);
 		ib_dealloc_pd(rdma_pd);
 	}
 
@@ -1369,8 +1373,23 @@ void __exit exit_rmm_rdma(void)
 
 	 */
 
-printk(KERN_INFO PFX "RDMA unloaded\n");
-return;
+	printk(KERN_INFO PFX "RDMA unloaded\n");
+	return;
+}
+
+static void disconnect(void)
+{
+	int i = 0;
+
+	if (server)
+		return;
+
+	for (i = 0; i < MAX_NUM_NODES; i++) {
+		if (rdma_handles[i])
+			rdma_disconnect(rdma_handles[i]->cm_id);
+		if (rdma_handles_evic[i])
+			rdma_disconnect(rdma_handles[i]->cm_id);
+	}
 }
 
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
@@ -1392,6 +1411,8 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 
 	if (strcmp("exit", cmd) == 0)
 		exit_rmm_rdma();
+	else if (strcmp("diss", cmd) == 0)
+		disconnect();
 
 	return 0;
 }
@@ -1406,13 +1427,11 @@ int __init init_rmm_rdma(void)
 	int i;
 
 	printk(PFX "init rmm rdma\n");
-	/*
 	   rmm_proc = proc_create("rmm", 0666, NULL, &rmm_ops);
 	   if (rmm_proc == NULL) {
 	   printk(KERN_ERR PFX "cannot create /proc/rmm\n");
 	   return -ENOMEM;
 	   }
-	 */
 
 	if (!identify_myself(&my_ip)) 
 		return -EINVAL;
@@ -1423,6 +1442,8 @@ int __init init_rmm_rdma(void)
 		if (!rh) 
 			goto out_free;
 		if (!(rpc_pools[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
+			goto out_free;
+		if (!(sink_pools[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
 			goto out_free;
 
 		rh->nid = i;
@@ -1437,14 +1458,14 @@ int __init init_rmm_rdma(void)
 			goto out_free;
 		if (!(rpc_pools_evic[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
 			goto out_free;
+		if (!(sink_pools_evic[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
+			goto out_free;
 
 		rh->nid = i;
 		rh->state = RDMA_INIT;
 		rh->connection_type = CONNECT_EVICT;
 		init_completion(&rh->cm_done);
 	}
-	if (!(sink_pool = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
-		goto out_free;
 	server_rh.state = RDMA_INIT;
 	init_completion(&server_rh.cm_done);
 
