@@ -15,7 +15,7 @@
 
 #define IMM_DATA_SIZE 32
 
-#define SINK_BUFFER_SIZE	(PAGE_SIZE * 12)
+#define SINK_BUFFER_SIZE	(PAGE_SIZE * 100)
 #define RPC_BUFFER_SIZE		PAGE_SIZE
 
 #define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
@@ -57,7 +57,8 @@ struct recv_work {
 };
 
 struct send_work {
-	enum wr_type wokr_type;
+	enum wr_type work_type;
+	struct rdma_handle *rh;
 	struct send_work *next;
 	struct ib_sge sgl;
 	struct ib_send_wr wr;
@@ -138,6 +139,9 @@ static dma_addr_t remote_sink_dma_addr;
 static size_t remote_sink_size;
 static u32 sink_rkey;
 
+static struct task_struct *accept_k = NULL;
+static struct task_struct *polling_k = NULL;
+
 /*proc file for control */
 static struct proc_dir_entry *rmm_proc;
 
@@ -166,7 +170,7 @@ static int __handle_recv(struct ib_wc *wc)
 			rh->remote_rpc_size = rp->size;
 			rh->rpc_rkey = rp->rkey;
 			kfree(rw);
-			DEBUG_LOG(PFX "recv rpc addr %llx %x\n", rp->addr, rp->rkey);
+			DEBUG_LOG(PFX "recv rpc addr %llx %x\n", rh->remote_rpc_dma_addr, rp->rkey);
 			break;
 
 		case WORK_TYPE_SINK_ADDR:
@@ -177,7 +181,7 @@ static int __handle_recv(struct ib_wc *wc)
 			remote_sink_size = rp->size;
 			sink_rkey = rp->rkey;
 			kfree(rw);
-			DEBUG_LOG(PFX "recv sink addr %llx %x\n", rp->addr, rp->rkey);
+			DEBUG_LOG(PFX "recv sink addr %llx %x\n", remote_sink_dma_addr, rp->rkey);
 			break;
 
 		case WORK_TYPE_RPC_RECV:
@@ -195,6 +199,100 @@ static int __handle_recv(struct ib_wc *wc)
 	return 0;
 }
 
+static int __handle_send(struct ib_wc *wc)
+{
+	int ret = 0;
+	struct pool_info *rp;
+	struct send_work *sw;
+	struct rdma_handle *rh;
+	dma_addr_t dma_addr;
+
+	sw = (struct send_work *) wc->wr_id;
+	dma_addr = sw->sgl.addr;
+	rh = sw->rh;
+	switch (sw->work_type) {
+		case WORK_TYPE_SEND_ADDR:
+			ib_dma_unmap_single(rh->device, dma_addr, 
+					sizeof(struct pool_info), DMA_TO_DEVICE);
+			rp = (struct pool_info *) sw->addr;
+
+			kfree(sw);
+			DEBUG_LOG(PFX "send addr %llx completed\n", rp->addr);
+			break;
+
+		default:
+			DEBUG_LOG(PFX "error: unknown id\n");
+			ret = -1;
+			break;
+	}
+
+	return 0;
+}
+
+static int polling_cq(void * args)
+{
+	struct ib_cq *cq = (struct ib_cq *) args;
+	struct ib_wc wc = {0};
+	int ret = 0;
+
+	DEBUG_LOG(PFX "Polling thread now running\n");
+
+	while ((ret = ib_poll_cq(cq, 1, &wc)) >= 0) {
+		if (kthread_should_stop())
+			return 0;
+		if (ret == 0)
+			continue;
+
+		if (wc.status) {
+			if (wc.status == IB_WC_WR_FLUSH_ERR) {
+				DEBUG_LOG("cq flushed\n");
+				continue;
+			} 
+			else {
+				printk(KERN_ERR PFX "cq completion failed with "
+						"wr_id %Lx status %d opcode %d vendor_err %x\n",
+						wc.wr_id, wc.status, wc.opcode, wc.vendor_err);
+				goto error;
+			}
+		}
+
+		switch (wc.opcode) {
+			case IB_WC_SEND:
+				DEBUG_LOG(PFX "send completion\n");
+				__handle_send(&wc);
+				break;
+
+			case IB_WC_RDMA_WRITE:
+				DEBUG_LOG(PFX "rdma write completion\n");
+				break;
+
+			case IB_WC_RDMA_READ:
+				DEBUG_LOG(PFX "rdma read completion\n");
+				break;
+
+			case IB_WC_RECV:
+				DEBUG_LOG(PFX "recv completion\n");
+				__handle_recv(&wc);
+				break;
+
+			case IB_WC_REG_MR:
+				DEBUG_LOG(PFX "mr registered\n");
+				break;
+
+			default:
+				printk(KERN_ERR PFX
+						"%s:%d Unexpected opcode %d\n",
+						__func__, __LINE__, wc.opcode);
+				goto error;
+		}
+	}
+
+	return 0;
+error:
+	return -1;
+}
+
+/*
 static int rmm_wait_for_completion(struct rdma_handle *rh, enum ib_wc_opcode exit_condition)
 {
 	struct ib_wc wc = {0};
@@ -262,6 +360,7 @@ static int rmm_wait_for_completion(struct rdma_handle *rh, enum ib_wc_opcode exi
 error:
 	return -1;
 }
+*/
 
 void cq_comp_handler(struct ib_cq *cq, void *context)
 {
@@ -305,7 +404,7 @@ retry:
 /*setup qp*/
 static int __setup_pd_cq_qp(struct rdma_handle *rh)
 {
-	int ret;
+	int ret = 0;
 
 	BUG_ON(rh->state != RDMA_ROUTE_RESOLVED && "for rh->device");
 
@@ -324,7 +423,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 	DEBUG_LOG(PFX "alloc cq\n");
 	if (!rdma_cq) {
 		struct ib_cq_init_attr cq_attr = {
-			.cqe = (MAX_SEND_DEPTH + MAX_RECV_DEPTH + NR_RDMA_SLOTS) * 3,
+			.cqe = (MAX_SEND_DEPTH + MAX_RECV_DEPTH + NR_RDMA_SLOTS) * MAX_NUM_NODES,
 			.comp_vector = 0,
 		};
 
@@ -338,6 +437,9 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 		   ret = ib_req_notify_cq(rh->cq, IB_CQ_NEXT_COMP);
 		   if (ret < 0) goto out_err;
 		 */
+		polling_k = kthread_run(polling_cq, rdma_cq, "polling_cq");
+		if (!polling_k)
+			goto out_err;
 	}
 	rh->cq = rdma_cq;
 
@@ -436,11 +538,14 @@ static  int __setup_rpc_buffer(struct rdma_handle *rh)
 		goto
 			out_dereg;
 	}
+
+	/*
 	ret = rmm_wait_for_completion(rh, IB_WC_REG_MR);
 	if (ret < 0) {
 		printk(KERN_ERR PFX "failed to register rpc mr\n");
 		goto out_dereg;
 	}
+	*/
 	rh->rpc_dma_addr = dma_addr;
 
 	rh->mr = mr;
@@ -458,7 +563,7 @@ out_free:
 }
 
 
-static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type wr_id)
+static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 {
 	int ret = 0;
 	dma_addr_t dma_addr;
@@ -468,7 +573,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type wr_id)
 	struct pool_info *pp;
 	struct recv_work *rw;
 
-	if (wr_id == WORK_TYPE_RPC_ADDR) {
+	if (work_type == WORK_TYPE_RPC_ADDR) {
 		if (rh->connection_type == CONNECT_FETCH)
 			pp = rpc_pools[rh->nid];
 		else
@@ -488,7 +593,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type wr_id)
 	if (ret) 
 		goto out_free;
 
-	rw->work_type = wr_id;
+	rw->work_type = work_type; 
 	rw->dma_addr = dma_addr;
 	rw->addr = pp;
 	rw->rh = rh;
@@ -788,13 +893,13 @@ static int __connect_to_server(int nid, int connect_type)
 	if (ret)
 		goto out_err;
 
-	step = "setup global sink buffer";
+	step = "setup sink buffer";
 	DEBUG_LOG(PFX "%s\n", step);
 	if (rh->nid == 0 && connect_type == CONNECT_FETCH)
 		__setup_sink_buffer(rh);
 
 	step = "send pool addr";
-	DEBUG_LOG(PFX "%s\n", step);
+	DEBUG_LOG(PFX "%s %llx %llx\n", step, rh->rpc_dma_addr, sink_dma_addr);
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, RPC_BUFFER_SIZE);
 	if (ret)
 		goto out_err;
@@ -866,11 +971,13 @@ static int __setup_sink_buffer(struct rdma_handle *rh)
 		goto out_dereg;
 	}
 
+	/*
 	ret = rmm_wait_for_completion(rh, IB_WC_REG_MR);
 	if (ret < 0) {
 		printk(KERN_ERR PFX "failed to register rpc mr\n");
 		goto out_dereg;
 	}
+	*/
 
 	rdma_mr = mr;
 	//printk("lkey: %x, rkey: %x, length: %x\n", mr->lkey, mr->rkey, mr->length);
@@ -895,14 +1002,18 @@ out_free:
 static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)
 {
 	int ret = 0;
-	struct ib_send_wr wr;
+	struct send_work *sw;
+	struct ib_send_wr *wr;
 	const struct ib_send_wr *bad_wr = NULL;
-	struct ib_sge sgl;
+	struct ib_sge *sgl;
 	struct pool_info *rp = NULL;
 	dma_addr_t dma_addr;
 
 	rp = kmalloc(sizeof(struct pool_info), GFP_KERNEL);
 	if (!rp) 
+		return -ENOMEM;
+	sw = kmalloc(sizeof(struct send_work), GFP_KERNEL);
+	if (!sw) 
 		return -ENOMEM;
 	rp->rkey = rh->mr->rkey;
 	rp->addr = addr;
@@ -914,18 +1025,26 @@ static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)
 	if (ret)
 		goto err;
 
-	sgl.addr = dma_addr;
-	sgl.length = sizeof(struct pool_info);
-	sgl.lkey = rdma_pd->local_dma_lkey;
+	sw->next = NULL;
+	sw->work_type = WORK_TYPE_SEND_ADDR;
+	sw->addr = rp;
+	sw->rh = rh;
 
-	wr.opcode = IB_WR_SEND;
-	wr.send_flags = IB_SEND_SIGNALED;
-	wr.sg_list = &sgl;
-	wr.num_sge = 1;
-	wr.wr_id = WORK_TYPE_SEND_ADDR;
-	wr.next = NULL;
+	wr = &sw->wr;
+	sgl = &sw->sgl;
 
-	ret = ib_post_send(rh->qp, &wr, &bad_wr);
+	sgl->addr = dma_addr;
+	sgl->length = sizeof(struct pool_info);
+	sgl->lkey = rdma_pd->local_dma_lkey;
+
+	wr->opcode = IB_WR_SEND;
+	wr->send_flags = IB_SEND_SIGNALED;
+	wr->sg_list = sgl;
+	wr->num_sge = 1;
+	wr->wr_id = (uint64_t) sw;
+	wr->next = NULL;
+
+	ret = ib_post_send(rh->qp, wr, &bad_wr);
 	if (ret || bad_wr) {
 		printk("Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
@@ -933,12 +1052,15 @@ static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)
 		goto
 			unmap;
 	}
+	/*
 	ret = rmm_wait_for_completion(rh, IB_WC_SEND);
 	if (ret)
 		goto unmap;
+		*/
+	return 0;
 
 unmap:
-	ib_dma_unmap_single(rh->device, dma_addr, sizeof(struct pool_info), DMA_TO_DEVICE);
+	ib_dma_unmap_single(rh->device, dma_addr, sizeof(struct pool_info), DMA_TO_DEVICE); 
 err:
 	kfree(rp);
 	return ret;
@@ -950,17 +1072,12 @@ static int accept_client(void *args)
 	int ret = 0;
 
 	for (num_client = 0; num_client < MAX_NUM_NODES; num_client++) {
+		if (kthread_should_stop())
+			return 0;
 		if ((ret = __accept_client(num_client, CONNECT_FETCH))) 
 			return ret;
-		if (!rdma_handles[num_client]->remote_rpc_dma_addr)
-			rmm_wait_for_completion(rdma_handles[num_client], IB_WC_RECV);
-		if (!remote_sink_dma_addr)
-			rmm_wait_for_completion(rdma_handles[num_client], IB_WC_RECV);
-
 		if ((ret = __accept_client(num_client, CONNECT_EVICT))) 
 			return ret;
-		if (!rdma_handles_evic[num_client]->remote_rpc_dma_addr)
-			rmm_wait_for_completion(rdma_handles_evic[num_client], IB_WC_RECV);
 	}
 	printk(KERN_INFO PFX "Cannot accepts more clients\n");
 
@@ -1135,15 +1252,14 @@ static int __listen_to_connection(void)
 static int __establish_connections(void)
 {
 	int i, ret;
-	struct task_struct *k = NULL;
 
 	DEBUG_LOG(PFX "establish connection\n");
 	if (server) {
 		ret = __listen_to_connection();
 		if (ret) 
 			return ret;
-		k = kthread_run(accept_client, NULL, "accept thread");
-		if (!k)
+		accept_k = kthread_run(accept_client, NULL, "accept thread");
+		if (!accept_k)
 			return -ENOMEM;
 	}
 	else {
@@ -1151,15 +1267,8 @@ static int __establish_connections(void)
 			DEBUG_LOG(PFX "connect to server\n");
 			if ((ret = __connect_to_server(i, CONNECT_FETCH))) 
 				return ret;
-			if (!rdma_handles[i]->remote_rpc_dma_addr)
-				rmm_wait_for_completion(rdma_handles[i], IB_WC_RECV);
-			if (!remote_sink_dma_addr)
-				rmm_wait_for_completion(rdma_handles[i], IB_WC_RECV);
-
 			if ((ret = __connect_to_server(i, CONNECT_EVICT))) 
 				return ret;
-			if (!rdma_handles_evic[i]->remote_rpc_dma_addr)
-				rmm_wait_for_completion(rdma_handles_evic[i], IB_WC_RECV);
 		}
 		printk(PFX "Connections are established.\n");
 	}
@@ -1172,6 +1281,15 @@ void __exit exit_rmm_rdma(void)
 	int i;
 
 	/* Detach from upper layer to prevent race condition during exit */
+	if (polling_k)
+		kthread_stop(polling_k);
+	if (server && accept_k) {
+		for (i = 0; i < MAX_NUM_NODES; i++) {
+			complete(&rdma_handles[i]->cm_done);
+			complete(&rdma_handles_evic[i]->cm_done);
+		}
+		kthread_stop(accept_k);
+	}
 
 	//remove_proc_entry("rmm", NULL);
 	for (i = 0; i < MAX_NUM_NODES; i++) {
