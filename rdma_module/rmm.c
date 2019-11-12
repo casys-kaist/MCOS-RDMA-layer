@@ -14,20 +14,19 @@
 #define RDMA_ADDR_RESOLVE_TIMEOUT_MS 5000
 
 #define IMM_DATA_SIZE 32
+#define RPC_ARGS_SIZE 32
 
 #define SINK_BUFFER_SIZE	(PAGE_SIZE * 100)
 #define RPC_BUFFER_SIZE		PAGE_SIZE
+#define RDMA_BUFFER_SIZE	PAGE_SIZE
 
 #define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
 #define MAX_SEND_DEPTH	(8)
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
-#define NR_RDMA_SLOTS	((PAGE_SIZE << (MAX_ORDER - 1)) / RDMA_SLOT_SIZE)
+#define NR_RDMA_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
 
 #define CONNECT_FETCH	0
 #define CONNECT_EVICT	1
-
-#define RPC_OP_FECTCH	0
-#define RPC_OP_EVICT	1
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
@@ -39,12 +38,18 @@ static int server = 0;
 module_param(server, int, 0);
 MODULE_PARM_DESC(server, "0=client, 1=server");
 
+enum rpc_opcode {
+	RPC_OP_FECTCH,
+	RPC_OP_EVICT,
+};
+
 enum wr_type {
 	WORK_TYPE_REG,
 	WORK_TYPE_RPC_ADDR,
 	WORK_TYPE_SINK_ADDR,
 	WORK_TYPE_RPC_RECV,
 	WORK_TYPE_SEND_ADDR,
+	WORK_TYPE_RPC,
 };
 
 struct recv_work {
@@ -64,7 +69,15 @@ struct send_work {
 	struct ib_send_wr wr;
 	void *addr;
 	unsigned long flags;
-	struct completion *done;
+};
+
+struct rdma_work {
+	enum wr_type work_type;
+	struct rdma_work *next;
+	struct ib_sge sgl;
+	struct ib_rdma_wr wr;
+	void *addr;
+	dma_addr_t dma_addr;
 };
 
 struct pool_info {
@@ -93,9 +106,14 @@ struct rdma_handle {
 	void *recv_buffer;
 	void *rpc_buffer;
 	void *sink_buffer;
+
+	struct rdma_work *rdma_work_pool;
+	spinlock_t rdma_work_pool_lock;
+
 	dma_addr_t recv_buffer_dma_addr;
 	dma_addr_t rpc_dma_addr;
 	dma_addr_t sink_dma_addr;
+
 	size_t recv_buffer_size;
 	size_t rpc_buffer_size;
 
@@ -625,6 +643,92 @@ out_free:
 	return ret;
 }
 
+/*pre alloc rdma work for rpc request */
+static int __refill_rdma_work(struct rdma_handle *rh, int nr_works)
+{
+	int i;
+	int nr_refilled = 0;
+	struct rdma_work *work_list = NULL;
+	struct rdma_work *last_work = NULL;
+
+	for (i = 0; i < nr_works; i++) {
+		struct rdma_work *rw;
+
+		rw = kzalloc(sizeof(*rw), GFP_KERNEL);
+		if (!rw) goto out;
+
+		rw->work_type = WORK_TYPE_RPC;
+
+		rw->sgl.addr = 0;
+		rw->sgl.length = 0;
+		rw->sgl.lkey = rdma_pd->local_dma_lkey;
+
+		rw->wr.wr.next = NULL;
+		rw->wr.wr.wr_id = (u64)rw;
+		rw->wr.wr.sg_list = &rw->sgl;
+		rw->wr.wr.num_sge = 1;
+		rw->wr.wr.opcode = IB_WR_RDMA_WRITE; // IB_WR_RDMA_WRITE_WITH_IMM;
+		rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+		rw->wr.remote_addr = 0;
+		rw->wr.rkey = 0;
+
+		if (!last_work) last_work = rw;
+		rw->next = work_list;
+		work_list = rw;
+		nr_refilled++;
+	}
+
+out:
+	spin_lock(&rh->rdma_work_pool_lock);
+	if (work_list) {
+		last_work->next = rh->rdma_work_pool;
+		rh->rdma_work_pool = work_list;
+	}
+	spin_unlock(&rh->rdma_work_pool_lock);
+	BUG_ON(nr_refilled == 0);
+	return nr_refilled;
+}
+
+static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key)
+{
+	struct rdma_work *rw;
+	might_sleep();
+
+	spin_lock(&rh->rdma_work_pool_lock);
+	rw = rh->rdma_work_pool;
+	rh->rdma_work_pool = rh->rdma_work_pool->next;
+	spin_unlock(&rh->rdma_work_pool_lock);
+
+	if (!rh->rdma_work_pool) {
+	//	__refill_rdma_work(NR_RDMA_SLOTS);
+		return NULL;
+	}
+
+	rw->sgl.addr = dma_addr;
+	rw->sgl.length = size;
+
+	rw->wr.remote_addr = rdma_addr;
+	rw->wr.rkey = rdma_key;
+	return rw;
+}
+
+static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
+{
+	might_sleep();
+	spin_lock(&rh->rdma_work_pool_lock);
+	rw->next = rh->rdma_work_pool;
+	rh->rdma_work_pool = rw;
+	spin_unlock(&rh->rdma_work_pool_lock);
+}
+
+static int __setup_work_request_pools(struct rdma_handle *rh)
+{
+	/* Initalize rdma work request pool */
+	__refill_rdma_work(rh, NR_RDMA_SLOTS);
+	return 0;
+
+}
+
 static int __setup_recv_works(struct rdma_handle *rh)
 {
 	int ret = 0, i;
@@ -695,77 +799,6 @@ out_free:
 	if (rws) kfree(rws);
 	return ret;
 }
-
-#ifdef QWERT
-static int __setup_work_request_pools(void)
-{
-	int ret;
-	int i;
-
-	/* Initialize send buffer */
-	ret = ring_buffer_init(&send_buffer, "rdma_send");
-	if (ret) return ret;
-
-	for (i = 0; i < send_buffer.nr_chunks; i++) {
-		dma_addr_t dma_addr = ib_dma_map_single(rdma_pd->device,
-				send_buffer.chunk_start[i], RB_CHUNK_SIZE, DMA_TO_DEVICE);
-		ret = ib_dma_mapping_error(rdma_pd->device, dma_addr);
-		if (ret) goto out_unmap;
-		send_buffer.dma_addr_base[i] = dma_addr;
-	}
-
-	/* Initialize send work request pool */
-	for (i = 0; i < MAX_SEND_DEPTH; i++) {
-		struct send_work *sw;
-
-		sw = kzalloc(sizeof(*sw), GFP_KERNEL);
-		if (!sw) {
-			ret = -ENOMEM;
-			goto out_unmap;
-		}
-		sw->header.type = WORK_TYPE_SEND;
-
-		sw->sgl.addr = 0;
-		sw->sgl.length = 0;
-		sw->sgl.lkey = rdma_pd->local_dma_lkey;
-
-		sw->wr.next = NULL;
-		sw->wr.wr_id = (u64)sw;
-		sw->wr.sg_list = &sw->sgl;
-		sw->wr.num_sge = 1;
-		sw->wr.opcode = IB_WR_SEND;
-		sw->wr.send_flags = IB_SEND_SIGNALED;
-
-		sw->next = send_work_pool;
-		send_work_pool = sw;
-	}
-
-	/* Initalize rdma work request pool */
-	__refill_rdma_work(NR_RDMA_SLOTS);
-	return 0;
-
-out_unmap:
-	while (rdma_work_pool) {
-		struct rdma_work *rw = rdma_work_pool;
-		rdma_work_pool = rw->next;
-		kfree(rw);
-	}
-	while (send_work_pool) {
-		struct send_work *sw = send_work_pool;
-		send_work_pool = sw->next;
-		kfree(sw);
-	}
-	for (i = 0; i < send_buffer.nr_chunks; i++) {
-		if (send_buffer.dma_addr_base[i]) {
-			ib_dma_unmap_single(rdma_pd->device,
-					send_buffer.dma_addr_base[i], RB_CHUNK_SIZE, DMA_TO_DEVICE);
-			send_buffer.dma_addr_base[i] = 0;
-		}
-	}
-	return ret;
-}
-#endif
-
 
 /****************************************************************************
  * Client-side connection handling
@@ -865,6 +898,11 @@ static int __connect_to_server(int nid, int connect_type)
 	step = "post recv works";
 	ret = __setup_recv_works(rh);
 	if (ret) 
+		goto out_err;
+
+	step = "setup work reqeusts";
+	ret = __setup_work_request_pools(rh);
+	if (ret)
 		goto out_err;
 
 	step = "connect";
@@ -1105,6 +1143,9 @@ static int __accept_client(int nid, int connect_type)
 	ret = __setup_recv_works(rh);
 	if (ret)  goto out_err;
 
+	step = "setup rdma works";
+	ret = __setup_work_request_pools(rh);
+	if (ret)  goto out_err;
 
 	step = "accept";
 	rh->state = RDMA_CONNECTING;
@@ -1449,6 +1490,7 @@ int __init init_rmm_rdma(void)
 		rh->nid = i;
 		rh->state = RDMA_INIT;
 		rh->connection_type = CONNECT_FETCH;
+		spin_lock_init(&rh->rdma_work_pool_lock);
 		init_completion(&rh->cm_done);
 	}
 	for (i = 0; i < MAX_NUM_NODES; i++) {
@@ -1464,6 +1506,7 @@ int __init init_rmm_rdma(void)
 		rh->nid = i;
 		rh->state = RDMA_INIT;
 		rh->connection_type = CONNECT_EVICT;
+		spin_lock_init(&rh->rdma_work_pool_lock);
 		init_completion(&rh->cm_done);
 	}
 	server_rh.state = RDMA_INIT;
