@@ -24,6 +24,7 @@
 #define MAX_SEND_DEPTH	(8)
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
 #define NR_RDMA_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
+#define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
 
 #define CONNECT_FETCH	0
 #define CONNECT_EVICT	1
@@ -125,6 +126,9 @@ struct rdma_handle {
 	u32 rpc_rkey;
 	u32 sink_rkey;
 
+	DECLARE_BITMAP(rpc_slots, NR_RDMA_SLOTS);
+	spinlock_t rpc_slots_lock;
+
 	struct rdma_cm_id *cm_id;
 	struct ib_device *device;
 	struct ib_cq *cq;
@@ -153,10 +157,6 @@ static struct ib_mr *rdma_mr = NULL;
 /*Global CQ */
 static struct ib_cq *rdma_cq = NULL;
 
-/* Global RDMA sink */
-static DEFINE_SPINLOCK(__rdma_slots_lock);
-static DECLARE_BITMAP(__rdma_slots, NR_RDMA_SLOTS) = {0};
-
 static struct task_struct *accept_k = NULL;
 static struct task_struct *polling_k = NULL;
 
@@ -165,6 +165,41 @@ static struct proc_dir_entry *rmm_proc;
 
 /*Variables for server */
 static uint32_t my_ip;
+
+static inline int __get_rpc_buffer(struct rdma_handle *rh) 
+{
+	int i;
+
+	do {
+		spin_lock(&rh->rpc_slots_lock);
+		i = find_first_zero_bit(rh->rpc_slots, NR_RDMA_SLOTS);
+		if (i < NR_RDMA_SLOTS) break;
+		spin_unlock(&rh->rpc_slots_lock);
+		WARN_ON_ONCE("recv buffer is full");
+	} while (i >= NR_RDMA_SLOTS);
+	set_bit(i, rh->rpc_slots);
+	spin_unlock(&rh->rpc_slots_lock);
+
+	/*
+	if (addr) {
+		*addr = rdma_sink_addr + RDMA_SLOT_SIZE * i;
+	}
+	if (dma_addr) {
+		*dma_addr = __rdma_sink_dma_addr + RDMA_SLOT_SIZE * i;
+	}
+	*/
+	return i;
+}
+
+static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot) 
+{
+	spin_lock(&rh->rpc_slots_lock);
+/*
+	BUG_ON(!test_bit(slot, rh->rpc_slots));
+*/
+	clear_bit(slot, rh->rpc_slots);
+	spin_unlock(&rh->rpc_slots_lock);
+}
 
 static int __handle_recv(struct ib_wc *wc)
 {
@@ -1491,6 +1526,7 @@ int __init init_rmm_rdma(void)
 		rh->state = RDMA_INIT;
 		rh->connection_type = CONNECT_FETCH;
 		spin_lock_init(&rh->rdma_work_pool_lock);
+		spin_lock_init(&rh->rpc_slots_lock);
 		init_completion(&rh->cm_done);
 	}
 	for (i = 0; i < MAX_NUM_NODES; i++) {
@@ -1507,6 +1543,7 @@ int __init init_rmm_rdma(void)
 		rh->state = RDMA_INIT;
 		rh->connection_type = CONNECT_EVICT;
 		spin_lock_init(&rh->rdma_work_pool_lock);
+		spin_lock_init(&rh->rpc_slots_lock);
 		init_completion(&rh->cm_done);
 	}
 	server_rh.state = RDMA_INIT;
