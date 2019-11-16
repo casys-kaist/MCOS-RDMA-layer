@@ -13,8 +13,8 @@
 #define RDMA_PORT 11453
 #define RDMA_ADDR_RESOLVE_TIMEOUT_MS 5000
 
-#define IMM_DATA_SIZE 32
-#define RPC_ARGS_SIZE 32
+#define IMM_DATA_SIZE 32 /* bits */
+#define RPC_ARGS_SIZE 16 /* bytes */
 
 #define SINK_BUFFER_SIZE	(PAGE_SIZE * 100)
 #define RPC_BUFFER_SIZE		PAGE_SIZE
@@ -25,6 +25,7 @@
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
 #define NR_RDMA_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
 #define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
+#define NR_SINK_SLOTS	(SINK_BUFFER_SIZE / PAGE_SIZE)
 
 #define CONNECT_FETCH	0
 #define CONNECT_EVICT	1
@@ -128,6 +129,8 @@ struct rdma_handle {
 
 	DECLARE_BITMAP(rpc_slots, NR_RDMA_SLOTS);
 	spinlock_t rpc_slots_lock;
+	DECLARE_BITMAP(sink_slots, NR_SINK_SLOTS);
+	spinlock_t sink_slots_lock;
 
 	struct rdma_cm_id *cm_id;
 	struct ib_device *device;
@@ -166,17 +169,21 @@ static struct proc_dir_entry *rmm_proc;
 /*Variables for server */
 static uint32_t my_ip;
 
+int rmm_reclaim(void *vaddr, unsigned int order)
+{
+}
+
 static inline int __get_rpc_buffer(struct rdma_handle *rh) 
 {
 	int i;
 
 	do {
 		spin_lock(&rh->rpc_slots_lock);
-		i = find_first_zero_bit(rh->rpc_slots, NR_RDMA_SLOTS);
-		if (i < NR_RDMA_SLOTS) break;
+		i = find_first_zero_bit(rh->rpc_slots, NR_RPC_SLOTS);
+		if (i < NR_RPC_SLOTS) break;
 		spin_unlock(&rh->rpc_slots_lock);
 		WARN_ON_ONCE("recv buffer is full");
-	} while (i >= NR_RDMA_SLOTS);
+	} while (i >= NR_RPC_SLOTS);
 	set_bit(i, rh->rpc_slots);
 	spin_unlock(&rh->rpc_slots_lock);
 
@@ -199,6 +206,41 @@ static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot)
 */
 	clear_bit(slot, rh->rpc_slots);
 	spin_unlock(&rh->rpc_slots_lock);
+}
+
+static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order) 
+{
+	int i;
+	unsigned int num_pages = 1 << order;
+
+	do {
+		spin_lock(&rh->sink_slots_lock);
+		i = bitmap_find_next_zero_area(rh->sink_slots, NR_RPC_SLOTS, 0, num_pages, 0);
+		if (i < NR_RPC_SLOTS) break;
+		spin_unlock(&rh->sink_slots_lock);
+		WARN_ON_ONCE("recv buffer is full");
+	} while (i >= NR_RPC_SLOTS);
+	bitmap_set(rh->sink_slots, i, num_pages);
+	spin_unlock(&rh->sink_slots_lock);
+
+	/*
+	if (addr) {
+		*addr = rdma_sink_addr + RDMA_SLOT_SIZE * i;
+	}
+	if (dma_addr) {
+		*dma_addr = __rdma_sink_dma_addr + RDMA_SLOT_SIZE * i;
+	}
+	*/
+	return i;
+}
+
+static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned int order) 
+{
+	unsigned int num_pages = 1 << order;
+
+	spin_lock(&rh->sink_slots_lock);
+	bitmap_clear(rh->sink_slots, slot, num_pages);
+	spin_unlock(&rh->sink_slots_lock);
 }
 
 static int __handle_recv(struct ib_wc *wc)
@@ -479,7 +521,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 	DEBUG_LOG(PFX "alloc cq\n");
 	if (!rdma_cq) {
 		struct ib_cq_init_attr cq_attr = {
-			.cqe = (MAX_SEND_DEPTH + MAX_RECV_DEPTH + NR_RDMA_SLOTS) * MAX_NUM_NODES,
+			.cqe = (MAX_SEND_DEPTH + MAX_RECV_DEPTH + NR_RPC_SLOTS) * MAX_NUM_NODES,
 			.comp_vector = 0,
 		};
 
@@ -510,7 +552,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 				.max_recv_wr = MAX_RECV_DEPTH,
 				.max_send_sge = 10,
 				.max_recv_sge = 10,
-				.max_inline_data = IMM_DATA_SIZE,
+			//	.max_inline_data = IMM_DATA_SIZE,
 			},
 			.sq_sig_type = IB_SIGNAL_REQ_WR,
 			.qp_type = IB_QPT_RC,
@@ -759,7 +801,7 @@ static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
 static int __setup_work_request_pools(struct rdma_handle *rh)
 {
 	/* Initalize rdma work request pool */
-	__refill_rdma_work(rh, NR_RDMA_SLOTS);
+	__refill_rdma_work(rh, NR_RPC_SLOTS);
 	return 0;
 
 }
@@ -1228,14 +1270,14 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 		if (nid == MAX_NUM_NODES)
 			return 0;
 		rh = rdma_handles[nid];
-		//rh->nid = nid;
+		rh->nid = nid;
 	}
 	else {
 		nid = atomic_inc_return(&num_request_evic);
 		if (nid == MAX_NUM_NODES)
 			return 0;
 		rh = rdma_handles_evic[nid];
-		//rh->nid = nid;
+		rh->nid = nid;
 	}
 	cm_id->context = rh;
 	rh->cm_id = cm_id;
@@ -1525,8 +1567,11 @@ int __init init_rmm_rdma(void)
 		rh->nid = i;
 		rh->state = RDMA_INIT;
 		rh->connection_type = CONNECT_FETCH;
+
 		spin_lock_init(&rh->rdma_work_pool_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
+		spin_lock_init(&rh->sink_slots_lock);
+
 		init_completion(&rh->cm_done);
 	}
 	for (i = 0; i < MAX_NUM_NODES; i++) {
@@ -1542,8 +1587,11 @@ int __init init_rmm_rdma(void)
 		rh->nid = i;
 		rh->state = RDMA_INIT;
 		rh->connection_type = CONNECT_EVICT;
+
 		spin_lock_init(&rh->rdma_work_pool_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
+//		spin_lock_init(&rh->sink_slots_lock);
+
 		init_completion(&rh->cm_done);
 	}
 	server_rh.state = RDMA_INIT;
