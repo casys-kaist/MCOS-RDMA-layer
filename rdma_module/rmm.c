@@ -23,8 +23,8 @@
 #define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
 #define MAX_SEND_DEPTH	(8)
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
-#define NR_RDMA_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
 #define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
+#define NR_RDMA_SLOTS	(NR_RPC_SLOTS)
 #define NR_SINK_SLOTS	(SINK_BUFFER_SIZE / PAGE_SIZE)
 
 #define CONNECT_FETCH	0
@@ -74,6 +74,7 @@ struct send_work {
 };
 
 struct rdma_work {
+	int id;
 	enum wr_type work_type;
 	struct rdma_work *next;
 	struct ib_sge sgl;
@@ -110,8 +111,9 @@ struct rdma_handle {
 	void *rpc_buffer;
 	void *sink_buffer;
 
+	struct rdma_work *rdma_work_head;
 	struct rdma_work *rdma_work_pool;
-	spinlock_t rdma_work_pool_lock;
+	spinlock_t rdma_work_head_lock;
 
 	dma_addr_t recv_buffer_dma_addr;
 	dma_addr_t rpc_dma_addr;
@@ -776,13 +778,15 @@ static int __refill_rdma_work(struct rdma_handle *rh, int nr_works)
 	struct rdma_work *work_list = NULL;
 	struct rdma_work *last_work = NULL;
 
-	for (i = 0; i < nr_works; i++) {
-		struct rdma_work *rw;
+	rh->rdma_work_pool = kzalloc(sizeof(struct rdma_work) * nr_works, GFP_KERNEL);
+	if (!rh->rdma_work_pool)
+		return -ENOMEM;
 
-		rw = kzalloc(sizeof(*rw), GFP_KERNEL);
-		if (!rw) goto out;
+	for (i = 0; i < nr_works; i++) {
+		struct rdma_work *rw = &rh->rdma_work_pool[i];
 
 		rw->work_type = WORK_TYPE_RPC;
+		rw->id = i;
 
 		rw->sgl.addr = 0;
 		rw->sgl.length = 0;
@@ -804,12 +808,12 @@ static int __refill_rdma_work(struct rdma_handle *rh, int nr_works)
 	}
 
 out:
-	spin_lock(&rh->rdma_work_pool_lock);
+	spin_lock(&rh->rdma_work_head_lock);
 	if (work_list) {
-		last_work->next = rh->rdma_work_pool;
-		rh->rdma_work_pool = work_list;
+		last_work->next = rh->rdma_work_head;
+		rh->rdma_work_head = work_list;
 	}
-	spin_unlock(&rh->rdma_work_pool_lock);
+	spin_unlock(&rh->rdma_work_head_lock);
 	BUG_ON(nr_refilled == 0);
 	return nr_refilled;
 }
@@ -819,12 +823,12 @@ static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_
 	struct rdma_work *rw;
 	might_sleep();
 
-	spin_lock(&rh->rdma_work_pool_lock);
-	rw = rh->rdma_work_pool;
-	rh->rdma_work_pool = rh->rdma_work_pool->next;
-	spin_unlock(&rh->rdma_work_pool_lock);
+	spin_lock(&rh->rdma_work_head_lock);
+	rw = rh->rdma_work_head;
+	rh->rdma_work_head = rh->rdma_work_head->next;
+	spin_unlock(&rh->rdma_work_head_lock);
 
-	if (!rh->rdma_work_pool) {
+	if (!rh->rdma_work_head) {
 	//	__refill_rdma_work(NR_RDMA_SLOTS);
 		return NULL;
 	}
@@ -840,17 +844,18 @@ static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_
 static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
 {
 	might_sleep();
-	spin_lock(&rh->rdma_work_pool_lock);
-	rw->next = rh->rdma_work_pool;
-	rh->rdma_work_pool = rw;
-	spin_unlock(&rh->rdma_work_pool_lock);
+	spin_lock(&rh->rdma_work_head_lock);
+	rw->next = rh->rdma_work_head;
+	rh->rdma_work_head = rw;
+	spin_unlock(&rh->rdma_work_head_lock);
 }
 
 static int __setup_work_request_pools(struct rdma_handle *rh)
 {
+	int ret;
 	/* Initalize rdma work request pool */
-	__refill_rdma_work(rh, NR_RPC_SLOTS);
-	return 0;
+	ret = __refill_rdma_work(rh, NR_RPC_SLOTS);
+	return ret;
 
 }
 
@@ -1616,7 +1621,7 @@ int __init init_rmm_rdma(void)
 		rh->state = RDMA_INIT;
 		rh->connection_type = CONNECT_FETCH;
 
-		spin_lock_init(&rh->rdma_work_pool_lock);
+		spin_lock_init(&rh->rdma_work_head_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
 		spin_lock_init(&rh->sink_slots_lock);
 
@@ -1636,7 +1641,7 @@ int __init init_rmm_rdma(void)
 		rh->state = RDMA_INIT;
 		rh->connection_type = CONNECT_EVICT;
 
-		spin_lock_init(&rh->rdma_work_pool_lock);
+		spin_lock_init(&rh->rdma_work_head_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
 //		spin_lock_init(&rh->sink_slots_lock);
 
