@@ -13,7 +13,7 @@
 #define RDMA_PORT 11453
 #define RDMA_ADDR_RESOLVE_TIMEOUT_MS 5000
 
-#define IMM_DATA_SIZE 32 /* bits */
+#define IMM_DATA_SIZE 4 /* bytes */
 #define RPC_ARGS_SIZE 16 /* bytes */
 
 #define SINK_BUFFER_SIZE	(PAGE_SIZE * 100)
@@ -78,6 +78,7 @@ struct rdma_work {
 	struct rdma_work *next;
 	struct ib_sge sgl;
 	struct ib_rdma_wr wr;
+	bool done;
 	void *addr;
 	dma_addr_t dma_addr;
 };
@@ -144,6 +145,12 @@ static int __setup_sink_buffer(struct rdma_handle *rh);
 static int __setup_recv_works(struct rdma_handle *rh);
 static int __accept_client(int nid, int connect_type);
 static int accept_client(void * args);
+static inline int __get_rpc_buffer(struct rdma_handle *rh);
+static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot);
+static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order);
+static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned int order);
+static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
+static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
 
 /* RDMA handle for each node */
 static struct rdma_handle server_rh;
@@ -169,8 +176,49 @@ static struct proc_dir_entry *rmm_proc;
 /*Variables for server */
 static uint32_t my_ip;
 
-int rmm_reclaim(void *vaddr, unsigned int order)
+int rmm_reclaim(int nid, void *vaddr, unsigned int order)
 {
+	int i, ret = 0;
+	uint8_t *rpc_buffer;
+	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+	struct rdma_handle *rh = rdma_handles[nid];	
+	struct rdma_work *rw;
+	const struct ib_send_wr *bad_wr;
+
+	i = __get_rpc_buffer(rh);
+	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
+	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
+	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
+
+	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	rw->wr.wr.ex.imm_data = cpu_to_be32(i);
+	rw->work_type = WORK_TYPE_RPC;
+	rw->addr = rpc_buffer;
+	rw->dma_addr = rpc_dma_addr;
+	rw->done = false;
+
+	/*copy rpc args to buffer */
+	*((uint64_t *) rpc_buffer) = (uint64_t) vaddr;
+	*((uint64_t *) (rpc_buffer + 8)) = order;
+
+	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	if (ret || bad_wr) {
+		printk("Cannot post send wr, %d %p\n", ret, bad_wr);
+		if (bad_wr)
+			ret = -EINVAL;
+		goto put;
+	}
+
+	while (!rw->done)
+		;
+
+	DEBUG_LOG(PFX "reclaim done\n");
+	
+put:
+	__put_rpc_buffer(rh, i);
+	__put_rdma_work(rh, rw);
+
+	return ret;
 }
 
 static inline int __get_rpc_buffer(struct rdma_handle *rh) 
@@ -215,11 +263,11 @@ static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order)
 
 	do {
 		spin_lock(&rh->sink_slots_lock);
-		i = bitmap_find_next_zero_area(rh->sink_slots, NR_RPC_SLOTS, 0, num_pages, 0);
-		if (i < NR_RPC_SLOTS) break;
+		i = bitmap_find_next_zero_area(rh->sink_slots, NR_SINK_SLOTS, 0, num_pages, 0);
+		if (i < NR_SINK_SLOTS) break;
 		spin_unlock(&rh->sink_slots_lock);
 		WARN_ON_ONCE("recv buffer is full");
-	} while (i >= NR_RPC_SLOTS);
+	} while (i >= NR_SINK_SLOTS);
 	bitmap_set(rh->sink_slots, i, num_pages);
 	spin_unlock(&rh->sink_slots_lock);
 
