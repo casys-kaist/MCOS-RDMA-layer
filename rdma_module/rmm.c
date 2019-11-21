@@ -16,7 +16,7 @@
 #define IMM_DATA_SIZE 4 /* bytes */
 #define RPC_ARGS_SIZE 32 /* bytes */
 
-#define SINK_BUFFER_SIZE	(PAGE_SIZE * 10)
+#define SINK_BUFFER_SIZE	(PAGE_SIZE * 100)
 #define RPC_BUFFER_SIZE		PAGE_SIZE
 #define RDMA_BUFFER_SIZE	PAGE_SIZE
 
@@ -189,6 +189,7 @@ int rmm_fetch(int nid, void *vaddr, unsigned int order)
 	struct rdma_handle *rh = rdma_handles[nid];	
 	struct rdma_work *rw;
 	const struct ib_send_wr *bad_wr = NULL;
+	bool done_copy;
 
 	i = __get_rpc_buffer(rh);
 	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
@@ -218,11 +219,14 @@ int rmm_fetch(int nid, void *vaddr, unsigned int order)
 		goto put;
 	}
 
-	while (!rw->done)
-		;
+	DEBUG_LOG(PFX "wait %p\n", rw);
+
+	do {
+		barrier();
+	} while(!(done_copy = rw->done));
 
 	DEBUG_LOG(PFX "reclaim done\n");
-	
+
 put:
 	__put_rpc_buffer(rh, i);
 	__put_rdma_work(rh, rw);
@@ -245,22 +249,22 @@ static inline int __get_rpc_buffer(struct rdma_handle *rh)
 	spin_unlock(&rh->rpc_slots_lock);
 
 	/*
-	if (addr) {
-		*addr = rdma_sink_addr + RDMA_SLOT_SIZE * i;
-	}
-	if (dma_addr) {
-		*dma_addr = __rdma_sink_dma_addr + RDMA_SLOT_SIZE * i;
-	}
-	*/
+	   if (addr) {
+	 *addr = rdma_sink_addr + RDMA_SLOT_SIZE * i;
+	 }
+	 if (dma_addr) {
+	 *dma_addr = __rdma_sink_dma_addr + RDMA_SLOT_SIZE * i;
+	 }
+	 */
 	return i;
 }
 
 static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot) 
 {
 	spin_lock(&rh->rpc_slots_lock);
-/*
-	BUG_ON(!test_bit(slot, rh->rpc_slots));
-*/
+	/*
+	   BUG_ON(!test_bit(slot, rh->rpc_slots));
+	 */
 	clear_bit(slot, rh->rpc_slots);
 	spin_unlock(&rh->rpc_slots_lock);
 }
@@ -281,13 +285,13 @@ static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order)
 	spin_unlock(&rh->sink_slots_lock);
 
 	/*
-	if (addr) {
-		*addr = rdma_sink_addr + RDMA_SLOT_SIZE * i;
-	}
-	if (dma_addr) {
-		*dma_addr = __rdma_sink_dma_addr + RDMA_SLOT_SIZE * i;
-	}
-	*/
+	   if (addr) {
+	 *addr = rdma_sink_addr + RDMA_SLOT_SIZE * i;
+	 }
+	 if (dma_addr) {
+	 *dma_addr = __rdma_sink_dma_addr + RDMA_SLOT_SIZE * i;
+	 }
+	 */
 	return i;
 }
 
@@ -326,14 +330,13 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	remote_sink_dma_addr = rh->remote_sink_dma_addr + (i * PAGE_SIZE);
 
 	rw = __get_rdma_work(rh, sink_dma_addr, PAGE_SIZE * num_page, remote_sink_dma_addr, rh->sink_rkey);
-	//rw = __get_rdma_work(rh, rh->rpc_dma_addr, PAGE_SIZE * num_page, rh->remote_rpc_dma_addr, rh->sink_rkey);
-	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
+	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | id);
 	rw->work_type = WORK_TYPE_RPC;
 	rw->addr = sink_addr;
 	rw->dma_addr = sink_dma_addr;
 	rw->done = false;
 
-	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
+	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, id, rw->wr.wr.ex.imm_data);
 
 	/* memcpy */
 
@@ -359,9 +362,10 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 
 	rw = &rh->rdma_work_pool[id];
 	sink_addr = (uint8_t *) rh->sink_buffer + offset;
-	
+
 	/* memcpy */
 	rw->done = true;
+	DEBUG_LOG(PFX "done %p %d\n", rw, rw->done);
 
 	return 0;
 }
@@ -386,7 +390,7 @@ static int __handle_rpc(struct ib_wc *wc)
 	id = imm_data & 0x00007FFF;
 	op = imm_data & 0x00008000;
 
-	DEBUG_LOG(PFX "offset: %d, id: %d\n op: %d", offset, id, op);
+	DEBUG_LOG(PFX "offset: %d, id: %d\n op: %d\n", offset, id, op);
 
 	if (rh->connection_type == CONNECT_FETCH) {
 		if (server) {
@@ -405,12 +409,12 @@ static int __handle_rpc(struct ib_wc *wc)
 	   DEBUG_LOG(PFX "%X\n", temp);
 	 */
 	/*
-	ret = ib_post_recv(rh->qp, &rw->wr, &bad_wr);
-	if (ret || bad_wr) 
-		if (bad_wr)
-			ret = -EINVAL;
-		*/
- 
+	   ret = ib_post_recv(rh->qp, &rw->wr, &bad_wr);
+	   if (ret || bad_wr) 
+	   if (bad_wr)
+	   ret = -EINVAL;
+	 */
+
 
 	return 0;
 }
@@ -1494,16 +1498,10 @@ void __exit exit_rmm_rdma(void)
 			kfree(rh->recv_buffer);
 		}
 
-		if (rh->rpc_buffer) {
-			ib_dma_unmap_single(rh->device, rh->rpc_dma_addr,
-					RPC_BUFFER_SIZE, DMA_FROM_DEVICE);
-			kfree(rh->rpc_buffer);
-		}
-
-		if (rh->sink_buffer) {
-			ib_dma_unmap_single(rh->device, rh->sink_dma_addr,
-					SINK_BUFFER_SIZE, DMA_FROM_DEVICE);
-			kfree(rh->sink_buffer);
+		if (rh->dma_buffer) {
+			ib_dma_unmap_single(rh->device, rh->dma_addr,
+					RPC_BUFFER_SIZE + SINK_BUFFER_SIZE, DMA_BIDIRECTIONAL);
+			kfree(rh->dma_buffer);
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
@@ -1524,16 +1522,10 @@ void __exit exit_rmm_rdma(void)
 			kfree(rh->recv_buffer);
 		}
 
-		if (rh->rpc_buffer) {
-			ib_dma_unmap_single(rh->device, rh->rpc_dma_addr,
-					PAGE_SIZE, DMA_FROM_DEVICE);
-			kfree(rh->rpc_buffer);
-		}
-
-		if (rh->sink_buffer) {
-			ib_dma_unmap_single(rh->device, rh->sink_dma_addr,
-					SINK_BUFFER_SIZE, DMA_FROM_DEVICE);
-			kfree(rh->sink_buffer);
+		if (rh->dma_buffer) {
+			ib_dma_unmap_single(rh->device, rh->dma_addr,
+					RPC_BUFFER_SIZE + SINK_BUFFER_SIZE, DMA_BIDIRECTIONAL);
+			kfree(rh->dma_buffer);
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
@@ -1551,29 +1543,8 @@ void __exit exit_rmm_rdma(void)
 		ib_dealloc_pd(rdma_pd);
 	}
 
-	/*
-	   for (i = 0; i < send_buffer.nr_chunks; i++) {
-	   if (send_buffer.dma_addr_base[i]) {
-	   ib_dma_unmap_single(rdma_pd->device,
-	   send_buffer.dma_addr_base[i], RB_CHUNK_SIZE, DMA_TO_DEVICE);
-	   }
-	   }
-	   while (send_work_pool) {
-	   struct send_work *sw = send_work_pool;
-	   send_work_pool = sw->next;
-	   kfree(sw);
-	   }
-	   ring_buffer_destroy(&send_buffer);
-
-	   while (rdma_work_pool) {
-	   struct rdma_work *rw = rdma_work_pool;
-	   rdma_work_pool = rw->next;
-	   kfree(rw);
-
-	 */
-
-printk(KERN_INFO PFX "RDMA unloaded\n");
-return;
+	printk(KERN_INFO PFX "RDMA unloaded\n");
+	return;
 }
 
 static void disconnect(void)
@@ -1599,7 +1570,7 @@ static void test(void)
 	DEBUG_LOG("fetch\n");
 	rmm_fetch(0, (void *) 0xFF00FF00FF00FF00, 0);
 	rmm_fetch(0, (void *) 0xFF00FF00FF00FF00, 2);
-	rmm_fetch(0, (void *) 0xFF00FF00FF00FF00, 3);
+	//rmm_fetch(0, (void *) 0xFF00FF00FF00FF00, 3);
 }
 
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
