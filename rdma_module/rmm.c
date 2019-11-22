@@ -441,7 +441,7 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	remote_sink_dma_addr = rh->remote_sink_dma_addr + (i * PAGE_SIZE);
 
 	rw = __get_rdma_work(rh, sink_dma_addr, PAGE_SIZE, remote_sink_dma_addr, rh->sink_rkey);
-	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | id);
+	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | id | 0x8000);
 	rw->work_type = WORK_TYPE_RPC;
 	rw->addr = sink_addr;
 	rw->dma_addr = sink_dma_addr;
@@ -453,8 +453,10 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, id, rw->wr.wr.ex.imm_data);
 
-	*((uint64_t *) sink_addr) = my_data;
+	*((uint64_t *) sink_addr) = (uint64_t) my_data;
 	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
+
+	DEBUG_LOG(PFX "allocating addr %llx\n", my_data);
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -498,8 +500,10 @@ static int rpc_handle_alloc_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 	sink_dma_addr = rh->sink_dma_addr + (offset * PAGE_SIZE);
 
 	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
-	remote_data = (char *) sink_addr;
+	remote_data = (char *) *((uint64_t *) sink_addr);
 	rw->done = true;
+	DEBUG_LOG(PFX "allocated addr %llx\n", remote_data);
+	DEBUG_LOG(PFX "done %p %d\n", rw, rw->done);
 
 	return 0;
 }
@@ -522,9 +526,9 @@ static int __handle_rpc(struct ib_wc *wc)
 
 	offset = imm_data >> 16;
 	id = imm_data & 0x00007FFF;
-	op = imm_data & 0x00008000;
+	op = (imm_data & 0x00008000) >> 15;
 
-	DEBUG_LOG(PFX "offset: %d, id: %d\n op: %d\n", offset, id, op);
+	DEBUG_LOG(PFX "offset: %d, id: %d op: %d\n", offset, id, op);
 
 	if (rh->connection_type == CONNECT_FETCH) {
 		if (server) {
@@ -1736,11 +1740,13 @@ static void test(void)
 		arr[i] = index;
 	}
 
+	DEBUG_LOG(PFX "alloc\n");
 	rmm_alloc(0);
 
 	if (server)
 		return;
 
+	DEBUG_LOG(PFX "fetch start\n");
 	getnstimeofday(&start_tv);
 	for (i = 0; i < 500; i++)
 		rmm_fetch(0, my_data + (arr[i] * PAGE_SIZE), remote_data + (arr[i] * PAGE_SIZE), 0);
@@ -1749,7 +1755,7 @@ static void test(void)
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 
-	printk(KERN_INFO PFX "elapsed time %lu (ns)\n", elapsed);
+	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 500);
 }
 
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
