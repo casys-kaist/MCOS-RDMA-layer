@@ -1,4 +1,5 @@
 #include <linux/module.h>
+#include <linux/delay.h>
 #include <linux/bitmap.h>
 #include <linux/seq_file.h>
 #include <linux/atomic.h>
@@ -15,7 +16,7 @@
 #define RDMA_ADDR_RESOLVE_TIMEOUT_MS 5000
 
 #define IMM_DATA_SIZE 4 /* bytes */
-#define RPC_ARGS_SIZE 32 /* bytes */
+#define RPC_ARGS_SIZE 16 /* bytes */
 
 #define SINK_BUFFER_SIZE	(PAGE_SIZE * 100)
 #define RPC_BUFFER_SIZE		PAGE_SIZE
@@ -175,7 +176,6 @@ static struct pool_info *sink_pools_evic[MAX_NUM_NODES] = { NULL };
 
 /* Global protection domain (pd) and memory region (mr) */
 static struct ib_pd *rdma_pd = NULL;
-static struct ib_mr *rdma_mr = NULL;
 /*Global CQ */
 static struct ib_cq *rdma_cq = NULL;
 
@@ -266,11 +266,11 @@ int rmm_fetch(int nid, void *src, void *vaddr, unsigned int order)
 
 	/*copy rpc args to buffer */
 	//*((uint64_t *) (rpc_buffer)) = (uint64_t) RPC_OP_FETCH;
-	*((uint64_t *) (rpc_buffer + 8)) = (uint64_t) vaddr;
-	*((uint64_t *) (rpc_buffer + 16)) = order;
+	*((uint64_t *) (rpc_buffer)) = (uint64_t) vaddr;
+	*((uint64_t *) (rpc_buffer + 8)) = order;
 	ib_dma_sync_single_for_device(rh->device, rpc_dma_addr, RPC_ARGS_SIZE, DMA_BIDIRECTIONAL);
 
-	DEBUG_LOG(PFX "vaddr: %llX %llX\n", vaddr, *((uint64_t *) (rpc_buffer + 8)));
+	DEBUG_LOG(PFX "vaddr: %llX %llX\n", (uint64_t) vaddr, *((uint64_t *) (rpc_buffer)));
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
@@ -377,11 +377,11 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 
 	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE);
 	ib_dma_sync_single_for_cpu(rh->device, rh->rpc_dma_addr + (offset * RPC_ARGS_SIZE), RPC_ARGS_SIZE, DMA_BIDIRECTIONAL);
-	dest = (void *) *((uint64_t *) (rpc_buffer + 8));
-	order = *((uint64_t *) (rpc_buffer + 16));
+	dest = (void *) *((uint64_t *) (rpc_buffer));
+	order = *((uint64_t *) (rpc_buffer + 8));
 	num_page = 1 << order;
 
-	DEBUG_LOG(PFX "dest: %llx order: %u num_page: %d\n", dest, order, num_page);
+	DEBUG_LOG(PFX "dest: %llx order: %u num_page: %d\n", (uint64_t) dest, order, num_page);
 
 	i = __get_sink_buffer(rh, order);
 	sink_addr = ((uint8_t *) rh->sink_buffer) + (i * PAGE_SIZE);
@@ -456,7 +456,7 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	*((uint64_t *) sink_addr) = (uint64_t) my_data;
 	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
 
-	DEBUG_LOG(PFX "allocating addr %llx\n", my_data);
+	DEBUG_LOG(PFX "allocating addr %llx\n", (uint64_t) my_data);
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -502,7 +502,7 @@ static int rpc_handle_alloc_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
 	remote_data = (char *) *((uint64_t *) sink_addr);
 	rw->done = true;
-	DEBUG_LOG(PFX "allocated addr %llx\n", remote_data);
+	DEBUG_LOG(PFX "allocated addr %llx\n", (uint64_t) remote_data);
 	DEBUG_LOG(PFX "done %p %d\n", rw, rw->done);
 
 	return 0;
@@ -1650,6 +1650,12 @@ void __exit exit_rmm_rdma(void)
 	int i;
 
 	/* Detach from upper layer to prevent race condition during exit */
+	for (i = 0; i < MAX_NUM_NODES; i++) {
+		if (rdma_handles[i]->cm_id)
+			rdma_disconnect(rdma_handles[i]->cm_id);
+		if (rdma_handles_evic[i]->cm_id)
+			rdma_disconnect(rdma_handles[i]->cm_id);
+	}
 
 	remove_proc_entry("rmm", NULL);
 	for (i = 0; i < MAX_NUM_NODES; i++) {
@@ -1671,6 +1677,8 @@ void __exit exit_rmm_rdma(void)
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
 		if (rh->cq && !IS_ERR(rh->cq)) ib_destroy_cq(rh->cq);
 		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
+		if (rh->mr && !IS_ERR(rh->mr))
+			ib_dereg_mr(rh->mr);
 
 		kfree(rdma_handles[i]);
 		kfree(rpc_pools[i]);
@@ -1695,15 +1703,16 @@ void __exit exit_rmm_rdma(void)
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
 		if (rh->cq && !IS_ERR(rh->cq)) ib_destroy_cq(rh->cq);
 		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
+		if (rh->mr && !IS_ERR(rh->mr))
+			ib_dereg_mr(rh->mr);
 
-		kfree(rdma_handles[i]);
+		kfree(rdma_handles_evic[i]);
 		kfree(rpc_pools_evic[i]);
 		kfree(sink_pools_evic[i]);
 	}
 
 	/* MR is set correctly iff rdma buffer and pd are correctly allocated */
-	if (rdma_mr && !IS_ERR(rdma_mr)) {
-		ib_dereg_mr(rdma_mr);
+	if (rdma_pd) {
 		ib_dealloc_pd(rdma_pd);
 	}
 
@@ -1724,15 +1733,31 @@ static void disconnect(void)
 		}
 		kthread_stop(accept_k);
 	}
+
+	if (!server)  {
+
+		for (i = 0; i < MAX_NUM_NODES; i++) {
+			if (rdma_handles[i])
+				rdma_disconnect(rdma_handles[i]->cm_id);
+			if (rdma_handles_evic[i])
+				rdma_disconnect(rdma_handles[i]->cm_id);
+		}
+	}
+
+
 }
 
 static void test(void)
 {
 	int i;
 	struct timespec start_tv, end_tv;
-	unsigned long elapsed = 0;
+	unsigned long elapsed, total;
 	uint16_t index;
-	uint16_t arr[500];
+	uint16_t *arr;
+
+	arr = kmalloc(500 * sizeof(uint16_t), GFP_KERNEL);
+	if (!arr)
+		return;
 
 	for (i = 0; i < 500; i++) {
 		get_random_bytes(&index, sizeof(index));
@@ -1746,16 +1771,21 @@ static void test(void)
 	if (server)
 		return;
 
+	elapsed = 0;
+	total = 0;
 	DEBUG_LOG(PFX "fetch start\n");
-	getnstimeofday(&start_tv);
-	for (i = 0; i < 500; i++)
+	for (i = 0; i < 500; i++) {
+		getnstimeofday(&start_tv);
 		rmm_fetch(0, my_data + (arr[i] * PAGE_SIZE), remote_data + (arr[i] * PAGE_SIZE), 0);
-	getnstimeofday(&end_tv);
+		getnstimeofday(&end_tv);
+		elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+			(end_tv.tv_nsec - start_tv.tv_nsec);
+		total += elapsed;
+		mdelay(10);
+		printk(KERN_INFO PFX "elapsed time %lu (ns)\n", elapsed);
+	}
 
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-
-	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 500);
+	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", total / 500);
 }
 
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
@@ -1776,7 +1806,8 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	DEBUG_LOG(KERN_INFO PFX "proc write: %s\n", cmd);
 
 	if (strcmp("diss", cmd) == 0)
-		disconnect();
+		;
+	//disconnect();
 	else if (strcmp("test", cmd) == 0)
 		test();
 
