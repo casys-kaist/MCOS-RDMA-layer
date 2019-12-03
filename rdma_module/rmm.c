@@ -18,7 +18,7 @@
 #define IMM_DATA_SIZE 4 /* bytes */
 #define RPC_ARGS_SIZE 16 /* bytes */
 
-#define SINK_BUFFER_SIZE	(PAGE_SIZE * 100)
+#define SINK_BUFFER_SIZE	(PAGE_SIZE * 256)
 #define RPC_BUFFER_SIZE		PAGE_SIZE
 #define RDMA_BUFFER_SIZE	PAGE_SIZE
 
@@ -29,8 +29,8 @@
 #define NR_RDMA_SLOTS	(NR_RPC_SLOTS)
 #define NR_SINK_SLOTS	(SINK_BUFFER_SIZE / PAGE_SIZE)
 
-#define CONNECT_FETCH	0
-#define CONNECT_EVICT	1
+#define CONNECTION_FETCH	0
+#define CONNECTION_EVICT	1
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
@@ -117,14 +117,20 @@ struct rdma_handle {
 
 	/* local */
 	void *recv_buffer;
-	void *rpc_buffer;
-	void *sink_buffer;
 	void *dma_buffer;
 
+	/* point to dma_buffer */
+	void *rpc_buffer;
+	void *sink_buffer;
+	void *evict_buffer;
+
 	dma_addr_t recv_buffer_dma_addr;
+	dma_addr_t dma_addr;
+
+	/* point to dma_buffer */
 	dma_addr_t rpc_dma_addr;
 	dma_addr_t sink_dma_addr;
-	dma_addr_t dma_addr;
+	dma_addr_t evict_dma_addr;
 
 	struct rdma_work *rdma_work_head;
 	struct rdma_work *rdma_work_pool;
@@ -146,6 +152,10 @@ struct rdma_handle {
 	spinlock_t rpc_slots_lock;
 	DECLARE_BITMAP(sink_slots, NR_SINK_SLOTS);
 	spinlock_t sink_slots_lock;
+	/*
+	DECLARE_BITMAP(evict_slots, NR_SINK_SLOTS);
+	spinlock_t sink_slots_lock;
+	*/
 
 	struct rdma_cm_id *cm_id;
 	struct ib_device *device;
@@ -294,46 +304,37 @@ put:
 	return ret;
 }
 
-int rmm_evict(int nid, void *vaddr, unsigned int order)
+int rmm_evict(int nid, void *r_vaddr, void *l_vaddr)
 {
 	int i, ret = 0;
-	int num_page;
-	uint8_t *rpc_buffer, *sink_buffer;
-	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr, sink_dma_addr, remote_sink_dma_addr;
+	uint8_t *rpc_buffer;
+	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
 	struct rdma_handle *rh = rdma_handles_evic[nid];	
 	struct rdma_work *rw;
 	const struct ib_send_wr *bad_wr = NULL;
 	bool done_evict;
 
-	num_page = 1 << order;
-
 	i = __get_rpc_buffer(rh);
-	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
-	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
-	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
+	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * (RPC_ARGS_SIZE + PAGE_SIZE));
+	rpc_dma_addr = rh->rpc_dma_addr + (i * (RPC_ARGS_SIZE + PAGE_SIZE));
+	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * (RPC_ARGS_SIZE + PAGE_SIZE));
 
-	i = __get_sink_buffer(rh, order);
-	sink_buffer = ((uint8_t *) rh->sink_buffer) + (i * PAGE_SIZE);
-	sink_dma_addr = rh->sink_dma_addr + (i * PAGE_SIZE);
-	remote_sink_dma_addr = rh->remote_sink_dma_addr + (i * PAGE_SIZE);
-
-	rw = __get_rdma_work(rh, sink_dma_addr, PAGE_SIZE * num_page, remote_sink_dma_addr, rh->sink_rkey);
+	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE + PAGE_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
 	rw->work_type = WORK_TYPE_RPC;
-	rw->addr = sink_buffer;
-	rw->dma_addr = sink_dma_addr;
+	rw->addr = rpc_buffer;
+	rw->dma_addr = rpc_dma_addr;
 	rw->done = false;
-	rw->src = vaddr;
+	rw->src = r_vaddr;
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
 
 	/*copy rpc args to buffer */
 	//*((uint64_t *) (rpc_buffer)) = (uint64_t) RPC_OP_FETCH;
-	*((uint64_t *) (rpc_buffer)) = (uint64_t) vaddr;
-	*((uint64_t *) (rpc_buffer + 8)) = order;
-	ib_dma_sync_single_for_device(rh->device, rpc_dma_addr, RPC_ARGS_SIZE, DMA_BIDIRECTIONAL);
+	*((uint64_t *) (rpc_buffer)) = (uint64_t) r_vaddr;
+	memcpy(rpc_buffer + 8, l_vaddr, PAGE_SIZE);
+	ib_dma_sync_single_for_device(rh->device, rpc_dma_addr, RPC_ARGS_SIZE + PAGE_SIZE, DMA_BIDIRECTIONAL);
 
-	DEBUG_LOG(PFX "vaddr: %llX %llX\n", (uint64_t) vaddr, *((uint64_t *) (rpc_buffer)));
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
@@ -356,6 +357,32 @@ put:
 
 	return ret;
 }
+
+/*
+static inline int __get_evict_buffer(struct rdma_handle *rh) 
+{
+	int i;
+
+	do {
+		spin_lock(&rh->evict_slots_lock);
+		i = find_first_zero_bit(rh->evict_slots, NR_RPC_SLOTS);
+		if (i < NR_RPC_SLOTS) break;
+		spin_unlock(&rh->evict_slots_lock);
+		WARN_ON_ONCE("recv buffer is full");
+	} while (i >= NR_RPC_SLOTS);
+	set_bit(i, rh->evict_slots);
+	spin_unlock(&rh->evict_slots_lock);
+
+	return i;
+}
+
+static inline void __put_evict_buffer(struct rdma_handle * rh, int slot) 
+{
+	spin_lock(&rh->evict_slots_lock);
+	clear_bit(slot, rh->evict_slots);
+	spin_unlock(&rh->evict_slots_lock);
+}
+*/
 
 static inline int __get_rpc_buffer(struct rdma_handle *rh) 
 {
@@ -531,6 +558,19 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	return ret;
 }
 
+static int rpc_handle_evict_mem(struct rdma_handle *rh, uint16_t id, uint16_t offset)
+{
+	void *dest;
+	uint8_t *rpc_buffer;
+
+	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE + PAGE_SIZE);
+	ib_dma_sync_single_for_cpu(rh->device, rh->rpc_dma_addr + (offset * RPC_ARGS_SIZE + PAGE_SIZE), RPC_ARGS_SIZE + PAGE_SIZE, DMA_BIDIRECTIONAL);
+	dest = (void *) *((uint64_t *) (rpc_buffer));
+	memcpy(dest, rpc_buffer + 8, PAGE_SIZE);
+
+	return 0;
+}
+
 static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint16_t offset)
 {
 	int num_page;
@@ -593,7 +633,7 @@ static int __handle_rpc(struct ib_wc *wc)
 
 	DEBUG_LOG(PFX "offset: %d, id: %d op: %d\n", offset, id, op);
 
-	if (rh->connection_type == CONNECT_FETCH) {
+	if (rh->connection_type == CONNECTION_FETCH) {
 		if (server) {
 			if (op == 0)
 				rpc_handle_fetch_mem(rh, id, offset);
@@ -606,6 +646,9 @@ static int __handle_rpc(struct ib_wc *wc)
 			else
 				rpc_handle_alloc_cpu(rh, id, offset);
 		}
+	}
+	else {
+		rpc_handle_evict_mem(rh, id, offset);
 	}
 
 	/*
@@ -637,7 +680,7 @@ static int __handle_recv(struct ib_wc *wc)
 		case WORK_TYPE_RPC_ADDR:
 			ib_dma_unmap_single(rh->device, rw->dma_addr, 
 					sizeof(struct pool_info), DMA_FROM_DEVICE);
-			if (rh->connection_type == CONNECT_FETCH)
+			if (rh->connection_type == CONNECTION_FETCH)
 				rp = rpc_pools[rh->nid];
 			else
 				rp = rpc_pools_evic[rh->nid];
@@ -651,7 +694,7 @@ static int __handle_recv(struct ib_wc *wc)
 		case WORK_TYPE_SINK_ADDR:
 			ib_dma_unmap_single(rh->device, rw->dma_addr, 
 					sizeof(struct pool_info), DMA_FROM_DEVICE);
-			if (rh->connection_type == CONNECT_FETCH)
+			if (rh->connection_type == CONNECTION_FETCH)
 				rp = sink_pools[rh->nid];
 			else
 				rp = sink_pools_evic[rh->nid];
@@ -723,6 +766,7 @@ static int polling_cq(void * args)
 {
 	struct ib_cq *cq = (struct ib_cq *) args;
 	struct ib_wc wc = {0};
+	struct rdma_work *rw;
 	int ret = 0;
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
@@ -757,6 +801,11 @@ static int polling_cq(void * args)
 					DEBUG_LOG(PFX "rdma write-imm completion\n");
 					if (server)
 						put_work(&wc);
+					else {
+						rw = (struct rdma_work *) wc.wr_id;
+						if (rw->rh->connection_type == CONNECTION_EVICT)
+							rw->done = true;
+					}
 				}
 				else {
 					DEBUG_LOG(PFX "rdma write completion\n");
@@ -1049,6 +1098,9 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	rh->sink_buffer = (void *) ((uint8_t *) rh->dma_buffer) + RPC_BUFFER_SIZE;
 	rh->sink_dma_addr = rh->dma_addr + RPC_BUFFER_SIZE;
 
+	rh->evict_buffer = rh->dma_buffer;
+	rh->evict_dma_addr = rh->dma_addr;
+
 	return 0;
 out_dereg:
 	ib_dereg_mr(mr);
@@ -1071,13 +1123,13 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 	struct recv_work *rw;
 
 	if (work_type == WORK_TYPE_RPC_ADDR) {
-		if (rh->connection_type == CONNECT_FETCH)
+		if (rh->connection_type == CONNECTION_FETCH)
 			pp = rpc_pools[rh->nid];
 		else
 			pp = rpc_pools_evic[rh->nid];
 	}
 	else {
-		if (rh->connection_type == CONNECT_FETCH)
+		if (rh->connection_type == CONNECTION_FETCH)
 			pp = sink_pools[rh->nid];
 		else
 			pp = sink_pools_evic[rh->nid];
@@ -1169,17 +1221,15 @@ static int __refill_rdma_work(struct rdma_handle *rh, int nr_works)
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key)
 {
 	struct rdma_work *rw;
-	might_sleep();
+	//might_sleep();
 
 	spin_lock(&rh->rdma_work_head_lock);
 	rw = rh->rdma_work_head;
 	rh->rdma_work_head = rh->rdma_work_head->next;
 	spin_unlock(&rh->rdma_work_head_lock);
 
-	if (!rh->rdma_work_head) {
-		//	__refill_rdma_work(NR_RDMA_SLOTS);
+	if (!rh->rdma_work_head)
 		return NULL;
-	}
 
 	rw->sgl.addr = dma_addr;
 	rw->sgl.length = size;
@@ -1325,7 +1375,7 @@ static int __connect_to_server(int nid, int connect_type)
 	const char *step;
 	struct rdma_handle *rh;
 
-	if (connect_type == CONNECT_FETCH)
+	if (connect_type == CONNECTION_FETCH)
 		rh = rdma_handles[nid];
 	else
 		rh = rdma_handles_evic[nid];
@@ -1511,9 +1561,9 @@ static int accept_client(void *args)
 	for (num_client = 0; num_client < MAX_NUM_NODES; num_client++) {
 		if (kthread_should_stop())
 			return 0;
-		if ((ret = __accept_client(num_client, CONNECT_FETCH))) 
+		if ((ret = __accept_client(num_client, CONNECTION_FETCH))) 
 			return ret;
-		if ((ret = __accept_client(num_client, CONNECT_EVICT))) 
+		if ((ret = __accept_client(num_client, CONNECTION_EVICT))) 
 			return ret;
 	}
 	printk(KERN_INFO PFX "Cannot accepts more clients\n");
@@ -1529,7 +1579,7 @@ static int __accept_client(int nid, int connect_type)
 	char *step = NULL;
 	int ret;
 
-	if (connect_type == CONNECT_FETCH)
+	if (connect_type == CONNECTION_FETCH)
 		rh = rdma_handles[nid];
 	else
 		rh = rdma_handles_evic[nid];
@@ -1584,7 +1634,7 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 	int nid = 0;
 	struct rdma_handle *rh;
 
-	if (connect_type == CONNECT_FETCH) {
+	if (connect_type == CONNECTION_FETCH) {
 		DEBUG_LOG(PFX "atomic inc\n");
 		nid = atomic_inc_return(&num_request);
 		DEBUG_LOG(PFX "nid: %d\n", nid);
@@ -1697,9 +1747,9 @@ static int __establish_connections(void)
 	else {
 		for (i = 0; i < MAX_NUM_NODES; i++) { 
 			DEBUG_LOG(PFX "connect to server\n");
-			if ((ret = __connect_to_server(i, CONNECT_FETCH))) 
+			if ((ret = __connect_to_server(i, CONNECTION_FETCH))) 
 				return ret;
-			if ((ret = __connect_to_server(i, CONNECT_EVICT))) 
+			if ((ret = __connect_to_server(i, CONNECTION_EVICT))) 
 				return ret;
 		}
 		printk(PFX "Connections are established.\n");
@@ -1907,7 +1957,7 @@ int __init init_rmm_rdma(void)
 
 		rh->nid = i;
 		rh->state = RDMA_INIT;
-		rh->connection_type = CONNECT_FETCH;
+		rh->connection_type = CONNECTION_FETCH;
 
 		spin_lock_init(&rh->rdma_work_head_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
@@ -1927,11 +1977,12 @@ int __init init_rmm_rdma(void)
 
 		rh->nid = i;
 		rh->state = RDMA_INIT;
-		rh->connection_type = CONNECT_EVICT;
+		rh->connection_type = CONNECTION_EVICT;
 
 		spin_lock_init(&rh->rdma_work_head_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
 		spin_lock_init(&rh->sink_slots_lock);
+		//spin_lock_init(&rh->evict_slots_lock);
 
 		init_completion(&rh->cm_done);
 	}
