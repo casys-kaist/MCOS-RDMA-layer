@@ -294,6 +294,69 @@ put:
 	return ret;
 }
 
+int rmm_evict(int nid, void *vaddr, unsigned int order)
+{
+	int i, ret = 0;
+	int num_page;
+	uint8_t *rpc_buffer, *sink_buffer;
+	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr, sink_dma_addr, remote_sink_dma_addr;
+	struct rdma_handle *rh = rdma_handles_evic[nid];	
+	struct rdma_work *rw;
+	const struct ib_send_wr *bad_wr = NULL;
+	bool done_evict;
+
+	num_page = 1 << order;
+
+	i = __get_rpc_buffer(rh);
+	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
+	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
+	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
+
+	i = __get_sink_buffer(rh, order);
+	sink_buffer = ((uint8_t *) rh->sink_buffer) + (i * PAGE_SIZE);
+	sink_dma_addr = rh->sink_dma_addr + (i * PAGE_SIZE);
+	remote_sink_dma_addr = rh->remote_sink_dma_addr + (i * PAGE_SIZE);
+
+	rw = __get_rdma_work(rh, sink_dma_addr, PAGE_SIZE * num_page, remote_sink_dma_addr, rh->sink_rkey);
+	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
+	rw->work_type = WORK_TYPE_RPC;
+	rw->addr = sink_buffer;
+	rw->dma_addr = sink_dma_addr;
+	rw->done = false;
+	rw->src = vaddr;
+
+	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
+
+	/*copy rpc args to buffer */
+	//*((uint64_t *) (rpc_buffer)) = (uint64_t) RPC_OP_FETCH;
+	*((uint64_t *) (rpc_buffer)) = (uint64_t) vaddr;
+	*((uint64_t *) (rpc_buffer + 8)) = order;
+	ib_dma_sync_single_for_device(rh->device, rpc_dma_addr, RPC_ARGS_SIZE, DMA_BIDIRECTIONAL);
+
+	DEBUG_LOG(PFX "vaddr: %llX %llX\n", (uint64_t) vaddr, *((uint64_t *) (rpc_buffer)));
+	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	if (ret || bad_wr) {
+		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		if (bad_wr)
+			ret = -EINVAL;
+		goto put;
+	}
+
+	DEBUG_LOG(PFX "wait %p\n", rw);
+
+	do {
+		barrier();
+	} while(!(done_evict = rw->done));
+
+	DEBUG_LOG(PFX "reclaim done %s\n", my_data);
+
+put:
+	__put_rpc_buffer(rh, i);
+	__put_rdma_work(rh, rw);
+
+	return ret;
+}
+
 static inline int __get_rpc_buffer(struct rdma_handle *rh) 
 {
 	int i;
@@ -1781,7 +1844,7 @@ static void test(void)
 		elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 			(end_tv.tv_nsec - start_tv.tv_nsec);
 		total += elapsed;
-		mdelay(10);
+		mdelay(15);
 		printk(KERN_INFO PFX "elapsed time %lu (ns)\n", elapsed);
 	}
 
@@ -1806,8 +1869,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	DEBUG_LOG(KERN_INFO PFX "proc write: %s\n", cmd);
 
 	if (strcmp("diss", cmd) == 0)
-		;
-	//disconnect();
+		disconnect();
 	else if (strcmp("test", cmd) == 0)
 		test();
 
@@ -1869,7 +1931,7 @@ int __init init_rmm_rdma(void)
 
 		spin_lock_init(&rh->rdma_work_head_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
-		//		spin_lock_init(&rh->sink_slots_lock);
+		spin_lock_init(&rh->sink_slots_lock);
 
 		init_completion(&rh->cm_done);
 	}
