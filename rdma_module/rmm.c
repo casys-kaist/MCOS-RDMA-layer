@@ -223,6 +223,7 @@ int rmm_alloc(int nid)
 	rw->addr = rpc_buffer;
 	rw->dma_addr = rpc_dma_addr;
 	rw->done = false;
+	rw->rh = rh;
 
 	/*copy rpc args to buffer */
 
@@ -271,6 +272,7 @@ int rmm_fetch(int nid, void *src, void *vaddr, unsigned int order)
 	rw->dma_addr = rpc_dma_addr;
 	rw->done = false;
 	rw->src = src;
+	rw->rh = rh;
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
 
@@ -326,6 +328,7 @@ int rmm_evict(int nid, void *r_vaddr, void *l_vaddr)
 	rw->dma_addr = rpc_dma_addr;
 	rw->done = false;
 	rw->src = r_vaddr;
+	rw->rh = rh;
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
 
@@ -563,10 +566,12 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	void *dest;
 	uint8_t *rpc_buffer;
 
-	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE + PAGE_SIZE);
-	ib_dma_sync_single_for_cpu(rh->device, rh->rpc_dma_addr + (offset * RPC_ARGS_SIZE + PAGE_SIZE), RPC_ARGS_SIZE + PAGE_SIZE, DMA_BIDIRECTIONAL);
+	rpc_buffer = rh->rpc_buffer + (offset * (RPC_ARGS_SIZE + PAGE_SIZE));
+	ib_dma_sync_single_for_cpu(rh->device, rh->rpc_dma_addr + (offset * (RPC_ARGS_SIZE + PAGE_SIZE)), RPC_ARGS_SIZE + PAGE_SIZE, DMA_BIDIRECTIONAL);
 	dest = (void *) *((uint64_t *) (rpc_buffer));
 	memcpy(dest, rpc_buffer + 8, PAGE_SIZE);
+
+	DEBUG_LOG(PFX "%s\n", (char *) dest);
 
 	return 0;
 }
@@ -648,7 +653,8 @@ static int __handle_rpc(struct ib_wc *wc)
 		}
 	}
 	else {
-		rpc_handle_evict_mem(rh, id, offset);
+		if (server)
+			rpc_handle_evict_mem(rh, id, offset);
 	}
 
 	/*
@@ -1860,7 +1866,56 @@ static void disconnect(void)
 
 }
 
-static void test(void)
+static int test_maplat(void)
+{
+	int ret = 0;
+	char *test, *test2;
+	char *dummy;
+	dma_addr_t dma_test;
+	struct scatterlist sg = {};
+	struct timespec start_tv, end_tv;
+	struct rdma_handle *rh = rdma_handles[0];
+	unsigned long elapsed, map_total = 0, cpy_total = 0;
+
+	test = kmalloc(4096, GFP_KERNEL);
+	test2 = kmalloc(4096, GFP_KERNEL);
+	dummy = kmalloc(4096, GFP_KERNEL);
+
+	getnstimeofday(&start_tv);
+
+	dma_test = ib_dma_map_single(rh->device, test, 4096, DMA_FROM_DEVICE);
+	sg_dma_address(&sg) = dma_test; 
+	sg_dma_len(&sg) = 4096;
+	ret = ib_map_mr_sg(rh->mr, &sg, 1, NULL, 4096);
+	if (ret != 1) {
+		printk("Cannot map scatterlist to mr, %d\n", ret);
+		return -1;
+	}
+	getnstimeofday(&end_tv);
+	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+		(end_tv.tv_nsec - start_tv.tv_nsec);
+	map_total += elapsed;
+
+	getnstimeofday(&start_tv);
+	memcpy((void *) test2, dummy, 4096);
+	getnstimeofday(&end_tv);
+	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+		(end_tv.tv_nsec - start_tv.tv_nsec);
+	cpy_total += elapsed;
+
+	printk(KERN_INFO PFX "mean map lat: %lu\n", map_total);
+	printk(KERN_INFO PFX "mean cpy lat: %lu\n", cpy_total);
+
+	kfree(test);
+	kfree(test2);
+	kfree(dummy);
+
+	ib_dma_unmap_single(rh->device, dma_test, 4096, DMA_FROM_DEVICE);
+
+	return 0;
+}
+
+static void test_fetch(void)
 {
 	int i;
 	struct timespec start_tv, end_tv;
@@ -1887,16 +1942,45 @@ static void test(void)
 	elapsed = 0;
 	total = 0;
 	DEBUG_LOG(PFX "fetch start\n");
+	getnstimeofday(&start_tv);
 	for (i = 0; i < 500; i++) {
-		getnstimeofday(&start_tv);
 		rmm_fetch(0, my_data + (arr[i] * PAGE_SIZE), remote_data + (arr[i] * PAGE_SIZE), 0);
-		getnstimeofday(&end_tv);
-		elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-			(end_tv.tv_nsec - start_tv.tv_nsec);
-		total += elapsed;
-		mdelay(15);
-		printk(KERN_INFO PFX "elapsed time %lu (ns)\n", elapsed);
+		//mdelay(15);
+		//printk(KERN_INFO PFX "elapsed time %lu (ns)\n", elapsed);
 	}
+	getnstimeofday(&end_tv);
+	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+		(end_tv.tv_nsec - start_tv.tv_nsec);
+
+	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", total / 500);
+}
+
+static void test_evict(void)
+{
+	int i;
+	struct timespec start_tv, end_tv;
+	unsigned long elapsed, total;
+
+	DEBUG_LOG(PFX "alloc\n");
+	rmm_alloc(0);
+
+	if (server)
+		return;
+
+	elapsed = 0;
+	total = 0;
+	DEBUG_LOG(PFX "fetch start\n");
+	for (i = 0; i < 500; i++) {
+		sprintf(my_data + (i * PAGE_SIZE), "This is %d", i);
+
+	}
+	getnstimeofday(&start_tv);
+	for (i = 0; i < 500; i++) {
+		rmm_evict(0, remote_data + (i * PAGE_SIZE), my_data + (i * PAGE_SIZE));
+	}
+	getnstimeofday(&end_tv);
+	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+		(end_tv.tv_nsec - start_tv.tv_nsec);
 
 	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", total / 500);
 }
@@ -1920,8 +2004,12 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 
 	if (strcmp("diss", cmd) == 0)
 		disconnect();
-	else if (strcmp("test", cmd) == 0)
-		test();
+	else if (strcmp("tf", cmd) == 0)
+		test_fetch();
+	else if (strcmp("te", cmd) == 0)
+		test_evict();
+	else if (strcmp("maplat", cmd) == 0)
+		test_maplat();
 
 	return count;
 }
