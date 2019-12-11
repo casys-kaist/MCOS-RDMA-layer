@@ -1918,10 +1918,14 @@ static void disconnect(void)
    }
  */
 
+static atomic_t num_done = ATOMIC_INIT(0);
+
 struct worker_info {
 	int nid;
+	int test_size;
 	int num_op;
 	uint16_t *random_index;
+	struct completion *done;
 };
 
 static int worker(void *args)
@@ -1937,10 +1941,12 @@ static int worker(void *args)
 	num_op = wi->num_op;
 	random_index = wi->random_index;
 
-	printk(KERN_INFO "start %d\n", wi->nid);
 	for (i = 0; i < num_op; i++) {
 		rmm_fetch(wi->nid, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
 	}
+
+	if (atomic_inc_return(&num_done) == wi->test_size)
+		complete(wi->done);
 
 	return 0;
 }
@@ -1950,6 +1956,7 @@ static void test_throughput(int test_size)
 	static bool init = false;
 	int i, j;
 	int num_op = 100000;
+	struct completion job_done;
 	struct task_struct *t_arr[20];
 	uint16_t index;
 	uint16_t *random_index[20];
@@ -1959,6 +1966,7 @@ static void test_throughput(int test_size)
 
 	printk(KERN_INFO PFX "tt start %d\n", test_size);
 
+	init_completion(&job_done);
 	for (i = 0; i < test_size; i++) {
 		random_index[i] = kmalloc(num_op * sizeof(uint16_t), GFP_KERNEL);
 		if (!random_index[i])
@@ -1983,6 +1991,8 @@ static void test_throughput(int test_size)
 		wi[i].nid = i;
 		wi[i].random_index = random_index[i];
 		wi[i].num_op = num_op;
+		wi[i].done = &job_done;
+		wi[i].test_size = test_size;
 	}
 
 	getnstimeofday(&start_tv);
@@ -1991,7 +2001,7 @@ static void test_throughput(int test_size)
 	}
 
 	for (i = 0; i < test_size; i++)
-		kthread_stop(t_arr[i]);
+		wait_for_completion_interruptible(&job_done);
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
@@ -2096,7 +2106,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		test_evict();
 	else if (strcmp("tt", cmd) == 0)
 		if (num <= 20)
-			test_throughput(1);
+			test_throughput(num++);
 
 	return count;
 }
