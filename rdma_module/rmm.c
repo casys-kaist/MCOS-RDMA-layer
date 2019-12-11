@@ -22,12 +22,12 @@
 #define RPC_BUFFER_SIZE		PAGE_SIZE
 #define RDMA_BUFFER_SIZE	PAGE_SIZE
 
-#define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
-#define MAX_SEND_DEPTH	(8)
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
 #define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
 #define NR_RDMA_SLOTS	(NR_RPC_SLOTS)
 #define NR_SINK_SLOTS	(SINK_BUFFER_SIZE / PAGE_SIZE)
+#define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
+#define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 8)
 
 #define CONNECTION_FETCH	0
 #define CONNECTION_EVICT	1
@@ -199,8 +199,8 @@ static struct proc_dir_entry *rmm_proc;
 static uint32_t my_ip;
 
 /*buffers for test */
-static char *my_data;
-static char *remote_data;
+static char *my_data[40];
+static char *remote_data[40];
 
 int rmm_alloc(int nid)
 {
@@ -226,6 +226,7 @@ int rmm_alloc(int nid)
 	rw->rh = rh;
 
 	/*copy rpc args to buffer */
+	*((int *) rpc_buffer) = nid;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -241,7 +242,7 @@ int rmm_alloc(int nid)
 		barrier();
 	} while(!(done_copy = rw->done));
 
-	DEBUG_LOG(PFX "alloc done %s\n", my_data);
+	//DEBUG_LOG(PFX "alloc done %s\n", my_data);
 
 put:
 	__put_rpc_buffer(rh, i);
@@ -297,7 +298,7 @@ int rmm_fetch(int nid, void *src, void *vaddr, unsigned int order)
 		barrier();
 	} while(!(done_copy = rw->done));
 
-	DEBUG_LOG(PFX "reclaim done %s\n", my_data);
+	//DEBUG_LOG(PFX "reclaim done %s\n", my_data);
 
 put:
 	__put_rpc_buffer(rh, i);
@@ -352,7 +353,7 @@ int rmm_evict(int nid, void *r_vaddr, void *l_vaddr)
 		barrier();
 	} while(!(done_evict = rw->done));
 
-	DEBUG_LOG(PFX "reclaim done %s\n", my_data);
+	//DEBUG_LOG(PFX "reclaim done %s\n", my_data);
 
 put:
 	__put_rpc_buffer(rh, i);
@@ -501,7 +502,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	DEBUG_LOG(PFX "rkey %x, remote_dma_addr %llx\n", rh->sink_rkey, remote_sink_dma_addr);
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
-		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		printk(KERN_ERR PFX "Cannot post send wr, %d %p %s\n", ret, bad_wr, __func__);
 		if (bad_wr)
 			ret = -EINVAL;
 	}
@@ -512,20 +513,16 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t offset)
 {
 	int i, ret = 0;
+	int nid = -1;
 	void *sink_addr;
 	dma_addr_t sink_dma_addr, remote_sink_dma_addr;
 	struct rdma_work *rw;
 	const struct ib_send_wr *bad_wr = NULL;
+	char *rpc_buffer;
 
-	/*
 	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE);
 	ib_dma_sync_single_for_cpu(rh->device, rh->rpc_dma_addr + (offset * RPC_ARGS_SIZE), RPC_ARGS_SIZE, DMA_BIDIRECTIONAL);
-	vaddr = (void *) *((uint64_t *) (rpc_buffer + 8));
-	order = *((uint64_t *) (rpc_buffer + 16));
-	num_page = 1 << order;
-
-	DEBUG_LOG(PFX "vaddr: %llx order: %u num_page: %d\n", vaddr, order, num_page);
-	*/
+	nid = *(int *)rpc_buffer;
 
 	i = __get_sink_buffer(rh, 0);
 	sink_addr = ((uint8_t *) rh->sink_buffer) + (i * PAGE_SIZE);
@@ -546,7 +543,8 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, id, rw->wr.wr.ex.imm_data);
 
-	*((uint64_t *) sink_addr) = (uint64_t) my_data;
+	if (nid >= 0)
+		*((uint64_t *) sink_addr) = (uint64_t) my_data[nid];
 	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
 
 	DEBUG_LOG(PFX "allocating addr %llx\n", (uint64_t) my_data);
@@ -602,15 +600,17 @@ static int rpc_handle_alloc_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 	void *sink_addr;
 	dma_addr_t sink_dma_addr;
 	struct rdma_work *rw;
+	int nid;
 
+	nid = rh->nid;
 	rw = &rh->rdma_work_pool[id];
 	sink_addr = (uint8_t *) rh->sink_buffer + (offset * PAGE_SIZE);
 	sink_dma_addr = rh->sink_dma_addr + (offset * PAGE_SIZE);
 
 	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
-	remote_data = (char *) *((uint64_t *) sink_addr);
+	remote_data[nid] = (char *) *((uint64_t *) sink_addr);
 	rw->done = true;
-	DEBUG_LOG(PFX "allocated addr %llx\n", (uint64_t) remote_data);
+	DEBUG_LOG(PFX "allocated addr %llx\n", (uint64_t) remote_data[nid]);
 	DEBUG_LOG(PFX "done %p %d\n", rw, rw->done);
 
 	return 0;
@@ -1774,6 +1774,7 @@ void __exit exit_rmm_rdma(void)
 			rdma_disconnect(rdma_handles[i]->cm_id);
 		if (rdma_handles_evic[i]->cm_id)
 			rdma_disconnect(rdma_handles[i]->cm_id);
+		kfree(my_data[i]);
 	}
 
 	remove_proc_entry("rmm", NULL);
@@ -1866,53 +1867,138 @@ static void disconnect(void)
 
 }
 
-static int test_maplat(void)
+/*
+   static int test_maplat(void)
+   {
+   int ret = 0;
+   char *test, *test2;
+   char *dummy;
+   dma_addr_t dma_test;
+   struct scatterlist sg = {};
+   struct timespec start_tv, end_tv;
+   struct rdma_handle *rh = rdma_handles[0];
+   unsigned long elapsed, map_total = 0, cpy_total = 0;
+
+   test = kmalloc(4096, GFP_KERNEL);
+   test2 = kmalloc(4096, GFP_KERNEL);
+   dummy = kmalloc(4096, GFP_KERNEL);
+
+   getnstimeofday(&start_tv);
+
+   dma_test = ib_dma_map_single(rh->device, test, 4096, DMA_FROM_DEVICE);
+   sg_dma_address(&sg) = dma_test; 
+   sg_dma_len(&sg) = 4096;
+   ret = ib_map_mr_sg(rh->mr, &sg, 1, NULL, 4096);
+   if (ret != 1) {
+   printk("Cannot map scatterlist to mr, %d\n", ret);
+   return -1;
+   }
+   getnstimeofday(&end_tv);
+   elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+   (end_tv.tv_nsec - start_tv.tv_nsec);
+   map_total += elapsed;
+
+   getnstimeofday(&start_tv);
+   memcpy((void *) test2, dummy, 4096);
+   getnstimeofday(&end_tv);
+   elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+   (end_tv.tv_nsec - start_tv.tv_nsec);
+   cpy_total += elapsed;
+
+   printk(KERN_INFO PFX "mean map lat: %lu\n", map_total);
+   printk(KERN_INFO PFX "mean cpy lat: %lu\n", cpy_total);
+
+   kfree(test);
+   kfree(test2);
+   kfree(dummy);
+
+   ib_dma_unmap_single(rh->device, dma_test, 4096, DMA_FROM_DEVICE);
+
+   return 0;
+   }
+ */
+
+struct worker_info {
+	int nid;
+	int num_op;
+	uint16_t *random_index;
+};
+
+static int worker(void *args)
 {
-	int ret = 0;
-	char *test, *test2;
-	char *dummy;
-	dma_addr_t dma_test;
-	struct scatterlist sg = {};
-	struct timespec start_tv, end_tv;
-	struct rdma_handle *rh = rdma_handles[0];
-	unsigned long elapsed, map_total = 0, cpy_total = 0;
+	int i;
+	struct worker_info *wi;
+	int nid;
+	int num_op;
+	uint16_t *random_index;
 
-	test = kmalloc(4096, GFP_KERNEL);
-	test2 = kmalloc(4096, GFP_KERNEL);
-	dummy = kmalloc(4096, GFP_KERNEL);
+	wi = (struct worker_info *) args;
+	nid = wi->nid;
+	num_op = wi->num_op;
+	random_index = wi->random_index;
 
-	getnstimeofday(&start_tv);
-
-	dma_test = ib_dma_map_single(rh->device, test, 4096, DMA_FROM_DEVICE);
-	sg_dma_address(&sg) = dma_test; 
-	sg_dma_len(&sg) = 4096;
-	ret = ib_map_mr_sg(rh->mr, &sg, 1, NULL, 4096);
-	if (ret != 1) {
-		printk("Cannot map scatterlist to mr, %d\n", ret);
-		return -1;
+	for (i = 0; i < num_op; i++) {
+		rmm_fetch(0, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
 	}
-	getnstimeofday(&end_tv);
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-	map_total += elapsed;
-
-	getnstimeofday(&start_tv);
-	memcpy((void *) test2, dummy, 4096);
-	getnstimeofday(&end_tv);
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-	cpy_total += elapsed;
-
-	printk(KERN_INFO PFX "mean map lat: %lu\n", map_total);
-	printk(KERN_INFO PFX "mean cpy lat: %lu\n", cpy_total);
-
-	kfree(test);
-	kfree(test2);
-	kfree(dummy);
-
-	ib_dma_unmap_single(rh->device, dma_test, 4096, DMA_FROM_DEVICE);
 
 	return 0;
+}
+
+static void test_throughput(int test_size)
+{
+	static bool init = false;
+	int i, j;
+	int num_op = 1000000;
+	struct task_struct *t_arr[20];
+	uint16_t index;
+	uint16_t *random_index[20];
+	struct worker_info wi[20];
+	struct timespec start_tv, end_tv;
+	uint64_t elapsed;
+
+	printk(KERN_INFO PFX "tt start %d\n", test_size);
+
+	for (i = 0; i < test_size; i++) {
+		random_index[i] = kmalloc(num_op * sizeof(uint16_t), GFP_KERNEL);
+		if (!random_index[i])
+			return;
+	}
+
+	for (i = 0; i < test_size; i++)
+		for (j = 0; j < num_op; j++) {
+			get_random_bytes(&index, sizeof(index));
+			index %= 1024;
+			random_index[i][j] = index;
+		}
+
+	if (!init) {
+		init = true;
+		for (i = 0; i < test_size; i++) {
+			rmm_alloc(i);
+		}
+	}
+
+	for (i = 0; i < test_size; i++) {
+		wi[i].nid = i;
+		wi[i].random_index = random_index[i];
+		wi[i].num_op = num_op;
+	}
+
+	getnstimeofday(&start_tv);
+	for (i = 0; i < test_size; i++) {
+		t_arr[i] = kthread_run(worker, &wi[i], "woker: %d", i);
+	}
+
+	for (i = 0; i < test_size; i++)
+		kthread_stop(t_arr[i]);
+	getnstimeofday(&end_tv);
+	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+		(end_tv.tv_nsec - start_tv.tv_nsec);
+
+	printk(KERN_INFO PFX "num op: %d, elapsed %llu (ns) %d\n", (num_op * test_size), elapsed, test_size);
+
+	for (i = 0; i < test_size; i++)
+		kfree(random_index[i]);
 }
 
 static void test_fetch(void)
@@ -1944,7 +2030,7 @@ static void test_fetch(void)
 	DEBUG_LOG(PFX "fetch start\n");
 	getnstimeofday(&start_tv);
 	for (i = 0; i < 500; i++) {
-		rmm_fetch(0, my_data + (arr[i] * PAGE_SIZE), remote_data + (arr[i] * PAGE_SIZE), 0);
+		rmm_fetch(0, my_data[0] + (arr[i] * PAGE_SIZE), remote_data[0] + (arr[i] * PAGE_SIZE), 0);
 		//mdelay(15);
 		//printk(KERN_INFO PFX "elapsed time %lu (ns)\n", elapsed);
 	}
@@ -1971,12 +2057,12 @@ static void test_evict(void)
 	total = 0;
 	DEBUG_LOG(PFX "fetch start\n");
 	for (i = 0; i < 500; i++) {
-		sprintf(my_data + (i * PAGE_SIZE), "This is %d", i);
+		sprintf(my_data[0] + (i * PAGE_SIZE), "This is %d", i);
 
 	}
 	getnstimeofday(&start_tv);
 	for (i = 0; i < 500; i++) {
-		rmm_evict(0, remote_data + (i * PAGE_SIZE), my_data + (i * PAGE_SIZE));
+		rmm_evict(0, remote_data[0] + (i * PAGE_SIZE), my_data[0] + (i * PAGE_SIZE));
 	}
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
@@ -1988,6 +2074,7 @@ static void test_evict(void)
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		size_t count, loff_t *ppos)
 {
+	static int num = 1;
 	char *cmd;
 
 	cmd = kmalloc(count, GFP_KERNEL);
@@ -2008,8 +2095,9 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		test_fetch();
 	else if (strcmp("te", cmd) == 0)
 		test_evict();
-	else if (strcmp("maplat", cmd) == 0)
-		test_maplat();
+	else if (strcmp("tt", cmd) == 0)
+		if (num <= 20)
+			test_throughput(num++);
 
 	return count;
 }
@@ -2077,10 +2165,11 @@ int __init init_rmm_rdma(void)
 	server_rh.state = RDMA_INIT;
 	init_completion(&server_rh.cm_done);
 
-	my_data = kmalloc(PAGE_SIZE * 512, GFP_KERNEL);
-	if (!my_data)
-		goto out_free;
-
+	for (i = 0; i < MAX_NUM_NODES; i++) {
+		my_data[i] = kmalloc(PAGE_SIZE * 1024, GFP_KERNEL);
+		if (!my_data[i])
+			goto out_free;
+	}
 
 	if (__establish_connections())
 		goto out_free;
