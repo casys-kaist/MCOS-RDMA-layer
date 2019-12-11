@@ -1937,8 +1937,9 @@ static int worker(void *args)
 	num_op = wi->num_op;
 	random_index = wi->random_index;
 
+	printk(KERN_INFO "start %d\n", wi->nid);
 	for (i = 0; i < num_op; i++) {
-		rmm_fetch(0, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
+		rmm_fetch(wi->nid, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
 	}
 
 	return 0;
@@ -1948,7 +1949,7 @@ static void test_throughput(int test_size)
 {
 	static bool init = false;
 	int i, j;
-	int num_op = 1000000;
+	int num_op = 100000;
 	struct task_struct *t_arr[20];
 	uint16_t index;
 	uint16_t *random_index[20];
@@ -2031,8 +2032,6 @@ static void test_fetch(void)
 	getnstimeofday(&start_tv);
 	for (i = 0; i < 500; i++) {
 		rmm_fetch(0, my_data[0] + (arr[i] * PAGE_SIZE), remote_data[0] + (arr[i] * PAGE_SIZE), 0);
-		//mdelay(15);
-		//printk(KERN_INFO PFX "elapsed time %lu (ns)\n", elapsed);
 	}
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
@@ -2097,7 +2096,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		test_evict();
 	else if (strcmp("tt", cmd) == 0)
 		if (num <= 20)
-			test_throughput(num++);
+			test_throughput(1);
 
 	return count;
 }
