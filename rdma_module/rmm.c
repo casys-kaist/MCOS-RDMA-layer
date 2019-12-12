@@ -545,6 +545,8 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 
 	if (nid >= 0)
 		*((uint64_t *) sink_addr) = (uint64_t) my_data[nid];
+	else
+		printk(KERN_ERR "nid was not initialized\n");
 	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
 
 	DEBUG_LOG(PFX "allocating addr %llx\n", (uint64_t) my_data);
@@ -1942,20 +1944,22 @@ static int worker(void *args)
 	random_index = wi->random_index;
 
 	for (i = 0; i < num_op; i++) {
-		rmm_fetch(wi->nid, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
+		//rmm_fetch(nid, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
+		//rmm_fetch(nid % 2, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
+		rmm_fetch(0, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
 	}
 
-	if (atomic_inc_return(&num_done) == wi->test_size)
+	if (atomic_inc_return(&num_done) == wi->test_size) {
 		complete(wi->done);
+	}
 
 	return 0;
 }
 
 static void test_throughput(int test_size)
 {
-	static bool init = false;
 	int i, j;
-	int num_op = 100000;
+	int num_op = 1000000;
 	struct completion job_done;
 	struct task_struct *t_arr[20];
 	uint16_t index;
@@ -1967,6 +1971,7 @@ static void test_throughput(int test_size)
 	printk(KERN_INFO PFX "tt start %d\n", test_size);
 
 	init_completion(&job_done);
+	atomic_set(&num_done, 0);
 	for (i = 0; i < test_size; i++) {
 		random_index[i] = kmalloc(num_op * sizeof(uint16_t), GFP_KERNEL);
 		if (!random_index[i])
@@ -1979,13 +1984,6 @@ static void test_throughput(int test_size)
 			index %= 1024;
 			random_index[i][j] = index;
 		}
-
-	if (!init) {
-		init = true;
-		for (i = 0; i < test_size; i++) {
-			rmm_alloc(i);
-		}
-	}
 
 	for (i = 0; i < test_size; i++) {
 		wi[i].nid = i;
@@ -2000,13 +1998,13 @@ static void test_throughput(int test_size)
 		t_arr[i] = kthread_run(worker, &wi[i], "woker: %d", i);
 	}
 
-	for (i = 0; i < test_size; i++)
-		wait_for_completion_interruptible(&job_done);
+	wait_for_completion_interruptible(&job_done);
+
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 
-	printk(KERN_INFO PFX "num op: %d, elapsed %llu (ns) %d\n", (num_op * test_size), elapsed, test_size);
+	printk(KERN_INFO PFX "num op: %d, test size: %d, elapsed(ns) %llu\n", (num_op * test_size), test_size, elapsed);
 
 	for (i = 0; i < test_size; i++)
 		kfree(random_index[i]);
@@ -2182,6 +2180,10 @@ int __init init_rmm_rdma(void)
 
 	if (__establish_connections())
 		goto out_free;
+
+	if (!server)
+		for (i = 0; i < MAX_NUM_NODES; i++)
+			rmm_alloc(i);
 
 	printk(PFX "Ready on InfiniBand RDMA\n");
 	return 0;
