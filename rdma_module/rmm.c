@@ -18,8 +18,8 @@
 #define IMM_DATA_SIZE 4 /* bytes */
 #define RPC_ARGS_SIZE 16 /* bytes */
 
-#define SINK_BUFFER_SIZE	(PAGE_SIZE * 256)
-#define RPC_BUFFER_SIZE		PAGE_SIZE
+#define SINK_BUFFER_SIZE	(PAGE_SIZE * 4096)
+#define RPC_BUFFER_SIZE		(PAGE_SIZE)
 #define RDMA_BUFFER_SIZE	PAGE_SIZE
 
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
@@ -281,7 +281,6 @@ int rmm_fetch(int nid, void *src, void *vaddr, unsigned int order)
 	//*((uint64_t *) (rpc_buffer)) = (uint64_t) RPC_OP_FETCH;
 	*((uint64_t *) (rpc_buffer)) = (uint64_t) vaddr;
 	*((uint64_t *) (rpc_buffer + 8)) = order;
-	ib_dma_sync_single_for_device(rh->device, rpc_dma_addr, RPC_ARGS_SIZE, DMA_BIDIRECTIONAL);
 
 	DEBUG_LOG(PFX "vaddr: %llX %llX\n", (uint64_t) vaddr, *((uint64_t *) (rpc_buffer)));
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -337,7 +336,6 @@ int rmm_evict(int nid, void *r_vaddr, void *l_vaddr)
 	//*((uint64_t *) (rpc_buffer)) = (uint64_t) RPC_OP_FETCH;
 	*((uint64_t *) (rpc_buffer)) = (uint64_t) r_vaddr;
 	memcpy(rpc_buffer + 8, l_vaddr, PAGE_SIZE);
-	ib_dma_sync_single_for_device(rh->device, rpc_dma_addr, RPC_ARGS_SIZE + PAGE_SIZE, DMA_BIDIRECTIONAL);
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -470,7 +468,6 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	uint8_t *rpc_buffer;
 
 	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE);
-	ib_dma_sync_single_for_cpu(rh->device, rh->rpc_dma_addr + (offset * RPC_ARGS_SIZE), RPC_ARGS_SIZE, DMA_BIDIRECTIONAL);
 	dest = (void *) *((uint64_t *) (rpc_buffer));
 	order = *((uint64_t *) (rpc_buffer + 8));
 	num_page = 1 << order;
@@ -497,7 +494,6 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, id, rw->wr.wr.ex.imm_data);
 
 	memcpy(sink_addr, dest, PAGE_SIZE);
-	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, num_page * PAGE_SIZE, DMA_BIDIRECTIONAL);
 
 	DEBUG_LOG(PFX "rkey %x, remote_dma_addr %llx\n", rh->sink_rkey, remote_sink_dma_addr);
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -521,7 +517,6 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	char *rpc_buffer;
 
 	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE);
-	ib_dma_sync_single_for_cpu(rh->device, rh->rpc_dma_addr + (offset * RPC_ARGS_SIZE), RPC_ARGS_SIZE, DMA_BIDIRECTIONAL);
 	nid = *(int *)rpc_buffer;
 
 	i = __get_sink_buffer(rh, 0);
@@ -547,7 +542,6 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 		*((uint64_t *) sink_addr) = (uint64_t) my_data[nid];
 	else
 		printk(KERN_ERR "nid was not initialized\n");
-	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
 
 	DEBUG_LOG(PFX "allocating addr %llx\n", (uint64_t) my_data);
 
@@ -567,7 +561,6 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	uint8_t *rpc_buffer;
 
 	rpc_buffer = rh->rpc_buffer + (offset * (RPC_ARGS_SIZE + PAGE_SIZE));
-	ib_dma_sync_single_for_cpu(rh->device, rh->rpc_dma_addr + (offset * (RPC_ARGS_SIZE + PAGE_SIZE)), RPC_ARGS_SIZE + PAGE_SIZE, DMA_BIDIRECTIONAL);
 	dest = (void *) *((uint64_t *) (rpc_buffer));
 	memcpy(dest, rpc_buffer + 8, PAGE_SIZE);
 
@@ -588,7 +581,6 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 	sink_dma_addr = rh->sink_dma_addr + (offset * PAGE_SIZE);
 	num_page = 1 << rw->order;
 
-	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, PAGE_SIZE * num_page, DMA_BIDIRECTIONAL);
 	memcpy(rw->src, sink_addr, PAGE_SIZE * num_page);
 
 	rw->done = true;
@@ -609,7 +601,6 @@ static int rpc_handle_alloc_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 	sink_addr = (uint8_t *) rh->sink_buffer + (offset * PAGE_SIZE);
 	sink_dma_addr = rh->sink_dma_addr + (offset * PAGE_SIZE);
 
-	ib_dma_sync_single_for_cpu(rh->device, sink_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
 	remote_data[nid] = (char *) *((uint64_t *) sink_addr);
 	rw->done = true;
 	DEBUG_LOG(PFX "allocated addr %llx\n", (uint64_t) remote_data[nid]);
@@ -658,12 +649,6 @@ static int __handle_rpc(struct ib_wc *wc)
 		if (server)
 			rpc_handle_evict_mem(rh, id, offset);
 	}
-
-	/*
-	   ib_dma_sync_single_for_cpu(rh->device, rw->dma_addr, IMM_DATA_SIZE, DMA_FROM_DEVICE);
-	   temp = be32_to_cpu(*(__be32 *) rw->addr);
-	   DEBUG_LOG(PFX "%X\n", temp);
-	 */
 
 	ret = ib_post_recv(rh->qp, &rw->wr, &bad_wr);
 	if (ret || bad_wr)  {
@@ -1057,15 +1042,10 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 
 
 	step = "alloc dma buffer";
-	rh->dma_buffer = kmalloc(buffer_size, GFP_KERNEL);
+	rh->dma_buffer = ib_dma_alloc_coherent(rh->device, buffer_size, &dma_addr, GFP_KERNEL);
 	if (!rh->dma_buffer) {
 		return -ENOMEM;
 	}
-	dma_addr = ib_dma_map_single(rh->device, rh->dma_buffer,
-			buffer_size, DMA_BIDIRECTIONAL);
-	ret = ib_dma_mapping_error(rh->device, dma_addr);
-	if (ret)
-		goto out_free;
 
 	step = "alloc mr";
 	mr = ib_alloc_mr(rdma_pd, IB_MR_TYPE_MEM_REG, buffer_size / PAGE_SIZE);
@@ -1945,8 +1925,7 @@ static int worker(void *args)
 
 	for (i = 0; i < num_op; i++) {
 		//rmm_fetch(nid, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
-		//rmm_fetch(nid % 2, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
-		rmm_fetch(0, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
+		rmm_fetch(nid % 3, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
 	}
 
 	if (atomic_inc_return(&num_done) == wi->test_size) {
@@ -2045,7 +2024,7 @@ static void test_fetch(void)
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 
-	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", total / 500);
+	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 500);
 }
 
 static void test_evict(void)
