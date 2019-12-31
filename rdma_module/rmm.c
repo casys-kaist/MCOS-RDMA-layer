@@ -111,6 +111,7 @@ struct rdma_handle {
 		RDMA_CLOSED,
 	} state;
 	struct completion cm_done;
+	struct completion init_done;
 	struct recv_work *recv_works;
 
 	int connection_type;
@@ -536,14 +537,14 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	rw->order = 0;
 	rw->slot = i;
 
-	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, id, rw->wr.wr.ex.imm_data);
+	DEBUG_LOG(PFX "nid: %d, i: %d, id: %d, imm_data: %X\n", nid, i, id, rw->wr.wr.ex.imm_data);
 
-	if (nid >= 0)
+	if (nid >= 0) {
 		*((uint64_t *) sink_addr) = (uint64_t) my_data[nid];
+		DEBUG_LOG(PFX "allocating addr %llx\n", (uint64_t) my_data[nid]);
+	}
 	else
-		printk(KERN_ERR "nid was not initialized\n");
-
-	DEBUG_LOG(PFX "allocating addr %llx\n", (uint64_t) my_data);
+		printk(KERN_ERR PFX "nid was not initialized\n");
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -682,6 +683,7 @@ static int __handle_recv(struct ib_wc *wc)
 			rh->rpc_rkey = rp->rkey;
 			kfree(rw);
 			DEBUG_LOG(PFX "recv rpc addr %llx %x\n", rh->remote_rpc_dma_addr, rh->rpc_rkey);
+			complete(&rh->init_done);
 			break;
 
 		case WORK_TYPE_SINK_ADDR:
@@ -696,6 +698,7 @@ static int __handle_recv(struct ib_wc *wc)
 			rh->sink_rkey = rp->rkey;
 			kfree(rw);
 			DEBUG_LOG(PFX "recv sink addr %llx %x\n", rh->remote_sink_dma_addr, rh->sink_rkey);
+			complete(&rh->init_done);
 			break;
 
 		default:
@@ -760,6 +763,7 @@ static int polling_cq(void * args)
 	struct ib_cq *cq = (struct ib_cq *) args;
 	struct ib_wc wc = {0};
 	struct rdma_work *rw;
+	struct rdma_handle *rh;
 	int ret = 0;
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
@@ -819,6 +823,8 @@ static int polling_cq(void * args)
 				break;
 
 			case IB_WC_REG_MR:
+				rh = (struct rdma_handle *) wc.wr_id; 
+				complete(&rh->init_done);
 				DEBUG_LOG(PFX "mr registered\n");
 				break;
 
@@ -1027,7 +1033,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 		.wr = {
 			.opcode = IB_WR_REG_MR,
 			.send_flags = IB_SEND_SIGNALED,
-			.wr_id = WORK_TYPE_REG,
+			.wr_id = (u64) rh,
 		},
 		.access = IB_ACCESS_REMOTE_WRITE | IB_ACCESS_LOCAL_WRITE,
 		/*
@@ -1076,6 +1082,10 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 			out_dereg;
 	}
 
+	ret = wait_for_completion_interruptible(&rh->init_done);
+	if (ret) 
+		goto out_dereg;
+
 	rh->dma_addr = dma_addr;
 	rh->mr = mr;
 
@@ -1095,7 +1105,7 @@ out_dereg:
 
 out_free:
 	if (rh->dma_buffer)
-		kfree(rh->dma_buffer);
+		ib_dma_free_coherent(rh->device, buffer_size, rh->dma_buffer, rh->dma_addr);
 	printk(KERN_ERR PFX "fail at %s\n", step);
 	return ret;
 }
@@ -1461,6 +1471,9 @@ static int __connect_to_server(int nid, int connect_type)
 	if (ret)
 		goto out_err;
 
+	wait_for_completion_interruptible(&rh->init_done);
+	wait_for_completion_interruptible(&rh->init_done);
+
 	printk(PFX "Connected to %d\n", nid);
 	return 0;
 
@@ -1606,6 +1619,9 @@ static int __accept_client(int nid, int connect_type)
 
 	ret = __send_dma_addr(rh, rh->sink_dma_addr, SINK_BUFFER_SIZE);
 	if (ret)  goto out_err;
+
+	wait_for_completion_interruptible(&rh->init_done);
+	wait_for_completion_interruptible(&rh->init_done);
 
 	return 0;
 
@@ -1771,9 +1787,7 @@ void __exit exit_rmm_rdma(void)
 		}
 
 		if (rh->dma_buffer) {
-			ib_dma_unmap_single(rh->device, rh->dma_addr,
-					RPC_BUFFER_SIZE + SINK_BUFFER_SIZE, DMA_BIDIRECTIONAL);
-			kfree(rh->dma_buffer);
+			ib_dma_free_coherent(rh->device, RPC_BUFFER_SIZE + SINK_BUFFER_SIZE, rh->dma_buffer, rh->dma_addr);
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
@@ -1797,9 +1811,7 @@ void __exit exit_rmm_rdma(void)
 		}
 
 		if (rh->dma_buffer) {
-			ib_dma_unmap_single(rh->device, rh->dma_addr,
-					RPC_BUFFER_SIZE + SINK_BUFFER_SIZE, DMA_BIDIRECTIONAL);
-			kfree(rh->dma_buffer);
+			ib_dma_free_coherent(rh->device, RPC_BUFFER_SIZE + SINK_BUFFER_SIZE, rh->dma_buffer, rh->dma_addr);
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
@@ -1925,7 +1937,7 @@ static int worker(void *args)
 
 	for (i = 0; i < num_op; i++) {
 		//rmm_fetch(nid, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
-		rmm_fetch(nid % 3, my_data[nid] + (random_index[i] * PAGE_SIZE), remote_data[nid] + (random_index[i] * PAGE_SIZE), 0);
+		rmm_fetch(nid, my_data[nid], remote_data[nid], 0);
 	}
 
 	if (atomic_inc_return(&num_done) == wi->test_size) {
@@ -2126,6 +2138,7 @@ int __init init_rmm_rdma(void)
 		spin_lock_init(&rh->sink_slots_lock);
 
 		init_completion(&rh->cm_done);
+		init_completion(&rh->init_done);
 	}
 	for (i = 0; i < MAX_NUM_NODES; i++) {
 		struct rdma_handle *rh;
@@ -2147,6 +2160,7 @@ int __init init_rmm_rdma(void)
 		//spin_lock_init(&rh->evict_slots_lock);
 
 		init_completion(&rh->cm_done);
+		init_completion(&rh->init_done);
 	}
 	server_rh.state = RDMA_INIT;
 	init_completion(&server_rh.cm_done);
