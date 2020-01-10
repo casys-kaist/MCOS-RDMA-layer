@@ -501,7 +501,8 @@ static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned
 #ifdef CONFIG_RM
 static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t offset)
 {
-	int i, num_page, ret = 0;
+	int i, ret = 0;
+	int payload_size;
 	void *dest;
 	void *sink_addr;
 	dma_addr_t sink_dma_addr, remote_sink_dma_addr;
@@ -513,16 +514,16 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE);
 	dest = (void *) *((uint64_t *) (rpc_buffer)) + rh->vaddr_start;
 	order = *((uint64_t *) (rpc_buffer + 8));
-	num_page = 1 << order;
+	payload_size = (1 << order) * PAGE_SIZE;
 
-	DEBUG_LOG(PFX "dest: %llx order: %u num_page: %d\n", (uint64_t) dest, order, num_page);
+	DEBUG_LOG(PFX "dest: %llx order: %u num_page: %d\n", (uint64_t) dest, order, 1 << order);
 
 	i = __get_sink_buffer(rh, order);
 	sink_addr = ((uint8_t *) rh->sink_buffer) + (i * PAGE_SIZE);
 	sink_dma_addr = rh->sink_dma_addr + (i * PAGE_SIZE);
 	remote_sink_dma_addr = rh->remote_sink_dma_addr + (i * PAGE_SIZE);
 
-	rw = __get_rdma_work(rh, sink_dma_addr, PAGE_SIZE * num_page, remote_sink_dma_addr, rh->sink_rkey);
+	rw = __get_rdma_work(rh, sink_dma_addr, payload_size, remote_sink_dma_addr, rh->sink_rkey);
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | id);
 	rw->work_type = WORK_TYPE_RPC_ACK;
 	rw->addr = sink_addr;
@@ -535,7 +536,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, id, rw->wr.wr.ex.imm_data);
 
-	memcpy(sink_addr, dest, PAGE_SIZE);
+	memcpy(sink_addr, dest, payload_size);
 
 	DEBUG_LOG(PFX "rkey %x, remote_dma_addr %llx\n", rh->sink_rkey, remote_sink_dma_addr);
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -848,6 +849,7 @@ static int polling_cq(void * args)
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
 
+	kthread_bind(polling_k, 5);
 	while ((ret = ib_poll_cq(cq, 1, &wc)) >= 0) {
 		if (kthread_should_stop())
 			return 0;
@@ -2043,6 +2045,7 @@ static atomic_t num_done = ATOMIC_INIT(0);
 struct worker_info {
 	int nid;
 	int test_size;
+	int order;
 	int num_op;
 	uint16_t *random_index1;
 	uint16_t *random_index2;
@@ -2056,15 +2059,18 @@ static int worker(void *args)
 	int nid;
 	int num_op;
 	uint16_t *random_index1, *random_index2;
+	int num_page;
 
 	wi = (struct worker_info *) args;
 	nid = wi->nid;
 	num_op = wi->num_op;
 	random_index1 = wi->random_index1;
 	random_index2 = wi->random_index2;
+	num_page = 1 << wi->order;
 
 	for (i = 0; i < num_op; i++) {
-		//rmm_fetch(nid, my_data[nid] + (random_index1[i] * PAGE_SIZE), (void *) (random_indexr2[i] * PAGE_SIZE), 0);
+		rmm_fetch(nid, my_data[nid] + (random_index1[i] * (PAGE_SIZE * num_page)), 
+				(void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order);
 	}
 
 	if (atomic_inc_return(&num_done) == wi->test_size) {
@@ -2073,6 +2079,8 @@ static int worker(void *args)
 
 	return 0;
 }
+
+static uint64_t elapsed_th[MAX_NUM_NODES];
 
 static void test_throughput(int test_size, int order)
 {
@@ -2085,7 +2093,7 @@ static void test_throughput(int test_size, int order)
 	struct worker_info wi[16];
 	struct timespec start_tv, end_tv;
 	uint64_t elapsed;
-	int num_page, size;
+	int num_page;
 
 	printk(KERN_INFO PFX "tt start %d\n", test_size);
 
@@ -2102,7 +2110,8 @@ static void test_throughput(int test_size, int order)
 	}
 
 	num_page = 1 << order;
-	size = num_page * PAGE_SIZE;
+	if (order >= 9)
+		num_op = 5000;
 
 	for (i = 0; i < test_size; i++)
 		for (j = 0; j < num_op; j++) {
@@ -2114,6 +2123,8 @@ static void test_throughput(int test_size, int order)
 	for (i = 0; i < test_size; i++) {
 		wi[i].nid = i;
 		wi[i].random_index1 = random_index1[i];
+		wi[i].random_index2 = random_index2[i];
+		wi[i].order = order;
 		wi[i].num_op = num_op;
 		wi[i].done = &job_done;
 		wi[i].test_size = test_size;
@@ -2129,8 +2140,13 @@ static void test_throughput(int test_size, int order)
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
+	elapsed_th[test_size-1] = elapsed;
 
-	printk(KERN_INFO PFX "num op: %d, test size: %d, elapsed(ns) %llu\n", (num_op * test_size), test_size, elapsed);
+	//	printk(KERN_INFO PFX "num op: %d, test size: %d, elapsed(ns) %llu\n", (num_op * test_size), test_size, elapsed);
+	if (test_size == MAX_NUM_NODES)
+		for (i = 0; i < MAX_NUM_NODES; i++)
+			printk(KERN_INFO PFX "test size: %d, elapsed(ns) %llu\n", i + 1, elapsed_th[i]);
+
 
 out_free:
 	for (i = 0; i < test_size; i++) {
@@ -2150,11 +2166,11 @@ static void test_fetch(int order)
 	uint16_t index;
 	uint16_t *arr1, *arr2;
 
-	arr1 = kmalloc(500 * sizeof(uint16_t), GFP_KERNEL);
+	arr1 = kmalloc(512 * sizeof(uint16_t), GFP_KERNEL);
 	if (!arr1)
 		return;
 
-	arr2 = kmalloc(500 * sizeof(uint16_t), GFP_KERNEL);
+	arr2 = kmalloc(512 * sizeof(uint16_t), GFP_KERNEL);
 	if (!arr2) {
 		kfree(arr1);
 		return;
@@ -2162,13 +2178,13 @@ static void test_fetch(int order)
 
 	num_page = (1 << order);
 	size = PAGE_SIZE * num_page;
-	for (i = 0; i < 500; i++) {
+	for (i = 0; i < 512; i++) {
 		get_random_bytes(&index, sizeof(index));
 		index %= (1024 / num_page);
 		arr1[i] = index;
 	}
 
-	for (i = 0; i < 500; i++) {
+	for (i = 0; i < 512; i++) {
 		get_random_bytes(&index, sizeof(index));
 		index %= ((1 << 18) / num_page);
 		arr2[i] = index;
@@ -2181,14 +2197,14 @@ static void test_fetch(int order)
 	total = 0;
 	DEBUG_LOG(PFX "fetch start\n");
 	getnstimeofday(&start_tv);
-	for (i = 0; i < 500; i++) {
-		rmm_fetch(0, my_data[0] + (arr1[i] * size), (void *) 0 + (arr2[i] * size), order);
+	for (i = 0; i < 512; i++) {
+		rmm_fetch(0, my_data[0] + (arr1[i] * size), (void *) 0 + (i * size), order);
 	}
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 
-	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 500);
+	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 512);
 
 	kfree(arr1);
 	kfree(arr2);
@@ -2255,7 +2271,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	else if (strcmp("te", cmd) == 0)
 		test_evict();
 	else if (strcmp("tt", cmd) == 0)
-		if (num <= 20)
+		if (num <= MAX_NUM_NODES)
 			test_throughput(num++, order);
 
 	return count;

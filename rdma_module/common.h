@@ -20,7 +20,7 @@
 
 #define MAX_NUM_NODES		(ARRAY_SIZE(ip_addresses))
 #else
-#define MAX_NUM_NODES		(32)
+#define MAX_NUM_NODES		(16)
 #endif
 
 static uint32_t ip_table[MAX_NUM_NODES] = { 0 };
