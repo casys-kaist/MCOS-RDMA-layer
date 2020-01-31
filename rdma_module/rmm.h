@@ -18,7 +18,11 @@
 #define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 8)
 
-#define NR_WORKER_THREAD 1
+#define NR_WORKER_THREAD 2
+
+#define ACC_CPU_ID 13
+#define POLL_CPU_ID 14 
+#define WORKER_CPU_ID 15 
 
 #define CONNECTION_FETCH	0
 #define CONNECTION_EVICT	1
@@ -106,6 +110,13 @@ struct pool_info {
 	size_t size;
 };
 
+struct evict_info {
+	u64 l_vaddr;
+	u64 r_vaddr;
+
+	struct list_head next;
+};
+
 struct rdma_handle {
 	int nid;
 	enum {
@@ -161,10 +172,8 @@ struct rdma_handle {
 	spinlock_t rpc_slots_lock;
 	DECLARE_BITMAP(sink_slots, NR_SINK_SLOTS);
 	spinlock_t sink_slots_lock;
-	/*
-	DECLARE_BITMAP(evict_slots, NR_SINK_SLOTS);
-	spinlock_t sink_slots_lock;
-	*/
+
+	struct ring_buffer *rb;
 
 	struct rdma_cm_id *cm_id;
 	struct ib_device *device;

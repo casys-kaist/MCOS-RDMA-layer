@@ -8,7 +8,7 @@
 #define RB_HEADER_MAGIC 0xa9
 #endif
 #define RB_ALIGN 64
-#define RB_NR_CHUNKS 8
+#define RB_NR_CHUNKS 1
 
 struct ring_buffer_header {
 	bool reclaim:1;
@@ -45,20 +45,16 @@ size_t ring_buffer_usage(struct ring_buffer *rb)
 	return used;
 }
 
-static int __init_ring_buffer(struct ring_buffer *rb, const unsigned short nr_chunks, const char *fmt, va_list args)
+static int __init_ring_buffer(struct ring_buffer *rb, void *buffer, dma_addr_t dma_addr, 
+		const unsigned short nr_chunks, const char *fmt, va_list args)
 {
 	unsigned short i;
 	int ret = 0;
 
 	for (i = 0; i < nr_chunks; i++) {
-		void *buffer = (void *)__get_free_pages(GFP_KERNEL, RB_CHUNK_ORDER);
-		if (!buffer) {
-			ret = -ENOMEM;
-			goto out_free;
-		}
 		rb->chunk_start[i] = buffer;
-		rb->chunk_end[i] = buffer + RB_CHUNK_SIZE;
-		rb->dma_addr_base[i] = 0;
+		rb->chunk_end[i] = buffer + (4096 * PAGE_SIZE);
+		rb->dma_addr_base[i] = dma_addr;
 	}
 
 	spin_lock_init(&rb->lock);
@@ -96,7 +92,8 @@ int ring_buffer_init(struct ring_buffer *rb, const char *namefmt, ...)
 	return ret;
 }
 
-struct ring_buffer *ring_buffer_create(const char *namefmt, ...)
+struct ring_buffer *ring_buffer_create(void *buffer, dma_addr_t dma_addr, 
+		const char *namefmt, ...)
 {
 	struct ring_buffer *rb;
 	int ret;
@@ -106,7 +103,7 @@ struct ring_buffer *ring_buffer_create(const char *namefmt, ...)
 	if (!rb) return ERR_PTR(ENOMEM);
 
 	va_start(args, namefmt);
-	ret = __init_ring_buffer(rb, RB_NR_CHUNKS, namefmt, args);
+	ret = __init_ring_buffer(rb, buffer, dma_addr, RB_NR_CHUNKS, namefmt, args);
 	va_end(args);
 
 	if (ret) {
@@ -175,7 +172,7 @@ void *ring_buffer_get_mapped(struct ring_buffer *rb, size_t size, dma_addr_t *dm
 	header = rb->tail;
 	rb->tail += sizeof(*header) + size;
 	if (rb->tail + ALIGN(sizeof(*header), RB_ALIGN) >=
-				rb->chunk_end[rb->tail_chunk]) {
+			rb->chunk_end[rb->tail_chunk]) {
 		/* Skip small trailor */
 		size += rb->chunk_end[rb->tail_chunk] - rb->tail;
 		if (__get_next_chunk(rb, &rb->tail_chunk))

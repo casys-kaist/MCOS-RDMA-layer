@@ -23,6 +23,7 @@ module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
+static struct completion done_worker[NR_WORKER_THREAD];
 static struct worker_thread w_threads[NR_WORKER_THREAD];
 static int HEAD = 0;
 
@@ -128,11 +129,6 @@ int rmm_alloc(int nid, u64 vaddr)
 
 	DEBUG_LOG(PFX "wait %p\n", rw);
 
-	/*
-	do {
-		barrier();
-	} while(!(done_copy = rw->done));
-	*/
 	while(!(done_copy = rw->done))
 		cpu_relax();
 
@@ -187,11 +183,6 @@ int rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
 
 	while(!(done_copy = rw->done))
 		cpu_relax();
-	/*
-	do {
-		barrier();
-	} while(!(done_copy = rw->done));
-	*/
 
 	//DEBUG_LOG(PFX "reclaim done %s\n", my_data);
 
@@ -202,36 +193,43 @@ put:
 	return ret;
 }
 
-int rmm_evict(int nid, void *r_vaddr, void *l_vaddr)
+int rmm_evict(int nid, struct evict_info *el, int num_page)
 {
-	int i, ret = 0;
-	uint8_t *rpc_buffer;
-	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+	int offset;
+	uint8_t *evict_buffer, *temp;
+	dma_addr_t evict_dma_addr, remote_evict_dma_addr;
 	struct rdma_handle *rh = rdma_handles_evic[nid];	
 	struct rdma_work *rw;
-	const struct ib_send_wr *bad_wr = NULL;
+	struct list_head *l;
 	bool done_evict;
 
-	i = __get_rpc_buffer(rh);
-	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * (RPC_ARGS_SIZE + PAGE_SIZE));
-	rpc_dma_addr = rh->rpc_dma_addr + (i * (RPC_ARGS_SIZE + PAGE_SIZE));
-	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * (RPC_ARGS_SIZE + PAGE_SIZE));
+	/* 8 is space for address */
+	int ret = 0;
+	int size = 6 + ((8 + PAGE_SIZE) * num_page);
+	const struct ib_send_wr *bad_wr = NULL;
 
-	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE + PAGE_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
-	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
+	evict_buffer = ring_buffer_get_mapped(rh->rb, size , &evict_dma_addr);
+	offset = evict_buffer - (uint8_t *) rh->evict_buffer;
+	remote_evict_dma_addr = rh->remote_rpc_dma_addr + offset;
+
+	rw = __get_rdma_work(rh, evict_dma_addr, size, remote_evict_dma_addr, rh->rpc_rkey);
+	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->work_type = WORK_TYPE_RPC_REQ;
-	rw->addr = rpc_buffer;
-	rw->dma_addr = rpc_dma_addr;
+	rw->addr = evict_buffer;
+	rw->dma_addr = evict_dma_addr;
 	rw->done = false;
-	rw->src = r_vaddr;
 	rw->rh = rh;
 
-	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
-
 	/*copy rpc args to buffer */
-	//*((uint64_t *) (rpc_buffer)) = (uint64_t) RPC_OP_FETCH;
-	*((uint64_t *) (rpc_buffer)) = (uint64_t) r_vaddr;
-	memcpy(rpc_buffer + 8, l_vaddr, PAGE_SIZE);
+	*((int32_t *) evict_buffer) = num_page;
+	*((uint16_t *) (evict_buffer + 4)) = rw->id;
+	temp = evict_buffer + 6;
+	list_for_each(l, &el->next) {
+		struct evict_info *e = list_entry(l, struct evict_info, next);
+		*((uint64_t *) (temp)) = (uint64_t) e->r_vaddr;
+		memcpy(temp + 8, (void *) e->l_vaddr, PAGE_SIZE);
+		temp += (8 + PAGE_SIZE);
+	}
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -243,44 +241,16 @@ int rmm_evict(int nid, void *r_vaddr, void *l_vaddr)
 
 	DEBUG_LOG(PFX "wait %p\n", rw);
 
-	do {
-		barrier();
-	} while(!(done_evict = rw->done));
+	while(!(done_evict = rw->done))
+		cpu_relax();
 
-	//DEBUG_LOG(PFX "reclaim done %s\n", my_data);
 
 put:
-	__put_rpc_buffer(rh, i);
+	ring_buffer_put(rh->rb, evict_buffer);
 	__put_rdma_work(rh, rw);
 
 	return ret;
 }
-
-/*
-static inline int __get_evict_buffer(struct rdma_handle *rh) 
-{
-	int i;
-
-	do {
-		spin_lock(&rh->evict_slots_lock);
-		i = find_first_zero_bit(rh->evict_slots, NR_RPC_SLOTS);
-		if (i < NR_RPC_SLOTS) break;
-		spin_unlock(&rh->evict_slots_lock);
-		WARN_ON_ONCE("recv buffer is full");
-	} while (i >= NR_RPC_SLOTS);
-	set_bit(i, rh->evict_slots);
-	spin_unlock(&rh->evict_slots_lock);
-
-	return i;
-}
-
-static inline void __put_evict_buffer(struct rdma_handle * rh, int slot) 
-{
-	spin_lock(&rh->evict_slots_lock);
-	clear_bit(slot, rh->evict_slots);
-	spin_unlock(&rh->evict_slots_lock);
-}
-*/
 
 static inline int __get_rpc_buffer(struct rdma_handle *rh) 
 {
@@ -392,7 +362,9 @@ retry:
 static struct args_worker *dequeue_work(struct worker_thread *wt)
 {
 	struct args_worker *aw;
+
 	aw  = list_first_entry(&wt->work_head, struct args_worker, next);
+	aw->time_dequeue_ns = sched_clock();
 	list_del(&aw->next);
 	wt->num_queued--;
 
@@ -458,7 +430,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	rw->addr = sink_addr;
 	rw->dma_addr = sink_dma_addr;
 	rw->done = false;
-	
+
 	rw->rh = rh;
 	rw->order = order;
 	rw->slot = i;
@@ -502,7 +474,7 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	rw->addr = rpc_buffer;
 	rw->dma_addr = rpc_dma_addr;
 	rw->done = false;
-	
+
 	rw->rh = rh;
 	rw->slot = -1;
 
@@ -527,16 +499,42 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	return ret;
 }
 
-static int rpc_handle_evict_mem(struct rdma_handle *rh, uint16_t id, uint16_t offset)
+static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 {
+	int i, num_page, ret;
 	void *dest;
-	uint8_t *rpc_buffer;
+	struct rdma_work *rw;
+	uint8_t *evict_buffer, *temp;
+	uint16_t id;
+	const struct ib_send_wr *bad_wr = NULL;
 
-	rpc_buffer = rh->rpc_buffer + (offset * (RPC_ARGS_SIZE + PAGE_SIZE));
-	dest = (void *) *((uint64_t *) (rpc_buffer));
-	memcpy(dest, rpc_buffer + 8, PAGE_SIZE);
+	evict_buffer = rh->evict_buffer + (offset * (8 + PAGE_SIZE));
+	id = (*(uint16_t *) evict_buffer);
+	num_page = (*(int32_t *) (evict_buffer + 2));
+	temp = evict_buffer + 6;
 
-	DEBUG_LOG(PFX "%s\n", (char *) dest);
+	for (i = 0; i < num_page; i++) {
+		dest = (void *) *((uint64_t *) (temp));
+		memcpy(dest, temp + 8, PAGE_SIZE);
+		temp += (8 + PAGE_SIZE);
+	}
+
+	rw = __get_rdma_work(rh, 0, 0, 0, rh->rpc_rkey);
+	rw->wr.wr.ex.imm_data = cpu_to_be32(id);
+	rw->work_type = WORK_TYPE_RPC_ACK;
+	rw->addr = NULL;
+	rw->dma_addr = 0;
+	rw->done = false;
+
+	rw->rh = rh;
+	rw->slot = -1;
+
+	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	if (ret || bad_wr) {
+		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		if (bad_wr)
+			ret = -EINVAL;
+	}
 
 	return 0;
 }
@@ -586,6 +584,15 @@ static int rpc_handle_alloc_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 	DEBUG_LOG(PFX "done %p %d\n", rw, rw->done);
 
 	return ret;
+}
+
+static int rpc_handle_evict_cpu(struct rdma_handle *rh,  int id)
+{
+	struct rdma_work *rw = &rh->rdma_work_pool[id];
+
+	rw->done = true;
+
+	return 0;
 }
 
 #endif
@@ -733,8 +740,10 @@ static int polling_cq(void * args)
 							put_work(&wc);
 					}
 					else if (rw->work_type == WORK_TYPE_RPC_REQ) {
+						/*
 						if (rw->rh->connection_type == CONNECTION_EVICT)
 							rw->done = true;
+							*/
 					}
 				}
 				else {
@@ -889,6 +898,7 @@ retry:
 static int __setup_pd_cq_qp(struct rdma_handle *rh)
 {
 	int ret = 0;
+	int i;
 
 	BUG_ON(rh->state != RDMA_ROUTE_RESOLVED && "for rh->device");
 
@@ -911,20 +921,27 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 			.comp_vector = 0,
 		};
 
+		DEBUG_LOG(PFX "call create cq\n");
 		rdma_cq = ib_create_cq(
 				rh->device, cq_comp_handler, NULL, rh, &cq_attr);
 		if (IS_ERR(rdma_cq)) {
 			ret = PTR_ERR(rdma_cq);
 			goto out_err;
 		}
+
 		/*
 		   ret = ib_req_notify_cq(rh->cq, IB_CQ_NEXT_COMP);
 		   if (ret < 0) goto out_err;
 		 */
-		polling_k = kthread_run(polling_cq, rdma_cq, "polling_cq");
-		if (!polling_k)
+
+		DEBUG_LOG(PFX "create polling thread\n");
+		polling_k = kthread_create(polling_cq, rdma_cq, "polling_cq");
+		if (IS_ERR(polling_k))
 			goto out_err;
-		kthread_bind(polling_k, 5);
+		kthread_bind(polling_k, 14);
+		wake_up_process(polling_k); 
+		for (i = 0; i < NR_WORKER_THREAD; i++)
+			complete(&done_worker[i]);
 	}
 	rh->cq = rdma_cq;
 
@@ -1032,6 +1049,10 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	rh->evict_buffer = rh->dma_buffer;
 	rh->evict_dma_addr = rh->dma_addr;
 
+	if (rh->connection_type == CONNECTION_EVICT)
+		rh->rb = ring_buffer_create(dma_addr, rh->dma_buffer, "evict buffer"); 
+
+	/*
 	if (server) {
 		memset(rh->dma_buffer, -1, buffer_size);
 		printk(PFX "init value: %d\n", *((int *) rh->dma_buffer));
@@ -1044,6 +1065,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	}
 	//	flush_cache_vmap(rh->dma_buffer, rh->dma_buffer + buffer_size);
 	//clflush_cache_range(rh->dma_buffer, buffer_size);
+	*/
 
 	return 0;
 out_dereg:
@@ -1206,6 +1228,7 @@ static int __setup_recv_works(struct rdma_handle *rh)
 	int ret = 0, i;
 	struct recv_work *rws = NULL;
 
+	DEBUG_LOG(PFX "post recv for exchaging dma addr\n");
 	ret = __setup_recv_addr(rh, WORK_TYPE_RPC_ADDR);
 	if (ret)
 		return ret;
@@ -1214,23 +1237,23 @@ static int __setup_recv_works(struct rdma_handle *rh)
 	if (ret)
 		return ret;
 
+	rws = kmalloc(sizeof(*rws) * (PAGE_SIZE / IMM_DATA_SIZE), GFP_KERNEL);
+	if (!rws) {
+		return -ENOMEM;
+	}
+
 	/* pre-post receive work requests-imm */
+	DEBUG_LOG(PFX "post recv for imm\n");
 	for (i = 0; i < MAX_RECV_DEPTH; i++) {
 		struct recv_work *rw = rws + i;
 		struct ib_recv_wr *wr;
 		const struct ib_recv_wr *bad_wr = NULL;
-		struct ib_sge *sgl;
 
 		rw->work_type = WORK_TYPE_IMM;
 		rw->rh = rh;
 
-		sgl = &rw->sgl;
-		sgl->lkey = rdma_pd->local_dma_lkey;
-		sgl->addr = NULL;
-		sgl->length = 0;
-
 		wr = &rw->wr;
-		wr->sg_list = sgl;
+		wr->sg_list = NULL;
 		wr->num_sge = 0;
 		wr->next = NULL;
 		wr->wr_id = (u64) rw;
@@ -1410,6 +1433,7 @@ static int __connect_to_server(int nid, int connect_type)
 		goto out_err;
 
 	step = "post recv works";
+	DEBUG_LOG(PFX "%s\n", step);
 	ret = __setup_recv_works(rh);
 	if (ret) 
 		goto out_err;
@@ -1677,9 +1701,11 @@ static int __establish_connections(void)
 	ret = __listen_to_connection();
 	if (ret) 
 		return ret;
-	accept_k = kthread_run(accept_client, NULL, "accept thread");
+	accept_k = kthread_create(accept_client, NULL, "accept thread");
 	if (!accept_k)
 		return -ENOMEM;
+	kthread_bind(accept_k, ACC_CPU_ID);
+	wake_up_process(accept_k); 
 
 	return 0;
 }
@@ -1716,6 +1742,8 @@ void __exit exit_rmm_rdma(void)
 		}
 		kthread_stop(accept_k);
 	}
+	for (i = 0; i < NR_WORKER_THREAD; i++)
+		kthread_stop(w_threads[i].task);
 
 	/* Detach from upper layer to prevent race condition during exit */
 	for (i = 0; i < MAX_NUM_NODES; i++) {
@@ -1741,7 +1769,7 @@ void __exit exit_rmm_rdma(void)
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
-		if (rh->cq && !IS_ERR(rh->cq)) ib_destroy_cq(rh->cq);
+		//if (rh->cq && !IS_ERR(rh->cq)) ib_destroy_cq(rh->cq);
 		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
 		if (rh->mr && !IS_ERR(rh->mr))
 			ib_dereg_mr(rh->mr);
@@ -1765,7 +1793,7 @@ void __exit exit_rmm_rdma(void)
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
-		if (rh->cq && !IS_ERR(rh->cq)) ib_destroy_cq(rh->cq);
+		//if (rh->cq && !IS_ERR(rh->cq)) ib_destroy_cq(rh->cq);
 		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
 		if (rh->mr && !IS_ERR(rh->mr))
 			ib_dereg_mr(rh->mr);
@@ -1774,6 +1802,7 @@ void __exit exit_rmm_rdma(void)
 		kfree(rpc_pools_evic[i]);
 		kfree(sink_pools_evic[i]);
 	}
+	if (rdma_cq && !IS_ERR(rdma_cq)) ib_destroy_cq(rdma_cq);
 
 	/* MR is set correctly iff rdma buffer and pd are correctly allocated */
 	if (rdma_pd) {
@@ -2117,14 +2146,20 @@ static int handle_message(void *args)
 	uint16_t offset;
 	uint32_t imm_data;
 
-	kthread_bind(wt->task, smp_processor_id());
 	wt->cpu = smp_processor_id();
+	printk(PFX "woker thread created cpu id: %d\n", wt->cpu);
 	complete(&done_thread);
+	init_completion(&done_worker[wt->cpu-15]);
+	wait_for_completion_interruptible(&done_worker[wt->cpu-15]);
 
+	//local_irq_disable();
 	preempt_disable();
 	while (1) {
-		while (!wt->num_queued)
+		while (!wt->num_queued) {
+			if (kthread_should_stop())
+				return 0;
 			cpu_relax();
+		}
 
 		spin_lock(&wt->lock_wt);
 		while (!list_empty(&wt->work_head)) {
@@ -2146,7 +2181,7 @@ static int handle_message(void *args)
 					rpc_handle_alloc_mem(rh, id, offset);
 			}    
 			else {
-				rpc_handle_evict_mem(rh, id, offset);
+				rpc_handle_evict_mem(rh, imm_data);
 			}    
 #else
 			if (rh->connection_type == CONNECTION_FETCH) {
@@ -2156,18 +2191,21 @@ static int handle_message(void *args)
 					rpc_handle_alloc_cpu(rh, id, offset);
 			}
 			else {
+				rpc_handle_evict_cpu(rh, imm_data);
 			}
 #endif
+			kfree(aw);
 			spin_lock(&wt->lock_wt);
 		}
 		spin_unlock(&wt->lock_wt);
 	}
+	//local_irq_enable();
 	preempt_enable();
 
 	return 0;
 }
 
-int __init create_worker_thread(void)
+int create_worker_thread(void)
 {
 	int i;
 
@@ -2181,12 +2219,13 @@ int __init create_worker_thread(void)
 		wt->num_handled = 0;
 		INIT_LIST_HEAD(&wt->work_head);
 		spin_lock_init(&wt->lock_wt);
-
-		wt->task = kthread_run(handle_message, wt, "worker thread %d", i);
+		wt->task = kthread_create(handle_message, wt, "worker thread %d", i);
 		if (IS_ERR(wt->task)) {
 			printk(KERN_ERR PFX "Cannot create worker thread\n");
 			return -EINVAL;
 		}
+		kthread_bind(wt->task, 15 + i);
+		wake_up_process(wt->task); 
 		wait_for_completion_interruptible(&done_thread);
 	}
 
@@ -2263,10 +2302,13 @@ int __init init_rmm_rdma(void)
 			goto out_free;
 	}
 
+	create_worker_thread();
+
 	if (__establish_connections())
 		goto out_free;
 
 	if (!server) {
+		printk(PFX "remote memory alloc\n");
 		for (i = 0; i < MAX_NUM_NODES; i++) {
 			rmm_alloc(i, 0);
 		}

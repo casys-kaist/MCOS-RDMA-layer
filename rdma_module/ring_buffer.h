@@ -25,7 +25,7 @@ struct ring_buffer {
 	char name[80];
 };
 
-struct ring_buffer *ring_buffer_create(const char *namefmt, ...);
+struct ring_buffer *ring_buffer_create(dma_addr_t dma_buffer, void * buffer, const char *namefmt, ...);
 int ring_buffer_init(struct ring_buffer *rb, const char *namefmt, ...);
 void *ring_buffer_get(struct ring_buffer *rb, size_t size);
 void *ring_buffer_get_mapped(struct ring_buffer *rb, size_t size, dma_addr_t *dma_addr);
