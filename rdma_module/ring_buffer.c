@@ -70,7 +70,7 @@ static int __init_ring_buffer(struct ring_buffer *rb, void *buffer, dma_addr_t d
 	vsnprintf(rb->name, sizeof(rb->name), fmt, args);
 	return 0;
 
-out_free:
+//out_free:
 	for (i = 0; i < nr_chunks; i++) {
 		if (rb->chunk_start[i]) {
 			free_pages((unsigned long)rb->chunk_start[i], RB_CHUNK_ORDER);
@@ -80,6 +80,7 @@ out_free:
 	return ret;
 }
 
+/*
 int ring_buffer_init(struct ring_buffer *rb, const char *namefmt, ...)
 {
 	int ret;
@@ -91,6 +92,7 @@ int ring_buffer_init(struct ring_buffer *rb, const char *namefmt, ...)
 
 	return ret;
 }
+*/
 
 struct ring_buffer *ring_buffer_create(void *buffer, dma_addr_t dma_addr, 
 		const char *namefmt, ...)

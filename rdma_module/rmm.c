@@ -193,7 +193,7 @@ put:
 	return ret;
 }
 
-int rmm_evict(int nid, struct evict_info *el, int num_page)
+int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 {
 	int offset;
 	uint8_t *evict_buffer, *temp;
@@ -220,16 +220,20 @@ int rmm_evict(int nid, struct evict_info *el, int num_page)
 	rw->done = false;
 	rw->rh = rh;
 
+	DEBUG_LOG(PFX "copy args, %s, %p\n", __func__, evict_buffer);
 	/*copy rpc args to buffer */
 	*((int32_t *) evict_buffer) = num_page;
 	*((uint16_t *) (evict_buffer + 4)) = rw->id;
 	temp = evict_buffer + 6;
-	list_for_each(l, &el->next) {
+
+	list_for_each(l, evict_list) {
 		struct evict_info *e = list_entry(l, struct evict_info, next);
+		DEBUG_LOG(PFX "iterate list %p %llx %llx\n", e, e->r_vaddr, e->l_vaddr);
 		*((uint64_t *) (temp)) = (uint64_t) e->r_vaddr;
 		memcpy(temp + 8, (void *) e->l_vaddr, PAGE_SIZE);
 		temp += (8 + PAGE_SIZE);
 	}
+	DEBUG_LOG(PFX "iterate done\n");
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -243,7 +247,6 @@ int rmm_evict(int nid, struct evict_info *el, int num_page)
 
 	while(!(done_evict = rw->done))
 		cpu_relax();
-
 
 put:
 	ring_buffer_put(rh->rb, evict_buffer);
@@ -478,7 +481,7 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	rw->rh = rh;
 	rw->slot = -1;
 
-	DEBUG_LOG(PFX "nid: %d, offset: %d, id: %d, imm_data: %X\n", nid, offset, id, rw->wr.wr.ex.imm_data);
+	DEBUG_LOG(PFX "nid: %d, offset: %d, id: %d, vaddr: %llX\n", nid, offset, id, vaddr);
 
 	if (nid >= 0) {
 		if (rm_alloc(vaddr))
@@ -508,15 +511,17 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 	uint16_t id;
 	const struct ib_send_wr *bad_wr = NULL;
 
-	evict_buffer = rh->evict_buffer + (offset * (8 + PAGE_SIZE));
-	id = (*(uint16_t *) evict_buffer);
-	num_page = (*(int32_t *) (evict_buffer + 2));
+	evict_buffer = rh->evict_buffer + (offset);
+	num_page = (*(int32_t *) evict_buffer);
+	id = (*(uint16_t *) (evict_buffer + 4));
 	temp = evict_buffer + 6;
 
+	DEBUG_LOG(PFX "num_page %d, %s\n", num_page, __func__);
 	for (i = 0; i < num_page; i++) {
-		dest = (void *) *((uint64_t *) (temp));
+		dest = (void *) *((uint64_t *) (temp)) + rh->vaddr_start;
 		memcpy(dest, temp + 8, PAGE_SIZE);
 		temp += (8 + PAGE_SIZE);
+		DEBUG_LOG(PFX "dest: %p, data: %s\n", dest, (char *) dest);
 	}
 
 	rw = __get_rdma_work(rh, 0, 0, 0, rh->rpc_rkey);
@@ -538,8 +543,6 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 
 	return 0;
 }
-
-
 
 #endif
 
@@ -590,6 +593,7 @@ static int rpc_handle_evict_cpu(struct rdma_handle *rh,  int id)
 {
 	struct rdma_work *rw = &rh->rdma_work_pool[id];
 
+	DEBUG_LOG(PFX "done id %d\n", id);
 	rw->done = true;
 
 	return 0;
@@ -1050,7 +1054,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	rh->evict_dma_addr = rh->dma_addr;
 
 	if (rh->connection_type == CONNECTION_EVICT)
-		rh->rb = ring_buffer_create(dma_addr, rh->dma_buffer, "evict buffer"); 
+		rh->rb = ring_buffer_create(rh->dma_buffer, dma_addr, "evict buffer"); 
 
 	/*
 	if (server) {
@@ -1346,14 +1350,17 @@ int cm_client_event_handler(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_e
 
 	switch (cm_event->event) {
 		case RDMA_CM_EVENT_ADDR_RESOLVED:
+			printk(PFX "addr resolved\n");
 			rh->state = RDMA_ADDR_RESOLVED;
 			complete(&rh->cm_done);
 			break;
 		case RDMA_CM_EVENT_ROUTE_RESOLVED:
+			printk(PFX "route resolved\n");
 			rh->state = RDMA_ROUTE_RESOLVED;
 			complete(&rh->cm_done);
 			break;
 		case RDMA_CM_EVENT_ESTABLISHED:
+			printk(PFX "connection established\n");
 			rh->state = RDMA_CONNECTED;
 			complete(&rh->cm_done);
 			break;
@@ -1377,14 +1384,15 @@ int cm_client_event_handler(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_e
 	return 0;
 }
 
-static int __connect_to_server(int nid, int connect_type)
+static int __connect_to_server(int nid, int connection_type)
 {
-	int ret = 0;
-	static int c_type;
+	int private_data;
 	const char *step;
 	struct rdma_handle *rh;
 
-	if (connect_type == CONNECTION_FETCH)
+	int ret = 0;
+
+	if (connection_type == CONNECTION_FETCH)
 		rh = rdma_handles[nid];
 	else
 		rh = rdma_handles_evic[nid];
@@ -1444,12 +1452,12 @@ static int __connect_to_server(int nid, int connect_type)
 		goto out_err;
 
 	step = "connect";
+	private_data = (connection_type << 31) | nid;
 	DEBUG_LOG(PFX "%s\n", step);
-	c_type = connect_type;
 	{
 		struct rdma_conn_param conn_param = {
-			.private_data = &c_type,
-			.private_data_len = sizeof(connect_type),
+			.private_data = &private_data,
+			.private_data_len = sizeof(private_data),
 			.responder_resources = 1,
 			.initiator_depth = 1,
 		};
@@ -1545,6 +1553,7 @@ static int __accept_client(int nid, int connect_type)
 	if (connect_type == CONNECTION_FETCH) {
 		step = "allocate memory for cpu server";
 		rh->vaddr_start = rm_machine_init();
+		rdma_handles_evic[nid]->vaddr_start = rh->vaddr_start;
 		if (rh->vaddr_start < 0) goto out_err;
 	}
 
@@ -1574,6 +1583,7 @@ static int accept_client(void *args)
 	int num_client;
 	int ret = 0;
 
+	printk(KERN_INFO PFX "accept thread running\n");
 	for (num_client = 0; num_client < MAX_NUM_NODES; num_client++) {
 		if (kthread_should_stop())
 			return 0;
@@ -1591,28 +1601,22 @@ static int accept_client(void *args)
 
 static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)
 {
-	int connect_type = *(int *)cm_event->param.conn.private_data;
-	static atomic_t num_request = ATOMIC_INIT(-1);
-	static atomic_t num_request_evic = ATOMIC_INIT(-1);
-	int nid = 0;
 	struct rdma_handle *rh;
+	unsigned private = *(int *)cm_event->param.conn.private_data;
 
-	if (connect_type == CONNECTION_FETCH) {
-		DEBUG_LOG(PFX "atomic inc\n");
-		nid = atomic_inc_return(&num_request);
-		DEBUG_LOG(PFX "nid: %d\n", nid);
-		if (nid == MAX_NUM_NODES)
-			return 0;
+	unsigned nid = private & 0x7FFFFFFF;
+	unsigned connection_type = private >> 31; 
+
+	DEBUG_LOG(PFX "nid: %d, connection type %d\n", nid, connection_type);
+	if (nid == MAX_NUM_NODES)
+		return 0;
+
+	if (connection_type == CONNECTION_FETCH)
 		rh = rdma_handles[nid];
-		rh->nid = nid;
-	}
-	else {
-		nid = atomic_inc_return(&num_request_evic);
-		if (nid == MAX_NUM_NODES)
-			return 0;
+	else 
 		rh = rdma_handles_evic[nid];
-		rh->nid = nid;
-	}
+	rh->nid = nid;
+
 	cm_id->context = rh;
 	rh->cm_id = cm_id;
 	rh->device = cm_id->device;
@@ -1620,6 +1624,7 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 
 	DEBUG_LOG(PFX "connecting done\n");
 	complete(&rh->cm_done);
+
 	return 0;
 }
 
@@ -2062,31 +2067,52 @@ static void test_fetch(int order)
 	kfree(arr2);
 }
 
-static void test_evict(void)
+static int test_evict(void)
 {
 	int i;
 	struct timespec start_tv, end_tv;
 	unsigned long elapsed, total;
+	struct evict_info *ei;
+	struct list_head *pos, *n;
+	LIST_HEAD(addr_list);
 
 	if (server)
-		return;
+		return 0;
 
 	elapsed = 0;
 	total = 0;
-	DEBUG_LOG(PFX "fetch start\n");
-	for (i = 0; i < 500; i++) {
+	DEBUG_LOG(PFX "evict start\n");
+	for (i = 0; i < 512; i++) {
 		sprintf(my_data[0] + (i * PAGE_SIZE), "This is %d", i);
 
 	}
-	getnstimeofday(&start_tv);
-	for (i = 0; i < 500; i++) {
-		rmm_evict(0, (void *) (i * PAGE_SIZE), my_data[0] + (i * PAGE_SIZE));
+
+	for (i = 0; i < 64; i++) {
+		ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
+		if (!ei) {
+			printk("error in %s\n", __func__);
+			return -ENOMEM;
+		}
+		ei->l_vaddr = (uint64_t) (my_data[0] + i * (PAGE_SIZE * 8));
+		ei->r_vaddr = i * (PAGE_SIZE * 8);
+		INIT_LIST_HEAD(&ei->next);
+		list_add(&ei->next, &addr_list);
 	}
+
+	getnstimeofday(&start_tv);
+	rmm_evict(0, &addr_list, 64);
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 
-	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", total / 500);
+	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed);
+
+	list_for_each_safe(pos, n, &addr_list) {
+		ei = list_entry(pos, struct evict_info, next);
+		kfree(ei);
+	}
+
+	return 0;
 }
 
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
