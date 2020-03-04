@@ -18,7 +18,7 @@
 #define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 8)
 
-#define NR_WORKER_THREAD 2
+#define NR_WORKER_THREAD 1
 
 #define ACC_CPU_ID 13
 #define POLL_CPU_ID 14 
@@ -191,5 +191,36 @@ static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
 static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
 
+/* prototype of symbol */
+/*
+int ib_dereg_mr_user(struct ib_mr *mr);
+int ib_destroy_cq_user(struct ib_cq *cq);
+void ib_dealloc_pd_user(struct ib_pd *pd);
+struct ib_mr *ib_alloc_mr_user(struct ib_pd *pd,
+			  enum ib_mr_type mr_type,
+			  u32 max_num_sg);
+
+static inline int ib_dereg_mr_dummy(struct ib_mr *mr)
+{
+	return ib_dereg_mr_user(mr);
+}
+
+static inline int ib_destroy_cq_dummy(struct ib_cq *cq)
+{
+	return ib_destroy_cq_user(cq);
+}
+
+struct ib_mr *ib_alloc_mr_dummy(struct ib_pd *pd,
+			  enum ib_mr_type mr_type,
+			  u32 max_num_sg)
+{
+	return ib_alloc_mr_user(pd, mr_type, max_num_sg);
+}
+
+void ib_dealloc_pd_dummy(struct ib_pd *pd)
+{
+	return ib_dealloc_pd_user(pd);
+}
+*/
 
 #endif

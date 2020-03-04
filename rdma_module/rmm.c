@@ -12,6 +12,7 @@
 #include <asm/cacheflush.h>
 
 #include <rdma/rdma_cm.h>
+#include <rdma/ib_verbs.h>
 
 #include "common.h"
 #include "ring_buffer.h"
@@ -53,6 +54,11 @@ static uint32_t my_ip;
 /*buffer for test */
 char *my_data[MAX_NUM_NODES] = { NULL };
 
+unsigned long delta[512];
+unsigned long accum = 0;
+int head = 0;
+
+/*
 int read_test(int nid)
 {
 	int ret = 0;
@@ -89,6 +95,7 @@ int read_test(int nid)
 
 	return 0;
 }
+*/
 
 int rmm_alloc(int nid, u64 vaddr)
 {
@@ -140,6 +147,8 @@ put:
 	return ret;
 }
 
+static unsigned long elapsed_fetch = 0;
+
 int rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
 {
 	int i, ret = 0;
@@ -150,12 +159,18 @@ int rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
 	const struct ib_send_wr *bad_wr = NULL;
 	bool done_copy;
 
+	struct timespec start_tv, end_tv;
+
+	getnstimeofday(&start_tv);
+
 	i = __get_rpc_buffer(rh);
 	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
 	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
-	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, 
+			remote_rpc_dma_addr, rh->rpc_rkey);
+
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -170,7 +185,13 @@ int rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
 	*((uint64_t *) (rpc_buffer)) = (uint64_t)  r_vaddr;
 	*((uint64_t *) (rpc_buffer + 8)) = order;
 
-	DEBUG_LOG(PFX " r_vaddr: %llX %llX\n", (uint64_t)  r_vaddr, *((uint64_t *) (rpc_buffer)));
+	DEBUG_LOG(PFX " r_vaddr: %llX %llX\n", (uint64_t)  r_vaddr, 
+			*((uint64_t *) (rpc_buffer)));
+
+	getnstimeofday(&end_tv);
+	elapsed_fetch += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+		(end_tv.tv_nsec - start_tv.tv_nsec);
+
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
@@ -440,7 +461,10 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, id, rw->wr.wr.ex.imm_data);
 
+	delta[head] = sched_clock();
 	memcpy(sink_addr, dest, payload_size);
+	delta[head] = sched_clock() - delta[head];
+	accum += delta[head++];
 
 	DEBUG_LOG(PFX "rkey %x, remote_dma_addr %llx\n", rh->sink_rkey, remote_sink_dma_addr);
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -560,7 +584,10 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 	sink_dma_addr = rh->sink_dma_addr + (offset * PAGE_SIZE);
 	num_page = 1 << rw->order;
 
+	delta[head] = sched_clock();
 	memcpy(rw->src, sink_addr, PAGE_SIZE * num_page);
+	delta[head] = sched_clock() - delta[head];
+	accum += delta[head++];
 
 	rw->done = true;
 	DEBUG_LOG(PFX "done %p %d\n", rw, rw->done);
@@ -702,90 +729,109 @@ static int put_work(struct ib_wc *wc)
 static int polling_cq(void * args)
 {
 	struct ib_cq *cq = (struct ib_cq *) args;
-	struct ib_wc wc = {0};
+	struct ib_wc *wc;
 	struct rdma_work *rw;
 	struct rdma_handle *rh;
+	int i;
+
 	int ret = 0;
+	int count = 0;
+	int num_poll = 25;
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
+	wc = kmalloc(sizeof(struct ib_wc) * num_poll, GFP_KERNEL);
+	if (!wc) {
+		printk(KERN_ERR "failed to allocate memory in %s\n", __func__);
+		return -ENOMEM;
+	}
 
-	while ((ret = ib_poll_cq(cq, 1, &wc)) >= 0) {
+	while ((ret = ib_poll_cq(cq, num_poll, wc)) >= 0) {
 		if (kthread_should_stop())
-			return 0;
+			goto free;
 		if (ret == 0)
 			continue;
 
-		if (wc.status) {
-			if (wc.status == IB_WC_WR_FLUSH_ERR) {
-				DEBUG_LOG("cq flushed\n");
-				continue;
-			} 
-			else {
-				printk(KERN_ERR PFX "cq completion failed with "
-						"wr_id %Lx status %d opcode %d vendor_err %x\n",
-						wc.wr_id, wc.status, wc.opcode, wc.vendor_err);
-				goto error;
-			}
-		}
+		/*
+		if ((count++ % 50000) == 0)
+			printk("rmm: queue entry %d\n", ret);
+			*/
 
-		switch (wc.opcode) {
-			case IB_WC_SEND:
-				DEBUG_LOG(PFX "send completion\n");
-				__handle_send(&wc);
-				break;
-
-			case IB_WC_RDMA_WRITE:
-				if (wc.wc_flags == IB_WC_WITH_IMM) {
-					DEBUG_LOG(PFX "rdma write-imm completion\n");
-					rw = (struct rdma_work *) wc.wr_id;
-
-					if (rw->work_type == WORK_TYPE_RPC_ACK) {
-						if (server)
-							put_work(&wc);
-					}
-					else if (rw->work_type == WORK_TYPE_RPC_REQ) {
-						/*
-						if (rw->rh->connection_type == CONNECTION_EVICT)
-							rw->done = true;
-							*/
-					}
-				}
+		for (i = 0; i < ret; i++) {
+			if (wc[i].status) {
+				if (wc[i].status == IB_WC_WR_FLUSH_ERR) {
+					DEBUG_LOG("cq flushed\n");
+					continue;
+				} 
 				else {
-					DEBUG_LOG(PFX "rdma write completion\n");
+					printk(KERN_ERR PFX "cq completion failed with "
+							"wr_id %Lx status %d opcode %d vendor_err %x\n",
+							wc[i].wr_id, wc[i].status, wc[i].opcode, wc[i].vendor_err);
+					goto error;
 				}
-				break;
+			}
 
-			case IB_WC_RDMA_READ:
-				rh = (struct rdma_handle *) wc.wr_id; 
-				complete(&rh->init_done);
-				DEBUG_LOG(PFX "rdma read completion\n");
-				break;
+			switch (wc[i].opcode) {
+				case IB_WC_SEND:
+					DEBUG_LOG(PFX "send completion\n");
+					__handle_send(&wc[i]);
+					break;
 
-			case IB_WC_RECV:
-				DEBUG_LOG(PFX "recv completion\n");
-				__handle_recv(&wc);
-				break;
-			case IB_WC_RECV_RDMA_WITH_IMM:
-				DEBUG_LOG(PFX "recv rpc\n");
-				__handle_rpc(&wc);
-				break;
+				case IB_WC_RDMA_WRITE:
+					if (wc[i].wc_flags == IB_WC_WITH_IMM) {
+						DEBUG_LOG(PFX "rdma write-imm completion\n");
+						rw = (struct rdma_work *) wc[i].wr_id;
 
-			case IB_WC_REG_MR:
-				rh = (struct rdma_handle *) wc.wr_id; 
-				complete(&rh->init_done);
-				DEBUG_LOG(PFX "mr registered\n");
-				break;
+						if (rw->work_type == WORK_TYPE_RPC_ACK) {
+							if (server)
+								put_work(&wc[i]);
+						}
+						else if (rw->work_type == WORK_TYPE_RPC_REQ) {
+							/*
+							   if (rw->rh->connection_type == CONNECTION_EVICT)
+							   rw->done = true;
+							 */
+						}
+					}
+					else {
+						DEBUG_LOG(PFX "rdma write completion\n");
+					}
+					break;
 
-			default:
-				printk(KERN_ERR PFX
-						"%s:%d Unexpected opcode %d\n",
-						__func__, __LINE__, wc.opcode);
-				goto error;
+				case IB_WC_RDMA_READ:
+					rh = (struct rdma_handle *) wc[i].wr_id; 
+					complete(&rh->init_done);
+					DEBUG_LOG(PFX "rdma read completion\n");
+					break;
+
+				case IB_WC_RECV:
+					DEBUG_LOG(PFX "recv completion\n");
+					__handle_recv(&wc[i]);
+					break;
+				case IB_WC_RECV_RDMA_WITH_IMM:
+					DEBUG_LOG(PFX "recv rpc\n");
+					__handle_rpc(&wc[i]);
+					break;
+
+				case IB_WC_REG_MR:
+					rh = (struct rdma_handle *) wc[i].wr_id; 
+					complete(&rh->init_done);
+					DEBUG_LOG(PFX "mr registered\n");
+					break;
+
+				default:
+					printk(KERN_ERR PFX
+							"%s:%d Unexpected opcode %d\n",
+							__func__, __LINE__, wc[i].opcode);
+					goto error;
+			}
 		}
 	}
 
+free:
+	kfree(wc);
 	return 0;
 error:
+	kfree(wc);
 	return -1;
 }
 
@@ -925,7 +971,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 			.comp_vector = 0,
 		};
 
-		DEBUG_LOG(PFX "call create cq\n");
+		printk(PFX "call create cq, cqe %d\n", cq_attr.cqe);
 		rdma_cq = ib_create_cq(
 				rh->device, cq_comp_handler, NULL, rh, &cq_attr);
 		if (IS_ERR(rdma_cq)) {
@@ -1057,19 +1103,19 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 		rh->rb = ring_buffer_create(rh->dma_buffer, dma_addr, "evict buffer"); 
 
 	/*
-	if (server) {
-		memset(rh->dma_buffer, -1, buffer_size);
-		printk(PFX "init value: %d\n", *((int *) rh->dma_buffer));
-		//clflush_cache_range(rh->dma_buffer, buffer_size);
-		//		flush_cache_vmap(rh->dma_buffer, rh->dma_buffer + buffer_size);
+	   if (server) {
+	   memset(rh->dma_buffer, -1, buffer_size);
+	   printk(PFX "init value: %d\n", *((int *) rh->dma_buffer));
+	//clflush_cache_range(rh->dma_buffer, buffer_size);
+	//		flush_cache_vmap(rh->dma_buffer, rh->dma_buffer + buffer_size);
 	}
 	else {
-		memset(rh->dma_buffer, 32, buffer_size);
-		printk(PFX "init value: %d\n", *((int *) rh->dma_buffer));
+	memset(rh->dma_buffer, 32, buffer_size);
+	printk(PFX "init value: %d\n", *((int *) rh->dma_buffer));
 	}
 	//	flush_cache_vmap(rh->dma_buffer, rh->dma_buffer + buffer_size);
 	//clflush_cache_range(rh->dma_buffer, buffer_size);
-	*/
+	 */
 
 	return 0;
 out_dereg:
@@ -1738,6 +1784,8 @@ void __exit exit_rmm_rdma(void)
 {
 	int i;
 
+	printk(PFX "statistics | avg: %lu\n", accum / 512);
+
 	if (polling_k)
 		kthread_stop(polling_k);
 	if (server && accept_k) {
@@ -1774,7 +1822,6 @@ void __exit exit_rmm_rdma(void)
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
-		//if (rh->cq && !IS_ERR(rh->cq)) ib_destroy_cq(rh->cq);
 		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
 		if (rh->mr && !IS_ERR(rh->mr))
 			ib_dereg_mr(rh->mr);
@@ -1798,7 +1845,6 @@ void __exit exit_rmm_rdma(void)
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
-		//if (rh->cq && !IS_ERR(rh->cq)) ib_destroy_cq(rh->cq);
 		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
 		if (rh->mr && !IS_ERR(rh->mr))
 			ib_dereg_mr(rh->mr);
@@ -2019,7 +2065,7 @@ static void test_fetch(int order)
 	int i;
 	int num_page, size;
 	struct timespec start_tv, end_tv;
-	unsigned long elapsed, total;
+	unsigned long elapsed;
 	uint16_t index;
 	uint16_t *arr1, *arr2;
 
@@ -2051,17 +2097,18 @@ static void test_fetch(int order)
 		return;
 
 	elapsed = 0;
-	total = 0;
 	DEBUG_LOG(PFX "fetch start\n");
 	getnstimeofday(&start_tv);
 	for (i = 0; i < 512; i++) {
-		rmm_fetch(0, my_data[0] + (arr1[i] * size), (void *) 0 + (i * size), order);
+		rmm_fetch(0, my_data[0] + (i * size), (void *) 0 + (i * size), order);
 	}
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 
 	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 512);
+	printk(KERN_INFO PFX "average elapsed time for preparing fetch %lu (ns)\n", 
+			elapsed_fetch / 512);
 
 	kfree(arr1);
 	kfree(arr2);
@@ -2201,8 +2248,11 @@ static int handle_message(void *args)
 
 #ifdef CONFIG_RM
 			if (rh->connection_type == CONNECTION_FETCH) {
-				if (op == 0)
+				if (op == 0) {
 					rpc_handle_fetch_mem(rh, id, offset);
+				//	delta[head++] = aw->time_dequeue_ns - aw->time_enqueue_ns;
+				//	accum += delta[head-1];
+				}
 				else 
 					rpc_handle_alloc_mem(rh, id, offset);
 			}    
@@ -2211,8 +2261,11 @@ static int handle_message(void *args)
 			}    
 #else
 			if (rh->connection_type == CONNECTION_FETCH) {
-				if (op == 0)
+				if (op == 0) {
 					rpc_handle_fetch_cpu(rh, id, offset);
+				//	delta[head++] = aw->time_dequeue_ns - aw->time_enqueue_ns;
+				//	accum += delta[head-1];
+				}
 				else
 					rpc_handle_alloc_cpu(rh, id, offset);
 			}
