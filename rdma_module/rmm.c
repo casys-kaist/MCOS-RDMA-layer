@@ -9,7 +9,7 @@
 #include <linux/io.h>
 #include <linux/string.h>
 #include <linux/kernel.h>
-#include <asm/cacheflush.h>
+#include <linux/sched_clock.h>
 
 #include <rdma/rdma_cm.h>
 #include <rdma/ib_verbs.h>
@@ -54,9 +54,9 @@ static uint32_t my_ip;
 /*buffer for test */
 char *my_data[MAX_NUM_NODES] = { NULL };
 
-unsigned long delta[512];
-unsigned long accum = 0;
-int head = 0;
+unsigned long delta[512], delta_delay[512];
+unsigned long accum = 0, accum_delay = 0;
+int head = 0, head_delay = 0;
 
 /*
 int read_test(int nid)
@@ -96,6 +96,13 @@ int read_test(int nid)
 	return 0;
 }
 */
+
+unsigned long long get_ns(void)
+{
+	//return (cpu_clock(0) * (1000000L / NSEC_PER_SEC));
+	//return cpu_clock(0);
+	return sched_clock();
+}
 
 int rmm_alloc(int nid, u64 vaddr)
 {
@@ -161,7 +168,7 @@ int rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
 
 	struct timespec start_tv, end_tv;
 
-	getnstimeofday(&start_tv);
+//	getnstimeofday(&start_tv);
 
 	i = __get_rpc_buffer(rh);
 	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
@@ -185,12 +192,14 @@ int rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
 	*((uint64_t *) (rpc_buffer)) = (uint64_t)  r_vaddr;
 	*((uint64_t *) (rpc_buffer + 8)) = order;
 
-	DEBUG_LOG(PFX " r_vaddr: %llX %llX\n", (uint64_t)  r_vaddr, 
+	DEBUG_LOG(PFX "r_vaddr: %llX %llX\n", (uint64_t)  r_vaddr, 
 			*((uint64_t *) (rpc_buffer)));
 
+	/*
 	getnstimeofday(&end_tv);
 	elapsed_fetch += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
+		*/
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -204,6 +213,10 @@ int rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
 
 	while(!(done_copy = rw->done))
 		cpu_relax();
+
+	rw->delay = get_ns() - rw->delay;
+	//delta_delay[head_delay++] = rw->delay;
+	accum_delay += rw->delay;
 
 	//DEBUG_LOG(PFX "reclaim done %s\n", my_data);
 
@@ -375,7 +388,7 @@ retry:
 	aw->imm_data = imm_data;
 
 	aw->time_dequeue_ns = 0;
-	aw->time_enqueue_ns = sched_clock();
+	aw->time_enqueue_ns = get_ns();
 
 	list_add_tail(&aw->next, &wt->work_head);
 	wt->num_queued++;
@@ -388,7 +401,7 @@ static struct args_worker *dequeue_work(struct worker_thread *wt)
 	struct args_worker *aw;
 
 	aw  = list_first_entry(&wt->work_head, struct args_worker, next);
-	aw->time_dequeue_ns = sched_clock();
+	aw->time_dequeue_ns = get_ns();
 	list_del(&aw->next);
 	wt->num_queued--;
 
@@ -461,10 +474,10 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, id, rw->wr.wr.ex.imm_data);
 
-	delta[head] = sched_clock();
+	//delta[head] = get_ns();
 	memcpy(sink_addr, dest, payload_size);
-	delta[head] = sched_clock() - delta[head];
-	accum += delta[head++];
+	//delta[head] = cpu_clock(0) - delta[head];
+	//accum += delta[head++];
 
 	DEBUG_LOG(PFX "rkey %x, remote_dma_addr %llx\n", rh->sink_rkey, remote_sink_dma_addr);
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -576,19 +589,20 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 {
 	int num_page;
 	void *sink_addr;
-	dma_addr_t sink_dma_addr;
+//	dma_addr_t sink_dma_addr;
 	struct rdma_work *rw;
 
 	rw = &rh->rdma_work_pool[id];
 	sink_addr = (uint8_t *) rh->sink_buffer + (offset * PAGE_SIZE);
-	sink_dma_addr = rh->sink_dma_addr + (offset * PAGE_SIZE);
+//	sink_dma_addr = rh->sink_dma_addr + (offset * PAGE_SIZE);
 	num_page = 1 << rw->order;
 
-	delta[head] = sched_clock();
+	//delta[head] = get_ns();
 	memcpy(rw->src, sink_addr, PAGE_SIZE * num_page);
-	delta[head] = sched_clock() - delta[head];
-	accum += delta[head++];
+	//delta[head] = get_ns() - delta[head];
+	//accum += delta[head++];
 
+	rw->delay = get_ns();
 	rw->done = true;
 	DEBUG_LOG(PFX "done %p %d\n", rw, rw->done);
 
@@ -1784,7 +1798,8 @@ void __exit exit_rmm_rdma(void)
 {
 	int i;
 
-	printk(PFX "statistics | avg: %lu\n", accum / 512);
+	printk(PFX "statistics\n avg: %lu avg_delay: %lu\n", 
+			accum, accum_delay);
 
 	if (polling_k)
 		kthread_stop(polling_k);
@@ -2095,6 +2110,11 @@ static void test_fetch(int order)
 
 	if (server)
 		return;
+
+	/* warm up */
+	for (i = 0; i < 10; i++) {
+		rmm_fetch(1, my_data[1] + (i * size), (void *) 0 + (i * size), order);
+	}
 
 	elapsed = 0;
 	DEBUG_LOG(PFX "fetch start\n");
