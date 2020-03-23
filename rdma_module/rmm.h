@@ -170,6 +170,7 @@ struct rdma_handle {
 	size_t remote_sink_size;
 	u32 rpc_rkey;
 	u32 sink_rkey;
+	/*************/
 
 	DECLARE_BITMAP(rpc_slots, NR_RDMA_SLOTS);
 	spinlock_t rpc_slots_lock;

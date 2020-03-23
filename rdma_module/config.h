@@ -29,4 +29,8 @@ const char *ip_addresses[] = {
 	/*   ...  */
 };
 
+const char *ip_addresses_backup[] = {
+	/* Node 0 */ "10.0.0.24",
+};
+
 #endif

@@ -23,7 +23,10 @@
 #define MAX_NUM_NODES		(16)
 #endif
 
+#define NUM_BACKUP		MAX_NUM_NODES	
+
 static uint32_t ip_table[MAX_NUM_NODES] = { 0 };
+static uint32_t ip_table_backup[NUM_BACKUP] = { 0 };
 
 static uint32_t __init __get_host_ip(void)
 {
@@ -52,6 +55,10 @@ bool __init identify_myself(uint32_t *my_ip)
 
 	for (i = 0; i < MAX_NUM_NODES && i < ARRAY_SIZE(ip_addresses); i++) {
 		ip_table[i] = in_aton(ip_addresses[i]);
+	}
+
+	for (i = 0; i < NUM_BACKUP && i < ARRAY_SIZE(ip_addresses_backup); i++) {
+		ip_table_backup[i] = in_aton(ip_addresses[i]);
 	}
 
 	*my_ip = __get_host_ip();

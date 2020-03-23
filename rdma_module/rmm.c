@@ -30,12 +30,16 @@ static int HEAD = 0;
 
 /* RDMA handle for each node */
 static struct rdma_handle server_rh;
-static struct rdma_handle *rdma_handles[MAX_NUM_NODES] = { NULL };
-static struct rdma_handle *rdma_handles_evic[MAX_NUM_NODES] = { NULL };
+static struct rdma_handle *rdma_handles[MAX_NUM_NODES * 2] = { NULL };
 static struct pool_info *rpc_pools[MAX_NUM_NODES] = { NULL };
 static struct pool_info *rpc_pools_evic[MAX_NUM_NODES] = { NULL  };
 static struct pool_info *sink_pools[MAX_NUM_NODES] = { NULL };
 static struct pool_info *sink_pools_evic[MAX_NUM_NODES] = { NULL };
+
+static u64 vaddr_start_arr[MAX_NUM_NODES] = { 0 };
+
+/* RDMA handle for back-up */
+static struct rdma_handle *rh_backup[NUM_BACKUP];
 
 /* Global protection domain (pd) and memory region (mr) */
 static struct ib_pd *rdma_pd = NULL;
@@ -232,7 +236,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	int offset;
 	uint8_t *evict_buffer, *temp;
 	dma_addr_t evict_dma_addr, remote_evict_dma_addr;
-	struct rdma_handle *rh = rdma_handles_evic[nid];	
+	struct rdma_handle *rh = rdma_handles[nid+1];	
 	struct rdma_work *rw;
 	struct list_head *l;
 	bool done_evict;
@@ -1455,7 +1459,7 @@ static int __connect_to_server(int nid, int connection_type)
 	if (connection_type == CONNECTION_FETCH)
 		rh = rdma_handles[nid];
 	else
-		rh = rdma_handles_evic[nid];
+		rh = rdma_handles[nid+1];
 
 	step = "create rdma id";
 	DEBUG_LOG(PFX "%s\n", step);
@@ -1572,19 +1576,16 @@ out_err:
 
 /*Function for Mem server */
 #ifdef CONFIG_RM
-static int __accept_client(int nid, int connect_type)
+static int __accept_client(int num)
 {
 	struct rdma_handle *rh;
 	struct rdma_conn_param conn_param = {0};
 	char *step = NULL;
 	int ret;
 
-	if (connect_type == CONNECTION_FETCH)
-		rh = rdma_handles[nid];
-	else
-		rh = rdma_handles_evic[nid];
+	rh = rdma_handles[num];
 
-	DEBUG_LOG(PFX "accept client %d connect_type %d\n", nid, connect_type);
+	DEBUG_LOG(PFX "accept client %d\n", num);
 	ret = wait_for_completion_interruptible(&rh->cm_done);
 	if (rh->state != RDMA_ROUTE_RESOLVED) return -EINVAL;
 
@@ -1610,12 +1611,9 @@ static int __accept_client(int nid, int connect_type)
 	ret = wait_for_completion_interruptible(&rh->cm_done);
 	if (ret)  goto out_err;
 
-	if (connect_type == CONNECTION_FETCH) {
-		step = "allocate memory for cpu server";
-		rh->vaddr_start = rm_machine_init();
-		rdma_handles_evic[nid]->vaddr_start = rh->vaddr_start;
-		if (rh->vaddr_start < 0) goto out_err;
-	}
+	step = "allocate memory for cpu server";
+	rh->vaddr_start = vaddr_start_arr[rh->nid];
+	if (rh->vaddr_start < 0) goto out_err;
 
 	step = "setup dma buffer";
 	ret = __setup_dma_buffer(rh);
@@ -1644,12 +1642,10 @@ static int accept_client(void *args)
 	int ret = 0;
 
 	printk(KERN_INFO PFX "accept thread running\n");
-	for (num_client = 0; num_client < MAX_NUM_NODES; num_client++) {
+	for (num_client = 0; num_client < MAX_NUM_NODES * 2; num_client++) {
 		if (kthread_should_stop())
 			return 0;
-		if ((ret = __accept_client(num_client, CONNECTION_FETCH))) 
-			return ret;
-		if ((ret = __accept_client(num_client, CONNECTION_EVICT))) 
+		if ((ret = __accept_client(num_client))) 
 			return ret;
 	}
 	printk(KERN_INFO PFX "Cannot accepts more clients\n");
@@ -1674,12 +1670,13 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 	if (connection_type == CONNECTION_FETCH)
 		rh = rdma_handles[nid];
 	else 
-		rh = rdma_handles_evic[nid];
+		rh = rdma_handles[nid+1];
 	rh->nid = nid;
 
 	cm_id->context = rh;
 	rh->cm_id = cm_id;
 	rh->device = cm_id->device;
+	rh->connection_type = connection_type;
 	rh->state = RDMA_ROUTE_RESOLVED;
 
 	DEBUG_LOG(PFX "connecting done\n");
@@ -1804,9 +1801,8 @@ void __exit exit_rmm_rdma(void)
 	if (polling_k)
 		kthread_stop(polling_k);
 	if (server && accept_k) {
-		for (i = 0; i < MAX_NUM_NODES; i++) {
+		for (i = 0; i < MAX_NUM_NODES * 2; i++) {
 			complete(&rdma_handles[i]->cm_done);
-			complete(&rdma_handles_evic[i]->cm_done);
 		}
 		kthread_stop(accept_k);
 	}
@@ -1814,15 +1810,13 @@ void __exit exit_rmm_rdma(void)
 		kthread_stop(w_threads[i].task);
 
 	/* Detach from upper layer to prevent race condition during exit */
-	for (i = 0; i < MAX_NUM_NODES; i++) {
+	for (i = 0; i < MAX_NUM_NODES * 2; i++) {
 		if (rdma_handles[i]->cm_id)
-			rdma_disconnect(rdma_handles[i]->cm_id);
-		if (rdma_handles_evic[i]->cm_id)
 			rdma_disconnect(rdma_handles[i]->cm_id);
 	}
 
 	remove_proc_entry("rmm", NULL);
-	for (i = 0; i < MAX_NUM_NODES; i++) {
+	for (i = 0; i < MAX_NUM_NODES * 2; i++) {
 		struct rdma_handle *rh = rdma_handles[i];
 		if (!rh) continue;
 
@@ -1844,29 +1838,6 @@ void __exit exit_rmm_rdma(void)
 		kfree(rdma_handles[i]);
 		kfree(rpc_pools[i]);
 		kfree(sink_pools[i]);
-
-		/*free evic */
-		rh = rdma_handles_evic[i];
-		if (!rh) continue;
-
-		if (rh->recv_buffer) {
-			ib_dma_unmap_single(rh->device, rh->recv_buffer_dma_addr,
-					PAGE_SIZE, DMA_FROM_DEVICE);
-			kfree(rh->recv_buffer);
-		}
-
-		if (rh->dma_buffer) {
-			ib_dma_free_coherent(rh->device, RPC_BUFFER_SIZE + SINK_BUFFER_SIZE, rh->dma_buffer, rh->dma_addr);
-		}
-
-		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
-		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
-		if (rh->mr && !IS_ERR(rh->mr))
-			ib_dereg_mr(rh->mr);
-
-		kfree(rdma_handles_evic[i]);
-		kfree(rpc_pools_evic[i]);
-		kfree(sink_pools_evic[i]);
 	}
 	if (rdma_cq && !IS_ERR(rdma_cq)) ib_destroy_cq(rdma_cq);
 
@@ -1886,19 +1857,15 @@ static void disconnect(void)
 	if (polling_k)
 		kthread_stop(polling_k);
 	if (server && accept_k) {
-		for (i = 0; i < MAX_NUM_NODES; i++) {
+		for (i = 0; i < MAX_NUM_NODES * 2; i++) {
 			complete(&rdma_handles[i]->cm_done);
-			complete(&rdma_handles_evic[i]->cm_done);
 		}
 		kthread_stop(accept_k);
 	}
 
 	if (!server)  {
-
-		for (i = 0; i < MAX_NUM_NODES; i++) {
+		for (i = 0; i < MAX_NUM_NODES * 2; i++) {
 			if (rdma_handles[i])
-				rdma_disconnect(rdma_handles[i]->cm_id);
-			if (rdma_handles_evic[i])
 				rdma_disconnect(rdma_handles[i]->cm_id);
 		}
 	}
@@ -2270,8 +2237,8 @@ static int handle_message(void *args)
 			if (rh->connection_type == CONNECTION_FETCH) {
 				if (op == 0) {
 					rpc_handle_fetch_mem(rh, id, offset);
-				//	delta[head++] = aw->time_dequeue_ns - aw->time_enqueue_ns;
-				//	accum += delta[head-1];
+					//	delta[head++] = aw->time_dequeue_ns - aw->time_enqueue_ns;
+					//	accum += delta[head-1];
 				}
 				else 
 					rpc_handle_alloc_mem(rh, id, offset);
@@ -2283,8 +2250,8 @@ static int handle_message(void *args)
 			if (rh->connection_type == CONNECTION_FETCH) {
 				if (op == 0) {
 					rpc_handle_fetch_cpu(rh, id, offset);
-				//	delta[head++] = aw->time_dequeue_ns - aw->time_enqueue_ns;
-				//	accum += delta[head-1];
+					//	delta[head++] = aw->time_dequeue_ns - aw->time_enqueue_ns;
+					//	accum += delta[head-1];
 				}
 				else
 					rpc_handle_alloc_cpu(rh, id, offset);
@@ -2337,6 +2304,9 @@ int __init init_rmm_rdma(void)
 
 #ifdef CONFIG_RM
 	server = 1;
+	/* allocate memory for cpu servers */
+	for (i = 0; i < MAX_NUM_NODES; i++)
+		vaddr_start_arr[i] = rm_machine_init();
 #endif
 
 	printk(PFX "init rmm rdma\n");
@@ -2349,7 +2319,7 @@ int __init init_rmm_rdma(void)
 	if (!identify_myself(&my_ip)) 
 		return -EINVAL;
 
-	for (i = 0; i < MAX_NUM_NODES; i++) {
+	for (i = 0; i < MAX_NUM_NODES * 2; i++) {
 		struct rdma_handle *rh;
 		rh = rdma_handles[i] = kzalloc(sizeof(struct rdma_handle), GFP_KERNEL);
 		if (!rh) 
@@ -2361,7 +2331,7 @@ int __init init_rmm_rdma(void)
 
 		rh->nid = i;
 		rh->state = RDMA_INIT;
-		rh->connection_type = CONNECTION_FETCH;
+		//rh->connection_type = CONNECTION_FETCH;
 
 		spin_lock_init(&rh->rdma_work_head_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
@@ -2370,9 +2340,10 @@ int __init init_rmm_rdma(void)
 		init_completion(&rh->cm_done);
 		init_completion(&rh->init_done);
 	}
-	for (i = 0; i < MAX_NUM_NODES; i++) {
+
+	for (i = 0; i < NUM_BACKUP; i++) {
 		struct rdma_handle *rh;
-		rh = rdma_handles_evic[i] = kzalloc(sizeof(struct rdma_handle), GFP_KERNEL);
+		rh = rh_backup[i] = kzalloc(sizeof(struct rdma_handle), GFP_KERNEL);
 		if (!rh) 
 			goto out_free;
 		if (!(rpc_pools_evic[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
@@ -2387,11 +2358,11 @@ int __init init_rmm_rdma(void)
 		spin_lock_init(&rh->rdma_work_head_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
 		spin_lock_init(&rh->sink_slots_lock);
-		//spin_lock_init(&rh->evict_slots_lock);
 
 		init_completion(&rh->cm_done);
 		init_completion(&rh->init_done);
 	}
+
 	server_rh.state = RDMA_INIT;
 	init_completion(&server_rh.cm_done);
 
