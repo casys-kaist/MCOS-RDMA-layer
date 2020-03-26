@@ -57,12 +57,14 @@ bool __init identify_myself(uint32_t *my_ip)
 		ip_table[i] = in_aton(ip_addresses[i]);
 	}
 
+#ifdef CONFIG_RM
 	for (i = 0; i < NUM_BACKUP && i < ARRAY_SIZE(ip_addresses_backup); i++) {
-		ip_table_backup[i] = in_aton(ip_addresses[i]);
+		printk("rmm: %d, %d\n", i, NUM_BACKUP);
+		ip_table_backup[i] = in_aton(ip_addresses_backup[i]);
 	}
+#endif
 
 	*my_ip = __get_host_ip();
-
 	/*
 	for (i = 0; i < MAX_NUM_NODES; i++) {
 		char *me = " ";
