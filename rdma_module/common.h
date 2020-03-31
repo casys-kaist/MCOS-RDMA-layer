@@ -14,19 +14,11 @@
 
 #include "config.h"
 
-#define __SERVER__ 0 
-
-#ifndef __SERVER__
-
-#define MAX_NUM_NODES		(ARRAY_SIZE(ip_addresses))
-#else
 #define MAX_NUM_NODES		(16)
-#endif
-
-#define NUM_BACKUP		MAX_NUM_NODES	
+#define NUM_BACKUPS		1	
 
 static uint32_t ip_table[MAX_NUM_NODES] = { 0 };
-static uint32_t ip_table_backup[NUM_BACKUP] = { 0 };
+static uint32_t ip_table_backup[NUM_BACKUPS] = { 0 };
 
 static uint32_t __init __get_host_ip(void)
 {
@@ -58,8 +50,7 @@ bool __init identify_myself(uint32_t *my_ip)
 	}
 
 #ifdef CONFIG_RM
-	for (i = 0; i < NUM_BACKUP && i < ARRAY_SIZE(ip_addresses_backup); i++) {
-		printk("rmm: %d, %d\n", i, NUM_BACKUP);
+	for (i = 0; i < NUM_BACKUPS && i < ARRAY_SIZE(ip_addresses_backup); i++) {
 		ip_table_backup[i] = in_aton(ip_addresses_backup[i]);
 	}
 #endif

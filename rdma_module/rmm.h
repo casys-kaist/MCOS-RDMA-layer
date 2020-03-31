@@ -26,6 +26,7 @@
 
 #define CONNECTION_FETCH	0
 #define CONNECTION_EVICT	1
+#define CONNECTION_BACKUP	2
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
