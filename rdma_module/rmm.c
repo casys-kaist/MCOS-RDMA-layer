@@ -143,7 +143,7 @@ int rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
 	const struct ib_send_wr *bad_wr = NULL;
 	bool done_copy;
 
-	struct timespec start_tv, end_tv;
+	//struct timespec start_tv, end_tv;
 	int index = nid_to_rh(nid);
 
 //	getnstimeofday(&start_tv);
@@ -536,6 +536,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 	const struct ib_send_wr *bad_wr = NULL;
 
 	struct evict_info *ei;
+	struct list_head *pos, *n;
 	LIST_HEAD(addr_list);
 
 	evict_buffer = rh->evict_buffer + (offset);
@@ -560,8 +561,8 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 				printk("fail to replicate, error in %s\n", __func__);
 				break;
 			}
-			ei->l_vaddr = temp + 8;
-			ei->r_vaddr = dest;
+			ei->l_vaddr = (u64) (temp + 8);
+			ei->r_vaddr = (u64) dest;
 			INIT_LIST_HEAD(&ei->next);
 			list_add(&ei->next, &addr_list);
 		}
@@ -1175,7 +1176,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 		else if (rh->connection_type == CONNECTION_EVICT)
 			pp = sink_pools[index+1];
 		else
-			pp = backup_sink_poolsp[rh->nid];
+			pp = backup_sink_pools[rh->nid];
 	}
 
 	rw = kmalloc(sizeof(struct recv_work), GFP_KERNEL);
@@ -1421,10 +1422,10 @@ err:
 	return ret;
 }
 
+
 /****************************************************************************
  * Client-side connection handling
  */
-#ifndef CONFIG_RM
 int cm_client_event_handler(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_event)
 {
 	struct rdma_handle *rh = cm_id->context;
@@ -1593,7 +1594,6 @@ out_err:
 	printk(KERN_ERR PFX "Unable to %s, %pI4, %d\n", step, ip_table + nid, ret);
 	return ret;
 }
-#endif
 
 /****************************************************************************
  * Server-side connection handling
@@ -2367,6 +2367,8 @@ int connect_to_backups(void)
 			return ret;
 	}
 	printk(PFX "Connections to backups are established.\n");
+
+	return 0;
 }
 
 
