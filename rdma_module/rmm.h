@@ -18,7 +18,7 @@
 #define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 8)
 
-#define NR_WORKER_THREAD 3
+#define NR_WORKER_THREAD 1
 
 #define ACC_CPU_ID 13
 #define POLL_CPU_ID 14 

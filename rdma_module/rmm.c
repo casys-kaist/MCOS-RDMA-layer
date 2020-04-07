@@ -23,7 +23,9 @@
 static int debug = 0;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
+
 static int server = 0;
+static int cr_on = 0;
 
 static struct completion done_worker[NR_WORKER_THREAD];
 static struct worker_thread w_threads[NR_WORKER_THREAD];
@@ -37,12 +39,10 @@ static struct pool_info *sink_pools[NUM_QPS] = { NULL };
 
 static u64 vaddr_start_arr[MAX_NUM_NODES] = { 0 };
 
-#ifdef CONFIG_RM
 /* RDMA handle for back-up */
 static struct rdma_handle *backup_rh[NUM_BACKUPS];
 static struct pool_info *backup_rpc_pools[NUM_BACKUPS] = { NULL };
 static struct pool_info *backup_sink_pools[NUM_BACKUPS] = { NULL };
-#endif
 
 /* Global protection domain (pd) and memory region (mr) */
 static struct ib_pd *rdma_pd = NULL;
@@ -249,7 +249,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 
 	list_for_each(l, evict_list) {
 		struct evict_info *e = list_entry(l, struct evict_info, next);
-		DEBUG_LOG(PFX "iterate list %p %llx %llx\n", e, e->r_vaddr, e->l_vaddr);
+		DEBUG_LOG(PFX "iterate list r_vaddr: %llx l_vaddr: %llx\n",  e->r_vaddr, e->l_vaddr);
 		*((uint64_t *) (temp)) = (uint64_t) e->r_vaddr;
 		memcpy(temp + 8, (void *) e->l_vaddr, PAGE_SIZE);
 		temp += (8 + PAGE_SIZE);
@@ -406,8 +406,8 @@ static int __handle_rpc(struct ib_wc *wc)
 
 	rw = (struct recv_work *) wc->wr_id;
 	rh = rw->rh;
-	DEBUG_LOG(PFX "%X\n", wc->ex.imm_data);
 	imm_data = be32_to_cpu(wc->ex.imm_data);
+	DEBUG_LOG(PFX "%X\n", imm_data);
 
 	enqueue_work(rh, imm_data);
 
@@ -529,7 +529,7 @@ static int rpc_handle_alloc_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 {
 	int i, num_page, ret;
-	void *dest;
+	u64 dest;
 	struct rdma_work *rw;
 	uint8_t *evict_buffer, *temp;
 	uint16_t id;
@@ -547,29 +547,41 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 	DEBUG_LOG(PFX "num_page %d, %s\n", num_page, __func__);
 	for (i = 0; i < num_page; i++) {
 		if (rh->connection_type == CONNECTION_BACKUP)
-			dest = (void *) *((uint64_t *) (temp));
+			dest = (u64) *((uint64_t *) (temp));
 		else
-			dest = (void *) *((uint64_t *) (temp)) + rh->vaddr_start;
-		memcpy(dest, temp + 8, PAGE_SIZE);
+			dest = ((u64) *((uint64_t *) (temp))) + rh->vaddr_start;
+		memcpy((void *) dest, temp + 8, PAGE_SIZE);
 		temp += (8 + PAGE_SIZE);
-		DEBUG_LOG(PFX "dest: %p, data: %s\n", dest, (char *) dest);
+		DEBUG_LOG(PFX "dest: %llx, data: %s\n", dest, (char *) dest);
 
 		/* making evict info list for replication */
-		if (rh->connection_type == CONNECTION_EVICT) {
-			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
-			if (!ei) {
-				printk("fail to replicate, error in %s\n", __func__);
-				break;
+		if (cr_on) {
+			if (rh->connection_type == CONNECTION_EVICT) {
+				ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
+				if (!ei) {
+					printk("fail to replicate, error in %s\n", __func__);
+					break;
+				}
+				ei->l_vaddr = dest;
+				ei->r_vaddr = dest;
+				INIT_LIST_HEAD(&ei->next);
+				list_add(&ei->next, &addr_list);
 			}
-			ei->l_vaddr = (u64) (temp + 8);
-			ei->r_vaddr = (u64) dest;
-			INIT_LIST_HEAD(&ei->next);
-			list_add(&ei->next, &addr_list);
+		}
+	}
+
+	if (cr_on) {
+		DEBUG_LOG(PFX "replicate to backup server\n");
+		rmm_evict(0, &addr_list, num_page);
+
+		list_for_each_safe(pos, n, &addr_list) {
+			ei = list_entry(pos, struct evict_info, next);
+			kfree(ei);
 		}
 	}
 
 	rw = __get_rdma_work(rh, 0, 0, 0, rh->rpc_rkey);
-	rw->wr.wr.ex.imm_data = cpu_to_be32(id);
+	rw->wr.wr.ex.imm_data = cpu_to_be32((id) | 0x8000);
 	rw->work_type = WORK_TYPE_RPC_ACK;
 	rw->addr = NULL;
 	rw->dma_addr = 0;
@@ -578,13 +590,6 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 	rw->rh = rh;
 	rw->slot = -1;
 
-	DEBUG_LOG(PFX "replicate to backup server\n");
-	rmm_evict(0, &addr_list, num_page);
-
-	list_for_each_safe(pos, n, &addr_list) {
-		ei = list_entry(pos, struct evict_info, next);
-		kfree(ei);
-	}
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -644,8 +649,9 @@ static int rpc_handle_alloc_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 
 	return ret;
 }
+#endif
 
-static int rpc_handle_evict_cpu(struct rdma_handle *rh,  int id)
+static int rpc_handle_evict_done(struct rdma_handle *rh,  int id)
 {
 	struct rdma_work *rw = &rh->rdma_work_pool[id];
 
@@ -654,8 +660,6 @@ static int rpc_handle_evict_cpu(struct rdma_handle *rh,  int id)
 
 	return 0;
 }
-
-#endif
 
 static int __handle_recv(struct ib_wc *wc)
 {
@@ -1024,6 +1028,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 		wake_up_process(polling_k); 
 		for (i = 0; i < NR_WORKER_THREAD; i++)
 			complete(&done_worker[i]);
+
 	}
 	rh->cq = rdma_cq;
 
@@ -1051,6 +1056,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 			goto out_err;
 		rh->qp = rh->cm_id->qp;
 	}
+
 
 	return 0;
 
@@ -1080,6 +1086,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 
 
 	step = "alloc dma buffer";
+	DEBUG_LOG(PFX "%s\n", step);
 	if (!rh->dma_buffer) {
 		rh->dma_buffer = ib_dma_alloc_coherent(rh->device, buffer_size, &dma_addr, GFP_KERNEL);
 		if (!rh->dma_buffer) {
@@ -1088,6 +1095,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	}
 
 	step = "alloc mr";
+	DEBUG_LOG(PFX "%s\n", step);
 	if (!rh->mr) {
 		mr = ib_alloc_mr(rdma_pd, IB_MR_TYPE_MEM_REG, buffer_size / PAGE_SIZE);
 		if (IS_ERR(mr)) {
@@ -1100,6 +1108,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	sg_dma_len(&sg) = buffer_size;
 
 	step = "map mr";
+	DEBUG_LOG(PFX "%s\n", step);
 	ret = ib_map_mr_sg(mr, &sg, 1, NULL, buffer_size);
 	if (ret != 1) {
 		printk(PFX "Cannot map scatterlist to mr, %d\n", ret);
@@ -1109,6 +1118,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	reg_wr.key = mr->rkey;
 
 	step = "post reg mr";
+	DEBUG_LOG(PFX "%s\n", step);
 	ret = ib_post_send(rh->qp, &reg_wr.wr, &bad_wr);
 	if (ret || bad_wr) {
 		printk(PFX "Cannot register mr, %d %p\n", ret, bad_wr);
@@ -1408,11 +1418,7 @@ static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)
 		goto
 			unmap;
 	}
-	/*
-	   ret = rmm_wait_for_completion(rh, IB_WC_SEND);
-	   if (ret)
-	   goto unmap;
-	 */
+
 	return 0;
 
 unmap:
@@ -1504,6 +1510,13 @@ static int __connect_to_server(int nid, int connection_type)
 			.sin_addr.s_addr = ip_table[nid],
 		};
 
+		if (connection_type == CONNECTION_BACKUP) {
+			addr.sin_addr.s_addr = backup_ip_table[nid];
+			DEBUG_LOG(PFX "resolve addr(backup): %pI4\n", &backup_ip_table[nid]);
+
+		}
+
+
 		ret = rdma_resolve_addr(rh->cm_id, NULL,
 				(struct sockaddr *)&addr, RDMA_ADDR_RESOLVE_TIMEOUT_MS);
 		if (ret) 
@@ -1543,7 +1556,7 @@ static int __connect_to_server(int nid, int connection_type)
 		goto out_err;
 
 	step = "connect";
-	private_data = (connection_type << 31) | nid;
+	private_data = (connection_type << 30) | nid;
 	DEBUG_LOG(PFX "%s\n", step);
 	{
 		struct rdma_conn_param conn_param = {
@@ -1694,8 +1707,8 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 	struct rdma_handle *rh;
 	unsigned private = *(int *)cm_event->param.conn.private_data;
 
-	unsigned nid = private & 0x7FFFFFFF;
-	unsigned connection_type = private >> 31; 
+	unsigned nid = private & 0x3FFFFFFF;
+	unsigned connection_type = private >> 30; 
 
 	DEBUG_LOG(PFX "nid: %d, connection type %d\n", nid, connection_type);
 	if (nid == MAX_NUM_NODES)
@@ -1790,11 +1803,29 @@ static int __listen_to_connection(void)
 
 	return 0;
 }
+
+int connect_to_backups(void)
+{
+	int i, ret;
+
+	for (i = 0; i < NUM_BACKUPS; i++) { 
+		DEBUG_LOG(PFX "connect to backups\n");
+		if ((ret = __connect_to_server(i, CONNECTION_BACKUP))) 
+			return ret;
+	}
+	printk(PFX "Connections to backups are established.\n");
+
+	return 0;
+}
+
 static int __establish_connections(void)
 {
 	int ret;
 
 	DEBUG_LOG(PFX "establish connection\n");
+	if (cr_on)
+		connect_to_backups();
+
 	ret = __listen_to_connection();
 	if (ret) 
 		return ret;
@@ -2152,6 +2183,7 @@ static void test_fetch(int order)
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 
+	printk(KERN_INFO PFX "total elapsed time %lu (ns)\n", elapsed);
 	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 512);
 	printk(KERN_INFO PFX "average elapsed time for preparing fetch %lu (ns)\n", 
 			elapsed_fetch / 512);
@@ -2198,7 +2230,7 @@ static int test_evict(void)
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 
-	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed);
+	printk(KERN_INFO PFX "elapsed time(evict) %lu (ns)\n", elapsed);
 
 	list_for_each_safe(pos, n, &addr_list) {
 		ei = list_entry(pos, struct evict_info, next);
@@ -2291,7 +2323,7 @@ static int handle_message(void *args)
 			offset = imm_data >> 16;
 			id = imm_data & 0x00007FFF;
 			op = (imm_data & 0x00008000) >> 15;
-
+			DEBUG_LOG(PFX "dequeued %X\n", imm_data);
 #ifdef CONFIG_RM
 			if (rh->connection_type == CONNECTION_FETCH) {
 				if (op == 0) {
@@ -2302,9 +2334,23 @@ static int handle_message(void *args)
 				else 
 					rpc_handle_alloc_mem(rh, id, offset);
 			}    
-			else {
+			else if (rh->connection_type == CONNECTION_EVICT) {
+				DEBUG_LOG(PFX "handle evict in mem server\n");
 				rpc_handle_evict_mem(rh, imm_data);
 			}    
+			else if (rh->connection_type == CONNECTION_BACKUP) {
+					DEBUG_LOG(PFX "connection is backup\n");
+				if (op == 0) {
+					rpc_handle_evict_mem(rh, imm_data);
+				}
+				else {
+					rpc_handle_evict_done(rh, imm_data);
+				}
+
+			}
+			else {
+				printk(KERN_ERR PFX "unknown connection type\n");
+			}
 #else
 			if (rh->connection_type == CONNECTION_FETCH) {
 				if (op == 0) {
@@ -2316,7 +2362,7 @@ static int handle_message(void *args)
 					rpc_handle_alloc_cpu(rh, id, offset);
 			}
 			else {
-				rpc_handle_evict_cpu(rh, imm_data);
+				rpc_handle_evict_done(rh, imm_data);
 			}
 #endif
 			kfree(aw);
@@ -2357,19 +2403,6 @@ int create_worker_thread(void)
 	return 0;
 }
 
-int connect_to_backups(void)
-{
-	int i, ret;
-
-	for (i = 0; i < NUM_BACKUPS; i++) { 
-		DEBUG_LOG(PFX "connect to backups\n");
-		if ((ret = __connect_to_server(i, CONNECTION_BACKUP))) 
-			return ret;
-	}
-	printk(PFX "Connections to backups are established.\n");
-
-	return 0;
-}
 
 
 int __init init_rmm_rdma(void)
@@ -2381,6 +2414,15 @@ int __init init_rmm_rdma(void)
 	/* allocate memory for cpu servers */
 	for (i = 0; i < MAX_NUM_NODES; i++)
 		vaddr_start_arr[i] = rm_machine_init();
+	if (ARRAY_SIZE(backup_ip_addresses) > 0) {
+		printk(PFX "CR is on\n");
+		cr_on = 1;
+	}
+	else {
+		for (i = 0; i < MAX_NUM_NODES; i++)
+			rm_alloc(vaddr_start_arr[i]);
+	}
+
 #endif
 
 	printk(PFX "init rmm rdma\n");
@@ -2428,7 +2470,7 @@ int __init init_rmm_rdma(void)
 
 		rh->nid = i;
 		rh->state = RDMA_INIT;
-		rh->connection_type = CONNECTION_EVICT;
+		//rh->connection_type = CONNECTION_BACKUP;
 
 		spin_lock_init(&rh->rdma_work_head_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
@@ -2446,7 +2488,6 @@ int __init init_rmm_rdma(void)
 		if (!my_data[i])
 			goto out_free;
 	}
-
 	create_worker_thread();
 
 	if (__establish_connections())

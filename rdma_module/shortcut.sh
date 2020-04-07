@@ -9,6 +9,6 @@ if [ $? -ne 0 ]; then
 	fi
 #sudo make install
 sudo mv rdma_rmm.ko /lib/modules/$(uname -r)/kernel/drivers/
-sudo depmod -a
+#sudo depmod -a
 sudo modprobe rdma_rmm debug=$1
 
