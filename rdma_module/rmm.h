@@ -95,6 +95,7 @@ struct worker_thread {
 	/* debug */
 	unsigned long delay;
 	unsigned long num_handled;
+	unsigned long total_queued;
 	int cpu;
 };
 

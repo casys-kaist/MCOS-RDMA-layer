@@ -29,7 +29,7 @@ static int cr_on = 0;
 
 static struct completion done_worker[NR_WORKER_THREAD];
 static struct worker_thread w_threads[NR_WORKER_THREAD];
-static int HEAD = 0;
+static atomic_t HEAD = ATOMIC_INIT(0); 
 
 /* RDMA handle for each node */
 static struct rdma_handle server_rh;
@@ -48,6 +48,7 @@ static struct pool_info *backup_sink_pools[NUM_BACKUPS] = { NULL };
 static struct ib_pd *rdma_pd = NULL;
 /*Global CQ */
 static struct ib_cq *rdma_cq = NULL;
+static int creating_qp = 0;
 
 static struct task_struct *accept_k = NULL;
 static struct task_struct *polling_k = NULL;
@@ -349,9 +350,10 @@ static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned
 static inline struct worker_thread *get_worker_thread(void)
 {
 	struct worker_thread *wt;
+	int h;
 
-	wt = &w_threads[HEAD % NR_WORKER_THREAD];
-	HEAD++;
+	h = atomic_fetch_add(1, &HEAD);
+	wt = &w_threads[h % NR_WORKER_THREAD];
 
 	return wt;
 }
@@ -377,8 +379,10 @@ retry:
 	aw->time_dequeue_ns = 0;
 	aw->time_enqueue_ns = get_ns();
 
+	INIT_LIST_HEAD(&aw->next);
 	list_add_tail(&aw->next, &wt->work_head);
 	wt->num_queued++;
+	wt->total_queued++;
 	spin_unlock(&wt->lock_wt);
 }
 
@@ -407,7 +411,7 @@ static int __handle_rpc(struct ib_wc *wc)
 	rw = (struct recv_work *) wc->wr_id;
 	rh = rw->rh;
 	imm_data = be32_to_cpu(wc->ex.imm_data);
-	DEBUG_LOG(PFX "%X\n", imm_data);
+	DEBUG_LOG(PFX "%08X\n", imm_data);
 
 	enqueue_work(rh, imm_data);
 
@@ -781,84 +785,91 @@ static int polling_cq(void * args)
 		return -ENOMEM;
 	}
 
-	while ((ret = ib_poll_cq(cq, num_poll, wc)) >= 0) {
-		if (kthread_should_stop())
-			goto free;
-		if (ret == 0)
+	while (true) {
+
+		/* to prevent live lock between ib_poll_cq and rdma_create_qp */
+		if (creating_qp)
 			continue;
 
-		/*
-		   if ((count++ % 50000) == 0)
-		   printk("rmm: queue entry %d\n", ret);
-		 */
+		while ((ret = ib_poll_cq(cq, num_poll, wc)) >= 0) {
+			if (kthread_should_stop())
+				goto free;
+			if (ret == 0)
+				continue;
 
-		for (i = 0; i < ret; i++) {
-			if (wc[i].status) {
-				if (wc[i].status == IB_WC_WR_FLUSH_ERR) {
-					DEBUG_LOG("cq flushed\n");
-					continue;
-				} 
-				else {
-					printk(KERN_ERR PFX "cq completion failed with "
-							"wr_id %Lx status %d opcode %d vendor_err %x\n",
-							wc[i].wr_id, wc[i].status, wc[i].opcode, wc[i].vendor_err);
-					goto error;
-				}
-			}
+			/*
+			   if ((count++ % 50000) == 0)
+			   printk("rmm: queue entry %d\n", ret);
+			 */
 
-			switch (wc[i].opcode) {
-				case IB_WC_SEND:
-					DEBUG_LOG(PFX "send completion\n");
-					__handle_send(&wc[i]);
-					break;
-
-				case IB_WC_RDMA_WRITE:
-					if (wc[i].wc_flags == IB_WC_WITH_IMM) {
-						DEBUG_LOG(PFX "rdma write-imm completion\n");
-						rw = (struct rdma_work *) wc[i].wr_id;
-
-						if (rw->work_type == WORK_TYPE_RPC_ACK) {
-							if (server)
-								put_work(&wc[i]);
-						}
-						else if (rw->work_type == WORK_TYPE_RPC_REQ) {
-							/*
-							   if (rw->rh->connection_type == CONNECTION_EVICT)
-							   rw->done = true;
-							 */
-						}
-					}
+			for (i = 0; i < ret; i++) {
+				if (wc[i].status) {
+					if (wc[i].status == IB_WC_WR_FLUSH_ERR) {
+						DEBUG_LOG("cq flushed\n");
+						continue;
+					} 
 					else {
-						DEBUG_LOG(PFX "rdma write completion\n");
+						printk(KERN_ERR PFX "cq completion failed with "
+								"wr_id %Lx status %d opcode %d vendor_err %x\n",
+								wc[i].wr_id, wc[i].status, wc[i].opcode, wc[i].vendor_err);
+						goto error;
 					}
-					break;
+				}
 
-				case IB_WC_RDMA_READ:
-					rh = (struct rdma_handle *) wc[i].wr_id; 
-					complete(&rh->init_done);
-					DEBUG_LOG(PFX "rdma read completion\n");
-					break;
+				switch (wc[i].opcode) {
+					case IB_WC_SEND:
+						DEBUG_LOG(PFX "send completion\n");
+						__handle_send(&wc[i]);
+						break;
 
-				case IB_WC_RECV:
-					DEBUG_LOG(PFX "recv completion\n");
-					__handle_recv(&wc[i]);
-					break;
-				case IB_WC_RECV_RDMA_WITH_IMM:
-					DEBUG_LOG(PFX "recv rpc\n");
-					__handle_rpc(&wc[i]);
-					break;
+					case IB_WC_RDMA_WRITE:
+						if (wc[i].wc_flags == IB_WC_WITH_IMM) {
+							DEBUG_LOG(PFX "rdma write-imm completion\n");
+							rw = (struct rdma_work *) wc[i].wr_id;
 
-				case IB_WC_REG_MR:
-					rh = (struct rdma_handle *) wc[i].wr_id; 
-					complete(&rh->init_done);
-					DEBUG_LOG(PFX "mr registered\n");
-					break;
+							if (rw->work_type == WORK_TYPE_RPC_ACK) {
+								if (server)
+									put_work(&wc[i]);
+							}
+							else if (rw->work_type == WORK_TYPE_RPC_REQ) {
+								/*
+								   if (rw->rh->connection_type == CONNECTION_EVICT)
+								   rw->done = true;
+								 */
+							}
+						}
+						else {
+							DEBUG_LOG(PFX "rdma write completion\n");
+						}
+						break;
 
-				default:
-					printk(KERN_ERR PFX
-							"%s:%d Unexpected opcode %d\n",
-							__func__, __LINE__, wc[i].opcode);
-					goto error;
+					case IB_WC_RDMA_READ:
+						rh = (struct rdma_handle *) wc[i].wr_id; 
+						complete(&rh->init_done);
+						DEBUG_LOG(PFX "rdma read completion\n");
+						break;
+
+					case IB_WC_RECV:
+						DEBUG_LOG(PFX "recv completion\n");
+						__handle_recv(&wc[i]);
+						break;
+					case IB_WC_RECV_RDMA_WITH_IMM:
+						DEBUG_LOG(PFX "recv rpc\n");
+						__handle_rpc(&wc[i]);
+						break;
+
+					case IB_WC_REG_MR:
+						rh = (struct rdma_handle *) wc[i].wr_id; 
+						complete(&rh->init_done);
+						DEBUG_LOG(PFX "mr registered\n");
+						break;
+
+					default:
+						printk(KERN_ERR PFX
+								"%s:%d Unexpected opcode %d\n",
+								__func__, __LINE__, wc[i].opcode);
+						goto error;
+				}
 			}
 		}
 	}
@@ -1028,9 +1039,9 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 		wake_up_process(polling_k); 
 		for (i = 0; i < NR_WORKER_THREAD; i++)
 			complete(&done_worker[i]);
-
 	}
 	rh->cq = rdma_cq;
+
 
 	/* create queue pair */
 	DEBUG_LOG(PFX "create qp\n");
@@ -1051,7 +1062,9 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 			.recv_cq = rdma_cq,
 		};
 
+		creating_qp = 1;
 		ret = rdma_create_qp(rh->cm_id, rdma_pd, &qp_attr);
+		creating_qp = 0;
 		if (ret) 
 			goto out_err;
 		rh->qp = rh->cm_id->qp;
@@ -1832,7 +1845,7 @@ static int __establish_connections(void)
 	accept_k = kthread_create(accept_client, NULL, "accept thread");
 	if (!accept_k)
 		return -ENOMEM;
-	kthread_bind(accept_k, ACC_CPU_ID);
+	//kthread_bind(accept_k, ACC_CPU_ID);
 	wake_up_process(accept_k); 
 
 	return 0;
@@ -2240,6 +2253,11 @@ static int test_evict(void)
 	return 0;
 }
 
+static void stop_polling_thread(void)
+{
+	kthread_stop(polling_k);
+}
+
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		size_t count, loff_t *ppos)
 {
@@ -2276,6 +2294,8 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	else if (strcmp("tt", cmd) == 0)
 		if (num <= MAX_NUM_NODES)
 			test_throughput(num++, order);
+		else if (strcmp("kill", cmd) == 0)
+			stop_polling_thread();
 
 	return count;
 }
@@ -2304,7 +2324,7 @@ static int handle_message(void *args)
 	wait_for_completion_interruptible(&done_worker[wt->cpu-15]);
 
 	//local_irq_disable();
-	preempt_disable();
+	//	preempt_disable();
 	while (1) {
 		while (!wt->num_queued) {
 			if (kthread_should_stop())
@@ -2323,7 +2343,6 @@ static int handle_message(void *args)
 			offset = imm_data >> 16;
 			id = imm_data & 0x00007FFF;
 			op = (imm_data & 0x00008000) >> 15;
-			DEBUG_LOG(PFX "dequeued %X\n", imm_data);
 #ifdef CONFIG_RM
 			if (rh->connection_type == CONNECTION_FETCH) {
 				if (op == 0) {
@@ -2339,7 +2358,7 @@ static int handle_message(void *args)
 				rpc_handle_evict_mem(rh, imm_data);
 			}    
 			else if (rh->connection_type == CONNECTION_BACKUP) {
-					DEBUG_LOG(PFX "connection is backup\n");
+				DEBUG_LOG(PFX "connection is backup\n");
 				if (op == 0) {
 					rpc_handle_evict_mem(rh, imm_data);
 				}
@@ -2371,7 +2390,7 @@ static int handle_message(void *args)
 		spin_unlock(&wt->lock_wt);
 	}
 	//local_irq_enable();
-	preempt_enable();
+	//	preempt_enable();
 
 	return 0;
 }
