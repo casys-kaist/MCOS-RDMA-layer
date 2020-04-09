@@ -794,13 +794,10 @@ static int polling_cq(void * args)
 		while ((ret = ib_poll_cq(cq, num_poll, wc)) >= 0) {
 			if (kthread_should_stop())
 				goto free;
+			if (creating_qp)
+				break;
 			if (ret == 0)
 				continue;
-
-			/*
-			   if ((count++ % 50000) == 0)
-			   printk("rmm: queue entry %d\n", ret);
-			 */
 
 			for (i = 0; i < ret; i++) {
 				if (wc[i].status) {
