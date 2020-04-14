@@ -48,7 +48,7 @@ static struct pool_info *backup_sink_pools[NUM_BACKUPS] = { NULL };
 static struct ib_pd *rdma_pd = NULL;
 /*Global CQ */
 static struct ib_cq *rdma_cq = NULL;
-static int creating_qp = 0;
+static volatile int creating_qp = 0;
 
 static struct task_struct *accept_k = NULL;
 static struct task_struct *polling_k = NULL;
@@ -266,7 +266,6 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	}
 
 	DEBUG_LOG(PFX "wait %p\n", rw);
-
 	while(!(done_evict = rw->done))
 		cpu_relax();
 
@@ -400,30 +399,6 @@ static struct args_worker *dequeue_work(struct worker_thread *wt)
 }
 
 
-static int __handle_rpc(struct ib_wc *wc)
-{
-	int ret = 0;
-	struct recv_work *rw;
-	struct rdma_handle *rh;
-	uint32_t imm_data;
-	const struct ib_recv_wr *bad_wr = NULL;
-
-	rw = (struct recv_work *) wc->wr_id;
-	rh = rw->rh;
-	imm_data = be32_to_cpu(wc->ex.imm_data);
-	DEBUG_LOG(PFX "%08X\n", imm_data);
-
-	enqueue_work(rh, imm_data);
-
-	ret = ib_post_recv(rh->qp, &rw->wr, &bad_wr);
-	if (ret || bad_wr)  {
-		if (bad_wr)
-			ret = -EINVAL;
-		printk(KERN_ERR PFX "fail to post recv in %s\n", __func__);
-	}
-
-	return 0;
-}
 
 /*rpc handle function for mem server */
 
@@ -582,6 +557,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 			ei = list_entry(pos, struct evict_info, next);
 			kfree(ei);
 		}
+		DEBUG_LOG(PFX "replicate done\n");
 	}
 
 	rw = __get_rdma_work(rh, 0, 0, 0, rh->rpc_rkey);
@@ -661,6 +637,38 @@ static int rpc_handle_evict_done(struct rdma_handle *rh,  int id)
 
 	DEBUG_LOG(PFX "done id %d\n", id);
 	rw->done = true;
+
+	return 0;
+}
+
+static int __handle_rpc(struct ib_wc *wc)
+{
+	int ret = 0;
+	struct recv_work *rw;
+	struct rdma_handle *rh;
+	uint32_t imm_data;
+	int op, id;
+	const struct ib_recv_wr *bad_wr = NULL;
+
+	rw = (struct recv_work *) wc->wr_id;
+	rh = rw->rh;
+	imm_data = be32_to_cpu(wc->ex.imm_data);
+	DEBUG_LOG(PFX "%08X\n", imm_data);
+
+	op = (imm_data & 0x00008000) >> 15;
+	if (rh->connection_type == CONNECTION_BACKUP && op == 1) {
+		id = imm_data & 0x00007FFF;
+		rpc_handle_evict_done(rh, id);
+	}
+	else 
+		enqueue_work(rh, imm_data);
+
+	ret = ib_post_recv(rh->qp, &rw->wr, &bad_wr);
+	if (ret || bad_wr)  {
+		if (bad_wr)
+			ret = -EINVAL;
+		printk(KERN_ERR PFX "fail to post recv in %s\n", __func__);
+	}
 
 	return 0;
 }
@@ -787,7 +795,7 @@ static int polling_cq(void * args)
 
 	while (true) {
 
-		/* to prevent live lock between ib_poll_cq and rdma_create_qp */
+		/* to prevent livelock between ib_poll_cq and rdma_create_qp */
 		if (creating_qp)
 			continue;
 
@@ -2288,11 +2296,12 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		test_fetch(order);
 	else if (strcmp("te", cmd) == 0)
 		test_evict();
-	else if (strcmp("tt", cmd) == 0)
+	else if (strcmp("tt", cmd) == 0) {
 		if (num <= MAX_NUM_NODES)
 			test_throughput(num++, order);
-		else if (strcmp("kill", cmd) == 0)
-			stop_polling_thread();
+	}
+	else if (strcmp("kill", cmd) == 0)
+		stop_polling_thread();
 
 	return count;
 }
@@ -2360,7 +2369,7 @@ static int handle_message(void *args)
 					rpc_handle_evict_mem(rh, imm_data);
 				}
 				else {
-					rpc_handle_evict_done(rh, imm_data);
+					rpc_handle_evict_done(rh, id);
 				}
 
 			}
@@ -2378,7 +2387,7 @@ static int handle_message(void *args)
 					rpc_handle_alloc_cpu(rh, id, offset);
 			}
 			else {
-				rpc_handle_evict_done(rh, imm_data);
+				rpc_handle_evict_done(rh, id);
 			}
 #endif
 			kfree(aw);
