@@ -49,6 +49,7 @@ static struct ib_pd *rdma_pd = NULL;
 /*Global CQ */
 static struct ib_cq *rdma_cq = NULL;
 static volatile int creating_qp = 0;
+static volatile int polling_stopped = 0;
 
 static struct task_struct *accept_k = NULL;
 static struct task_struct *polling_k = NULL;
@@ -244,6 +245,11 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 
 	DEBUG_LOG(PFX "copy args, %s, %p\n", __func__, evict_buffer);
 	/*copy rpc args to buffer */
+	/*
+	---------------------------------
+	|num_page(4byte) | rw id(2byte) |
+	---------------------------------
+	*/
 	*((int32_t *) evict_buffer) = num_page;
 	*((uint16_t *) (evict_buffer + 4)) = rw->id;
 	temp = evict_buffer + 6;
@@ -270,6 +276,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 		cpu_relax();
 
 put:
+	memset(evict_buffer, 0, size);
 	ring_buffer_put(rh->rb, evict_buffer);
 	__put_rdma_work(rh, rw);
 
@@ -366,7 +373,7 @@ static void enqueue_work(struct rdma_handle *rh, uint32_t imm_data)
 	spin_lock(&wt->lock_wt);
 
 retry:
-	aw = kmalloc(sizeof(struct args_worker), GFP_KERNEL);
+	aw = kmalloc(sizeof(struct args_worker), GFP_ATOMIC);
 	if (!aw) {
 		printk(KERN_ERR PFX "fail to allocate memory in %s\n", __func__);
 		goto retry;
@@ -510,7 +517,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 	int i, num_page, ret;
 	u64 dest;
 	struct rdma_work *rw;
-	uint8_t *evict_buffer, *temp;
+	uint8_t *evict_buffer, *page_pointer;
 	uint16_t id;
 	const struct ib_send_wr *bad_wr = NULL;
 
@@ -521,16 +528,16 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 	evict_buffer = rh->evict_buffer + (offset);
 	num_page = (*(int32_t *) evict_buffer);
 	id = (*(uint16_t *) (evict_buffer + 4));
-	temp = evict_buffer + 6;
+	page_pointer = evict_buffer + 6;
 
 	DEBUG_LOG(PFX "num_page %d, %s\n", num_page, __func__);
 	for (i = 0; i < num_page; i++) {
 		if (rh->connection_type == CONNECTION_BACKUP)
-			dest = (u64) *((uint64_t *) (temp));
+			dest = (u64) *((uint64_t *) (page_pointer));
 		else
-			dest = ((u64) *((uint64_t *) (temp))) + rh->vaddr_start;
-		memcpy((void *) dest, temp + 8, PAGE_SIZE);
-		temp += (8 + PAGE_SIZE);
+			dest = ((u64) *((uint64_t *) (page_pointer))) + rh->vaddr_start;
+		memcpy((void *) dest, page_pointer + 8, PAGE_SIZE);
+		page_pointer += (8 + PAGE_SIZE);
 		DEBUG_LOG(PFX "dest: %llx, data: %s\n", dest, (char *) dest);
 
 		/* making evict info list for replication */
@@ -560,8 +567,11 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 		DEBUG_LOG(PFX "replicate done\n");
 	}
 
-	rw = __get_rdma_work(rh, 0, 0, 0, rh->rpc_rkey);
-	rw->wr.wr.ex.imm_data = cpu_to_be32((id) | 0x8000);
+	/* set buffer to -1 to send ack to caller */
+	/* id is already in evict_buffer + 4 */
+	*((int *) evict_buffer) = -1;
+	rw = __get_rdma_work(rh, rh->evict_dma_addr + offset, 4, rh->remote_rpc_dma_addr + offset, rh->rpc_rkey);
+	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->work_type = WORK_TYPE_RPC_ACK;
 	rw->addr = NULL;
 	rw->dma_addr = 0;
@@ -647,18 +657,19 @@ static int __handle_rpc(struct ib_wc *wc)
 	struct recv_work *rw;
 	struct rdma_handle *rh;
 	uint32_t imm_data;
-	int op, id;
+	uint16_t id;
 	const struct ib_recv_wr *bad_wr = NULL;
+	int header;
 
 	rw = (struct recv_work *) wc->wr_id;
 	rh = rw->rh;
 	imm_data = be32_to_cpu(wc->ex.imm_data);
 	DEBUG_LOG(PFX "%08X\n", imm_data);
+	header = *((int *) (rh->evict_buffer + imm_data));
 
-	op = (imm_data & 0x00008000) >> 15;
-	if (rh->connection_type == CONNECTION_BACKUP && op == 1) {
-		id = imm_data & 0x00007FFF;
-		rpc_handle_evict_done(rh, id);
+	if ((rh->connection_type == CONNECTION_BACKUP || rh->connection_type == CONNECTION_EVICT) && header == -1) {
+			id = *((uint16_t *) (rh->evict_buffer + (imm_data + 4)));
+			rpc_handle_evict_done(rh, id);
 	}
 	else 
 		enqueue_work(rh, imm_data);
@@ -796,9 +807,14 @@ static int polling_cq(void * args)
 	while (true) {
 
 		/* to prevent livelock between ib_poll_cq and rdma_create_qp */
-		if (creating_qp)
-			continue;
+		/*
+		   if (creating_qp) {
+		   polling_stopped = 1;
+		   continue;
+		   }
+		 */
 
+		polling_stopped = 0;
 		while ((ret = ib_poll_cq(cq, num_poll, wc)) >= 0) {
 			if (kthread_should_stop())
 				goto free;
@@ -1049,7 +1065,6 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 
 
 	/* create queue pair */
-	DEBUG_LOG(PFX "create qp\n");
 	if (!rh->qp) {
 		struct ib_qp_init_attr qp_attr = {
 			.event_handler = NULL, // qp_event_handler,
@@ -1068,11 +1083,17 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 		};
 
 		creating_qp = 1;
+		/*
+		   while (!polling_stopped)
+		   ;
+		 */
+		printk(PFX "create qp\n");
 		ret = rdma_create_qp(rh->cm_id, rdma_pd, &qp_attr);
 		creating_qp = 0;
 		if (ret) 
 			goto out_err;
 		rh->qp = rh->cm_id->qp;
+		printk(PFX "qp created\n");
 	}
 
 
@@ -1110,12 +1131,13 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 		if (!rh->dma_buffer) {
 			return -ENOMEM;
 		}
+		memset(rh->dma_buffer, 0, buffer_size);
 	}
 
 	step = "alloc mr";
 	DEBUG_LOG(PFX "%s\n", step);
 	if (!rh->mr) {
-		mr = ib_alloc_mr(rdma_pd, IB_MR_TYPE_MEM_REG, buffer_size / PAGE_SIZE);
+		mr = ib_alloc_mr(rdma_pd, IB_MR_TYPE_MEM_REG, 2);
 		if (IS_ERR(mr)) {
 			ret = PTR_ERR(mr);
 			goto out_free;
@@ -1295,7 +1317,7 @@ static int __refill_rdma_work(struct rdma_handle *rh, int nr_works)
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key)
 {
 	struct rdma_work *rw;
-	//might_sleep();
+	might_sleep();
 
 	spin_lock(&rh->rdma_work_head_lock);
 	rw = rh->rdma_work_head;
@@ -2212,7 +2234,8 @@ static void test_fetch(int order)
 
 static int test_evict(void)
 {
-	int i;
+	int i, j, num;
+	uint16_t index;
 	struct timespec start_tv, end_tv;
 	unsigned long elapsed, total;
 	struct evict_info *ei;
@@ -2225,35 +2248,45 @@ static int test_evict(void)
 	elapsed = 0;
 	total = 0;
 	DEBUG_LOG(PFX "evict start\n");
-	for (i = 0; i < 512; i++) {
+	for (i = 0; i < 1024; i++) {
 		sprintf(my_data[0] + (i * PAGE_SIZE), "This is %d", i);
 
 	}
 
-	for (i = 0; i < 64; i++) {
-		ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
-		if (!ei) {
-			printk("error in %s\n", __func__);
-			return -ENOMEM;
+	num = 100;
+	for (i = 0; i < num; i++) {
+		INIT_LIST_HEAD(&addr_list);
+		printk(PFX "evict %d\n", i);
+
+		for (j = 0; j < 64; j++) {
+			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
+			if (!ei) {
+				printk("error in %s\n", __func__);
+				return -ENOMEM;
+			}
+
+			get_random_bytes(&index, sizeof(index));
+			index %= 1024;
+
+			ei->l_vaddr = (uint64_t) (my_data[0] + index * (PAGE_SIZE));
+			ei->r_vaddr = index * (PAGE_SIZE);
+			INIT_LIST_HEAD(&ei->next);
+			list_add(&ei->next, &addr_list);
 		}
-		ei->l_vaddr = (uint64_t) (my_data[0] + i * (PAGE_SIZE * 8));
-		ei->r_vaddr = i * (PAGE_SIZE * 8);
-		INIT_LIST_HEAD(&ei->next);
-		list_add(&ei->next, &addr_list);
+
+		getnstimeofday(&start_tv);
+		rmm_evict(0, &addr_list, 64);
+		getnstimeofday(&end_tv);
+		elapsed += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+			(end_tv.tv_nsec - start_tv.tv_nsec);
+
+		list_for_each_safe(pos, n, &addr_list) {
+			ei = list_entry(pos, struct evict_info, next);
+			kfree(ei);
+		}
 	}
+	printk(KERN_INFO PFX "average elapsed time(evict) %lu (ns)\n", elapsed / num);
 
-	getnstimeofday(&start_tv);
-	rmm_evict(0, &addr_list, 64);
-	getnstimeofday(&end_tv);
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-
-	printk(KERN_INFO PFX "elapsed time(evict) %lu (ns)\n", elapsed);
-
-	list_for_each_safe(pos, n, &addr_list) {
-		ei = list_entry(pos, struct evict_info, next);
-		kfree(ei);
-	}
 
 	return 0;
 }
@@ -2328,6 +2361,7 @@ static int handle_message(void *args)
 	complete(&done_thread);
 	init_completion(&done_worker[wt->cpu-15]);
 	wait_for_completion_interruptible(&done_worker[wt->cpu-15]);
+	printk(PFX "woker thread run at cpu %d\n", wt->cpu);
 
 	//local_irq_disable();
 	//	preempt_disable();
@@ -2365,13 +2399,7 @@ static int handle_message(void *args)
 			}    
 			else if (rh->connection_type == CONNECTION_BACKUP) {
 				DEBUG_LOG(PFX "connection is backup\n");
-				if (op == 0) {
-					rpc_handle_evict_mem(rh, imm_data);
-				}
-				else {
-					rpc_handle_evict_done(rh, id);
-				}
-
+				rpc_handle_evict_mem(rh, imm_data);
 			}
 			else {
 				printk(KERN_ERR PFX "unknown connection type\n");
@@ -2385,9 +2413,6 @@ static int handle_message(void *args)
 				}
 				else
 					rpc_handle_alloc_cpu(rh, id, offset);
-			}
-			else {
-				rpc_handle_evict_done(rh, id);
 			}
 #endif
 			kfree(aw);
