@@ -542,7 +542,7 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint16_t id, uint16
 	nid = *(uint16_t *)rpc_buffer;
 	op = * (uint16_t *) (rpc_buffer + 2); 
 	/*Add offset */
-	vaddr = *(uint64_t *) (rpc_buffer + sizeof(int)) + rh->vaddr_start;
+	vaddr = *(uint64_t *) (rpc_buffer + sizeof(int)) + (rh->vaddr_start - FAKE_PA_START);
 
 	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
 	rw->wr.wr.ex.imm_data = cpu_to_be32((offset << 16) | id | 0x8000);
