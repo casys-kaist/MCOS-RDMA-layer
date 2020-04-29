@@ -9,7 +9,7 @@ const char *ip_addresses[] = {
 };
 
 const char *backup_ip_addresses[] = {
-	/* Node 0 */ "10.0.0.34",
+//	/* Node 0 */ "10.0.0.34",
 };
 
 const char *rnic_ip_addresses[] = {

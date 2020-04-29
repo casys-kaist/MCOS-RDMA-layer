@@ -563,7 +563,7 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint16_t id, uint16
 
 	*((int *) rpc_buffer) = ret;
 
-	printk(KERN_ERR PFX "nid was not initialized\n");
+	DEBUG_LOG(PFX "ret in %s, %d\n", __func__, ret);
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -2528,6 +2528,7 @@ int __init init_rmm_rdma(void)
 	for (i = 0; i < MAX_NUM_NODES; i++)
 		vaddr_start_arr[i] = rm_machine_init();
 
+	/*
 	if (ARRAY_SIZE(backup_ip_addresses) > 0) {
 		printk(PFX "CR is on\n");
 		cr_on = 1;
@@ -2536,6 +2537,7 @@ int __init init_rmm_rdma(void)
 		for (i = 0; i < MAX_NUM_NODES; i++)
 			rm_alloc(vaddr_start_arr[i]);
 	}
+	*/
 #endif
 
 	printk(PFX "init rmm rdma\n");
@@ -2610,6 +2612,7 @@ int __init init_rmm_rdma(void)
 		printk(PFX "remote memory alloc\n");
 		for (i = 0; i < MAX_NUM_NODES; i++) {
 			rmm_alloc(i, 0);
+			rmm_free(i, 0);
 		}
 	}
 
