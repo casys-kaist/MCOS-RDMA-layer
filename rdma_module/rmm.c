@@ -11,6 +11,8 @@
 #include <linux/kernel.h>
 #include <linux/sched_clock.h>
 
+#include <mcos/mcos.h>
+
 #include <rdma/rdma_cm.h>
 #include <rdma/ib_verbs.h>
 
@@ -194,7 +196,7 @@ EXPORT_SYMBOL(rmm_free);
 
 static unsigned long elapsed_fetch = 0;
 
-int rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
+int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
 	int i, ret = 0;
 	uint8_t *rpc_buffer;
@@ -224,7 +226,7 @@ int rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
 	rw->addr = rpc_buffer;
 	rw->dma_addr = rpc_dma_addr;
 	rw->done = false;
-	rw->src = src;
+	rw->l_vaddr = l_vaddr;
 	rw->rh = rh;
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
@@ -671,7 +673,7 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 	num_page = 1 << rw->order;
 
 	//delta[head] = get_ns();
-	memcpy(rw->src, sink_addr, PAGE_SIZE * num_page);
+	memcpy(rw->l_vaddr, sink_addr, PAGE_SIZE * num_page);
 	//delta[head] = get_ns() - delta[head];
 	//accum += delta[head++];
 

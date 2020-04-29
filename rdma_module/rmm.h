@@ -83,7 +83,7 @@ struct rdma_work {
 	/* buffer info */
 	int slot;
 	int order;
-	void *src;
+	void *l_vaddr;
 
 	/* */
 	unsigned long delay;
@@ -116,13 +116,6 @@ struct pool_info {
 	u32 rkey;
 	dma_addr_t addr;
 	size_t size;
-};
-
-struct evict_info {
-	u64 l_vaddr;
-	u64 r_vaddr;
-
-	struct list_head next;
 };
 
 struct rdma_handle {
@@ -163,7 +156,6 @@ struct rdma_handle {
 	struct rdma_work *rdma_work_head;
 	struct rdma_work *rdma_work_pool;
 	spinlock_t rdma_work_head_lock;
-
 
 	size_t recv_buffer_size;
 	size_t rpc_buffer_size;
