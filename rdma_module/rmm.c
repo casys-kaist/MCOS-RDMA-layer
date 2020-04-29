@@ -484,7 +484,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	uint8_t *rpc_buffer;
 
 	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE);
-	dest = (void *) *((uint64_t *) (rpc_buffer)) + rh->vaddr_start;
+	dest = (void *) *((uint64_t *) (rpc_buffer)) + (rh->vaddr_start - FAKE_PA_START);
 	order = *((uint64_t *) (rpc_buffer + 8));
 	payload_size = (1 << order) * PAGE_SIZE;
 
@@ -598,7 +598,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 		if (rh->connection_type == CONNECTION_BACKUP)
 			dest = (u64) *((uint64_t *) (page_pointer));
 		else
-			dest = ((u64) *((uint64_t *) (page_pointer))) + rh->vaddr_start;
+			dest = ((u64) *((uint64_t *) (page_pointer))) + (rh->vaddr_start - FAKE_PA_START);
 		memcpy((void *) dest, page_pointer + 8, PAGE_SIZE);
 		page_pointer += (8 + PAGE_SIZE);
 		DEBUG_LOG(PFX "dest: %llx, data: %s\n", dest, (char *) dest);
@@ -2528,6 +2528,7 @@ int __init init_rmm_rdma(void)
 	for (i = 0; i < MAX_NUM_NODES; i++)
 		vaddr_start_arr[i] = rm_machine_init();
 
+#ifdef RMM_TEST
 	/*
 	if (ARRAY_SIZE(backup_ip_addresses) > 0) {
 		printk(PFX "CR is on\n");
@@ -2538,6 +2539,8 @@ int __init init_rmm_rdma(void)
 			rm_alloc(vaddr_start_arr[i]);
 	}
 	*/
+#endif /* end for TEST */
+
 #endif
 
 	printk(PFX "init rmm rdma\n");
@@ -2598,15 +2601,17 @@ int __init init_rmm_rdma(void)
 	server_rh.state = RDMA_INIT;
 	init_completion(&server_rh.cm_done);
 
+	create_worker_thread();
+
+	if (__establish_connections())
+		goto out_free;
+
+#ifdef RMM_TEST
 	for (i = 0; i < MAX_NUM_NODES; i++) {
 		my_data[i] = kmalloc(PAGE_SIZE * 1024, GFP_KERNEL);
 		if (!my_data[i])
 			goto out_free;
 	}
-	create_worker_thread();
-
-	if (__establish_connections())
-		goto out_free;
 
 	if (!server) {
 		printk(PFX "remote memory alloc\n");
@@ -2615,6 +2620,7 @@ int __init init_rmm_rdma(void)
 			rmm_free(i, 0);
 		}
 	}
+#endif
 
 	printk(PFX "Ready on InfiniBand RDMA\n");
 	return 0;
