@@ -199,6 +199,7 @@ static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order);
 static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned int order);
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
 static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
+static int start_connection(void);
 
 /* prototype of symbol */
 /*

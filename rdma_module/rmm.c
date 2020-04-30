@@ -137,7 +137,7 @@ put:
 }
 EXPORT_SYMBOL(rmm_alloc);
 
-int rmm_alloc_asysnc(int nid, u64 vaddr)
+int rmm_alloc_async(int nid, u64 vaddr)
 {
 	int i, ret = 0;
 	uint8_t *rpc_buffer;
@@ -2417,6 +2417,7 @@ static void stop_polling_thread(void)
 	kthread_stop(polling_k);
 }
 
+
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		size_t count, loff_t *ppos)
 {
@@ -2547,7 +2548,7 @@ static int handle_message(void *args)
 	return 0;
 }
 
-int create_worker_thread(void)
+static int create_worker_thread(void)
 {
 	int i;
 
@@ -2574,18 +2575,20 @@ int create_worker_thread(void)
 	return 0;
 }
 
-int start_connection(void)
+static int start_connection(void)
 {
+	int i; 
+
 	create_worker_thread();
 
 	if (__establish_connections())
-		goto out_free;
+		return -1;
 
 #ifdef RMM_TEST
 	for (i = 0; i < MAX_NUM_NODES; i++) {
 		my_data[i] = kmalloc(PAGE_SIZE * 1024, GFP_KERNEL);
 		if (!my_data[i])
-			goto out_free;
+			return -1;
 	}
 
 	if (!server) {
