@@ -2579,29 +2579,6 @@ static int start_connection(void)
 {
 	int i; 
 
-	create_worker_thread();
-
-	if (__establish_connections())
-		return -1;
-
-#ifdef RMM_TEST
-	for (i = 0; i < MAX_NUM_NODES; i++) {
-		my_data[i] = kmalloc(PAGE_SIZE * 1024, GFP_KERNEL);
-		if (!my_data[i])
-			return -1;
-	}
-
-	if (!server) {
-		printk(PFX "remote memory alloc\n");
-		for (i = 0; i < ARRAY_SIZE(ip_addresses); i++) {
-			rmm_alloc(i, 0);
-			rmm_free(i, 0);
-		}
-	}
-#endif
-
-	printk(PFX "Ready on InfiniBand RDMA\n");
-
 	return 0;
 }
 
@@ -2689,7 +2666,29 @@ int __init init_rmm_rdma(void)
 	server_rh.state = RDMA_INIT;
 	init_completion(&server_rh.cm_done);
 
-	printk(PFX "RMM module loaded\n");
+	create_worker_thread();
+
+	if (__establish_connections())
+		return -1;
+
+#ifdef RMM_TEST
+	for (i = 0; i < MAX_NUM_NODES; i++) {
+		my_data[i] = kmalloc(PAGE_SIZE * 1024, GFP_KERNEL);
+		if (!my_data[i])
+			return -1;
+	}
+
+	if (!server) {
+		printk(PFX "remote memory alloc\n");
+		for (i = 0; i < ARRAY_SIZE(ip_addresses); i++) {
+			rmm_alloc(i, 0);
+			rmm_free(i, 0);
+		}
+	}
+#endif
+
+	printk(PFX "Ready on InfiniBand RDMA\n");
+
 
 
 	return 0;
