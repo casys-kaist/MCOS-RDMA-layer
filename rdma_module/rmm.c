@@ -69,6 +69,13 @@ unsigned long delta[512], delta_delay[512];
 unsigned long accum = 0, accum_delay = 0;
 int head = 0, head_delay = 0;
 
+#ifdef CONFIG_MCOS
+extern int (*remote_alloc)(int, u64);
+extern int (*remote_free)(int, u64);
+extern int (*remote_fetch)(int, void *, void *, unsigned int);
+extern int (*remote_evict)(int, struct list_head *, int);
+#endif
+
 static inline int nid_to_rh(int nid)
 {
 	return nid * 2;
@@ -2665,6 +2672,13 @@ int __init init_rmm_rdma(void)
 
 	server_rh.state = RDMA_INIT;
 	init_completion(&server_rh.cm_done);
+
+#ifdef CONFIG_MCOS
+	remote_fetch = rmm_fetch;
+	remote_evict = rmm_evict;
+	remote_alloc = rmm_alloc;
+	remote_free = rmm_free;
+#endif
 
 	create_worker_thread();
 
