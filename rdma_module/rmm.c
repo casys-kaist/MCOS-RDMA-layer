@@ -11,7 +11,7 @@
 #include <linux/kernel.h>
 #include <linux/sched_clock.h>
 
-#include <mcos/mcos.h>
+//#include <mcos/mcos.h>
 
 #include <rdma/rdma_cm.h>
 #include <rdma/ib_verbs.h>
@@ -136,6 +136,62 @@ put:
 	return ret;
 }
 EXPORT_SYMBOL(rmm_alloc);
+
+int rmm_alloc_asysnc(int nid, u64 vaddr)
+{
+	int i, ret = 0;
+	uint8_t *rpc_buffer;
+	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+	struct rdma_handle *rh;	
+	struct rdma_work *rw;
+	const struct ib_send_wr *bad_wr = NULL;
+	bool done_copy;
+
+	int index = nid_to_rh(nid);
+
+	rh = rdma_handles[index];
+
+	i = __get_rpc_buffer(rh);
+	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
+	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
+	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
+
+	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
+	rw->work_type = WORK_TYPE_RPC_REQ;
+	rw->addr = rpc_buffer;
+	rw->dma_addr = rpc_dma_addr;
+	rw->done = false;
+	rw->rh = rh;
+
+	/*copy rpc args to buffer */
+	*((uint16_t *) rpc_buffer) = nid;
+	*((uint16_t *) (rpc_buffer + 2)) = 0;
+	*((uint64_t *) (rpc_buffer + sizeof(int))) = vaddr;
+
+	DEBUG_LOG(PFX "nid: %d remote addr: %llx\n", nid, remote_rpc_dma_addr);
+
+	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	if (ret || bad_wr) {
+		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		if (bad_wr)
+			ret = -EINVAL;
+		goto put;
+	}
+
+	DEBUG_LOG(PFX "wait %p\n", rw);
+
+	while(!(done_copy = rw->done))
+		cpu_relax();
+
+	DEBUG_LOG(PFX "free done\n");
+put:
+	__put_rpc_buffer(rh, i);
+	__put_rdma_work(rh, rw);
+
+	return ret;
+}
+EXPORT_SYMBOL(rmm_alloc_async);
 
 int rmm_free(int nid, u64 vaddr)
 {
@@ -1949,7 +2005,7 @@ static int __establish_connections(void)
 {
 	int i, ret;
 
-	for (i = 0; i < MAX_NUM_NODES; i++) { 
+	for (i = 0; i < ARRAY_SIZE(ip_addresses); i++) { 
 		DEBUG_LOG(PFX "connect to server\n");
 		if ((ret = __connect_to_server(i, CONNECTION_FETCH))) 
 			return ret;
@@ -2398,8 +2454,8 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		if (num <= MAX_NUM_NODES)
 			test_throughput(num++, order);
 	}
-	else if (strcmp("kill", cmd) == 0)
-		stop_polling_thread();
+	else if (strcmp("start", cmd) == 0)
+		start_connection();
 
 	return count;
 }
@@ -2518,6 +2574,33 @@ int create_worker_thread(void)
 	return 0;
 }
 
+int start_connection(void)
+{
+	create_worker_thread();
+
+	if (__establish_connections())
+		goto out_free;
+
+#ifdef RMM_TEST
+	for (i = 0; i < MAX_NUM_NODES; i++) {
+		my_data[i] = kmalloc(PAGE_SIZE * 1024, GFP_KERNEL);
+		if (!my_data[i])
+			goto out_free;
+	}
+
+	if (!server) {
+		printk(PFX "remote memory alloc\n");
+		for (i = 0; i < ARRAY_SIZE(ip_addresses); i++) {
+			rmm_alloc(i, 0);
+			rmm_free(i, 0);
+		}
+	}
+#endif
+
+	printk(PFX "Ready on InfiniBand RDMA\n");
+
+	return 0;
+}
 
 
 int __init init_rmm_rdma(void)
@@ -2603,28 +2686,9 @@ int __init init_rmm_rdma(void)
 	server_rh.state = RDMA_INIT;
 	init_completion(&server_rh.cm_done);
 
-	create_worker_thread();
+	printk(PFX "RMM module loaded\n");
 
-	if (__establish_connections())
-		goto out_free;
 
-#ifdef RMM_TEST
-	for (i = 0; i < MAX_NUM_NODES; i++) {
-		my_data[i] = kmalloc(PAGE_SIZE * 1024, GFP_KERNEL);
-		if (!my_data[i])
-			goto out_free;
-	}
-
-	if (!server) {
-		printk(PFX "remote memory alloc\n");
-		for (i = 0; i < MAX_NUM_NODES; i++) {
-			rmm_alloc(i, 0);
-			rmm_free(i, 0);
-		}
-	}
-#endif
-
-	printk(PFX "Ready on InfiniBand RDMA\n");
 	return 0;
 
 out_free:

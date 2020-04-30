@@ -118,6 +118,14 @@ struct pool_info {
 	size_t size;
 };
 
+struct evict_info {
+	u64 l_vaddr;
+	u64 r_vaddr;
+
+	struct list_head next;
+};
+
+
 struct rdma_handle {
 	int nid;
 	enum {
@@ -194,34 +202,34 @@ static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
 
 /* prototype of symbol */
 /*
-int ib_dereg_mr_user(struct ib_mr *mr);
-int ib_destroy_cq_user(struct ib_cq *cq);
-void ib_dealloc_pd_user(struct ib_pd *pd);
-struct ib_mr *ib_alloc_mr_user(struct ib_pd *pd,
-			  enum ib_mr_type mr_type,
-			  u32 max_num_sg);
+   int ib_dereg_mr_user(struct ib_mr *mr);
+   int ib_destroy_cq_user(struct ib_cq *cq);
+   void ib_dealloc_pd_user(struct ib_pd *pd);
+   struct ib_mr *ib_alloc_mr_user(struct ib_pd *pd,
+   enum ib_mr_type mr_type,
+   u32 max_num_sg);
 
-static inline int ib_dereg_mr_dummy(struct ib_mr *mr)
-{
-	return ib_dereg_mr_user(mr);
-}
+   static inline int ib_dereg_mr_dummy(struct ib_mr *mr)
+   {
+   return ib_dereg_mr_user(mr);
+   }
 
-static inline int ib_destroy_cq_dummy(struct ib_cq *cq)
-{
-	return ib_destroy_cq_user(cq);
-}
+   static inline int ib_destroy_cq_dummy(struct ib_cq *cq)
+   {
+   return ib_destroy_cq_user(cq);
+   }
 
-struct ib_mr *ib_alloc_mr_dummy(struct ib_pd *pd,
-			  enum ib_mr_type mr_type,
-			  u32 max_num_sg)
-{
-	return ib_alloc_mr_user(pd, mr_type, max_num_sg);
-}
+   struct ib_mr *ib_alloc_mr_dummy(struct ib_pd *pd,
+   enum ib_mr_type mr_type,
+   u32 max_num_sg)
+   {
+   return ib_alloc_mr_user(pd, mr_type, max_num_sg);
+   }
 
-void ib_dealloc_pd_dummy(struct ib_pd *pd)
-{
-	return ib_dealloc_pd_user(pd);
-}
-*/
+   void ib_dealloc_pd_dummy(struct ib_pd *pd)
+   {
+   return ib_dealloc_pd_user(pd);
+   }
+ */
 
 #endif
