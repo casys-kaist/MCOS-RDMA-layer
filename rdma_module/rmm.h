@@ -36,14 +36,13 @@
 
 #define FAKE_PA_START 0x20000000000
 
+
 #ifdef CONFIG_RM
-
+#define DMA_VADDR_START (RM_VADDR_START + RM_VADDR_SIZE * MAX_RM_MACHINE)
 #define DMA_BUFFER_START (RM_PADDR_START + RM_PADDR_SIZE)
-
 #else 
-
 #define DMA_BUFFER_START (_AC(1, UL) << 36)
-
+#define DMA_VADDR_START (0xffffd90000000000)
 #endif
 
 enum rpc_opcode {

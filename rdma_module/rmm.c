@@ -11,6 +11,8 @@
 #include <linux/kernel.h>
 #include <linux/sched_clock.h>
 
+#include <asm/tlbflush.h>
+
 //#include <mcos/mcos.h>
 
 #include <rdma/rdma_cm.h>
@@ -1255,12 +1257,19 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	step = "alloc dma buffer";
 	DEBUG_LOG(PFX "%s\n", step);
 	if (!rh->dma_buffer) {
-		rh->dma_buffer = ioremap_nocache(DMA_BUFFER_START + (rh->nid * buffer_size), buffer_size);
+		rh->dma_buffer = DMA_VADDR_START + (rh->nid * buffer_size);
+		if (ioremap_page_range((unsigned long) rh->dma_buffer, 
+					(unsigned long) rh->dma_buffer + buffer_size, 
+					DMA_BUFFER_START + (rh->nid * buffer_size), PAGE_KERNEL_IO)) {
+			return -ENOMEM;
+		}
+
+		flush_tlb_all();
 		memset(rh->dma_buffer, 0, buffer_size);
 		if (!rh->dma_buffer) {
 			return -ENOMEM;
 		}
-		dma_addr = ib_dma_map_single(rh->device, rh->dma_buffer, sizeof(struct pool_info), DMA_BIDIRECTIONAL);
+		dma_addr = ib_dma_map_single(rh->device, rh->dma_buffer, buffer_size, DMA_BIDIRECTIONAL);
 		ret = ib_dma_mapping_error(rh->device, dma_addr);
 		if (ret) 
 			goto out_free;
@@ -2067,7 +2076,6 @@ void __exit exit_rmm_rdma(void)
 		if (rh->dma_buffer) {
 			ib_dma_unmap_single(rh->device, rh->dma_addr, 
 					DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
-			iounmap(rh->dma_buffer);
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
@@ -2093,7 +2101,6 @@ void __exit exit_rmm_rdma(void)
 		if (rh->dma_buffer) {
 			ib_dma_unmap_single(rh->device, rh->dma_addr, 
 					DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
-			iounmap(rh->dma_buffer);
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
@@ -2114,29 +2121,6 @@ void __exit exit_rmm_rdma(void)
 
 	printk(KERN_INFO PFX "RDMA unloaded\n");
 	return;
-}
-
-static void disconnect(void)
-{
-	int i = 0;
-
-	if (polling_k)
-		kthread_stop(polling_k);
-	if (server && accept_k) {
-		for (i = 0; i < NUM_QPS; i++) {
-			complete(&rdma_handles[i]->cm_done);
-		}
-		kthread_stop(accept_k);
-	}
-
-	if (!server)  {
-		for (i = 0; i < NUM_QPS; i++) {
-			if (rdma_handles[i])
-				rdma_disconnect(rdma_handles[i]->cm_id);
-		}
-	}
-
-
 }
 
 /*
@@ -2454,8 +2438,10 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		order = i;
 	}
 
-	if (strcmp("diss", cmd) == 0)
-		disconnect();
+	if (strcmp("pd", cmd) == 0)
+		;
+	else if (strcmp("bd", cmd) == 0)
+		;
 	else if (strcmp("tf", cmd) == 0)
 		test_fetch(order);
 	else if (strcmp("te", cmd) == 0)
@@ -2595,6 +2581,7 @@ static int start_connection(void)
 int __init init_rmm_rdma(void)
 {
 	int i;
+	struct vm_struct *area;
 
 #ifdef CONFIG_RM
 	server = 1;
@@ -2622,6 +2609,14 @@ int __init init_rmm_rdma(void)
 	if (rmm_proc == NULL) {
 		printk(KERN_ERR PFX "cannot create /proc/rmm\n");
 		return -ENOMEM;
+	}
+
+	/* reserve virtual address space */
+	area = get_vm_area_virt(DMA_BUFFER_SIZE * MAX_NUM_NODES, 
+			GFP_KERNEL, DMA_VADDR_START);  	
+	if (!area) {
+		printk("reservation failed\n");
+		return -ENOSPC;	
 	}
 
 	if (!identify_myself(&my_ip)) 
