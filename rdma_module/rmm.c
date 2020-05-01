@@ -2346,14 +2346,14 @@ static void test_fetch(int order)
 
 	/* warm up */
 	for (i = 0; i < 10; i++) {
-		rmm_fetch(1, my_data[1] + (i * size), (void *) 0 + (i * size), order);
+		rmm_fetch(1, my_data[1] + (i * size), (void *) FAKE_PA_START + (i * size), order);
 	}
 
 	elapsed = 0;
 	DEBUG_LOG(PFX "fetch start\n");
 	getnstimeofday(&start_tv);
 	for (i = 0; i < 512; i++) {
-		rmm_fetch(0, my_data[0] + (i * size), (void *) 0 + (i * size), order);
+		rmm_fetch(0, my_data[0] + (i * size), (void *) FAKE_PA_START + (i * size), order);
 	}
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
