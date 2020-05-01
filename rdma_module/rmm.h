@@ -9,7 +9,9 @@
 
 #define SINK_BUFFER_SIZE	(PAGE_SIZE * 4095)
 #define RPC_BUFFER_SIZE		(PAGE_SIZE)
-#define RDMA_BUFFER_SIZE	PAGE_SIZE
+#define RDMA_BUFFER_SIZE	PAGE_SIZE   /*buffer for rdma work */
+
+#define DMA_BUFFER_SIZE		(SINK_BUFFER_SIZE + RPC_BUFFER_SIZE)
 
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
 #define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
@@ -33,6 +35,16 @@
 #define RMM_TEST
 
 #define FAKE_PA_START 0x20000000000
+
+#ifdef CONFIG_RM
+
+#define DMA_BUFFER_START (RM_PADDR_START + RM_PADDR_SIZE)
+
+#else 
+
+#define DMA_BUFFER_START (_AC(1, UL) << 36)
+
+#endif
 
 enum rpc_opcode {
 	RPC_OP_FETCH,

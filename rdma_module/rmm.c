@@ -1255,11 +1255,15 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	step = "alloc dma buffer";
 	DEBUG_LOG(PFX "%s\n", step);
 	if (!rh->dma_buffer) {
-		rh->dma_buffer = ib_dma_alloc_coherent(rh->device, buffer_size, &dma_addr, GFP_KERNEL);
+		rh->dma_buffer = ioremap_nocache(DMA_BUFFER_START + (rh->nid * buffer_size), buffer_size);
+		memset(rh->dma_buffer, 0, buffer_size);
 		if (!rh->dma_buffer) {
 			return -ENOMEM;
 		}
-		memset(rh->dma_buffer, 0, buffer_size);
+		dma_addr = ib_dma_map_single(rh->device, rh->dma_buffer, sizeof(struct pool_info), DMA_BIDIRECTIONAL);
+		ret = ib_dma_mapping_error(rh->device, dma_addr);
+		if (ret) 
+			goto out_free;
 	}
 
 	step = "alloc mr";
@@ -1323,7 +1327,7 @@ out_dereg:
 
 out_free:
 	if (rh->dma_buffer)
-		ib_dma_free_coherent(rh->device, buffer_size, rh->dma_buffer, rh->dma_addr);
+		iounmap(rh->dma_buffer);
 	printk(KERN_ERR PFX "fail at %s\n", step);
 	return ret;
 }
@@ -2061,7 +2065,9 @@ void __exit exit_rmm_rdma(void)
 		}
 
 		if (rh->dma_buffer) {
-			ib_dma_free_coherent(rh->device, RPC_BUFFER_SIZE + SINK_BUFFER_SIZE, rh->dma_buffer, rh->dma_addr);
+			ib_dma_unmap_single(rh->device, rh->dma_addr, 
+					DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
+			iounmap(rh->dma_buffer);
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
@@ -2085,7 +2091,9 @@ void __exit exit_rmm_rdma(void)
 		}
 
 		if (rh->dma_buffer) {
-			ib_dma_free_coherent(rh->device, RPC_BUFFER_SIZE + SINK_BUFFER_SIZE, rh->dma_buffer, rh->dma_addr);
+			ib_dma_unmap_single(rh->device, rh->dma_addr, 
+					DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
+			iounmap(rh->dma_buffer);
 		}
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
@@ -2419,12 +2427,6 @@ static int test_evict(void)
 	return 0;
 }
 
-static void stop_polling_thread(void)
-{
-	kthread_stop(polling_k);
-}
-
-
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		size_t count, loff_t *ppos)
 {
@@ -2602,15 +2604,15 @@ int __init init_rmm_rdma(void)
 
 #ifdef RMM_TEST
 	/*
-	if (ARRAY_SIZE(backup_ip_addresses) > 0) {
-		printk(PFX "CR is on\n");
-		cr_on = 1;
-	}
-	else {
-		for (i = 0; i < MAX_NUM_NODES; i++)
-			rm_alloc(vaddr_start_arr[i]);
-	}
-	*/
+	   if (ARRAY_SIZE(backup_ip_addresses) > 0) {
+	   printk(PFX "CR is on\n");
+	   cr_on = 1;
+	   }
+	   else {
+	   for (i = 0; i < MAX_NUM_NODES; i++)
+	   rm_alloc(vaddr_start_arr[i]);
+	   }
+	 */
 #endif /* end for TEST */
 
 #endif
