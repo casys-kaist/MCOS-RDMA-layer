@@ -137,7 +137,7 @@ int rmm_alloc(int nid, u64 vaddr)
 	while(!(done_copy = rw->done))
 		cpu_relax();
 
-	DEBUG_LOG(PFX "free done\n");
+	DEBUG_LOG(PFX "alloc done %d\n", *((int *) rpc_buffer));
 put:
 	__put_rpc_buffer(rh, i);
 	__put_rdma_work(rh, rw);
@@ -249,7 +249,7 @@ int rmm_free(int nid, u64 vaddr)
 	while(!(done_copy = rw->done))
 		cpu_relax();
 
-	DEBUG_LOG(PFX "alloc done\n");
+	DEBUG_LOG(PFX "free done %d\n", *((int *) rpc_buffer));
 put:
 	__put_rpc_buffer(rh, i);
 	__put_rdma_work(rh, rw);
@@ -660,7 +660,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 	id = (*(uint16_t *) (evict_buffer + 4));
 	page_pointer = evict_buffer + 6;
 
-	DEBUG_LOG(PFX "num_page %d, %s\n", num_page, __func__);
+	DEBUG_LOG(PFX "num_page %d, from %s\n", num_page, __func__);
 	for (i = 0; i < num_page; i++) {
 		if (rh->connection_type == CONNECTION_BACKUP)
 			dest = (u64) *((uint64_t *) (page_pointer));
@@ -755,19 +755,16 @@ static int rpc_handle_alloc_free_cpu(struct rdma_handle *rh, uint16_t id, uint16
 	dma_addr_t rpc_dma_addr;
 	struct rdma_work *rw;
 	int nid;
-	int ret = 0;
 
 	nid = rh->nid;
 	rw = &rh->rdma_work_pool[id];
 	rpc_addr = (uint8_t *) rh->rpc_buffer + (offset * RPC_ARGS_SIZE);
 	rpc_dma_addr = rh->rpc_dma_addr + (offset * RPC_ARGS_SIZE);
 
-	ret =  *((int *) rpc_addr);
 	rw->done = true;
-	DEBUG_LOG(PFX "mem op %d\n", ret);
 	DEBUG_LOG(PFX "done %p %d\n", rw, rw->done);
 
-	return ret;
+	return 0;
 }
 #endif
 
@@ -1252,27 +1249,41 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	struct scatterlist sg = {};
 	struct ib_mr *mr;
 	char *step = NULL;
+	int rh_id = 0;
+	resource_size_t paddr;
 
 
 	step = "alloc dma buffer";
-	DEBUG_LOG(PFX "%s\n", step);
+	rh_id = nid_to_rh(rh->nid);
+	if (rh->connection_type == CONNECTION_EVICT)
+		rh_id++;
+	DEBUG_LOG(PFX "%s with rh id: %d\n", step, rh_id);
 	if (!rh->dma_buffer) {
-		rh->dma_buffer = DMA_VADDR_START + (rh->nid * buffer_size);
+		/*
+		rh->dma_buffer = ((uint8_t *) DMA_VADDR_START) + (rh_id * buffer_size);
 		if (ioremap_page_range((unsigned long) rh->dma_buffer, 
-					(unsigned long) rh->dma_buffer + buffer_size, 
-					DMA_BUFFER_START + (rh->nid * buffer_size), PAGE_KERNEL_IO)) {
+					(unsigned long) (((uint8_t *) rh->dma_buffer) + buffer_size), 
+					(phys_addr_t) (((uint8_t *) DMA_BUFFER_START) + (rh_id * buffer_size)), 
+					PAGE_KERNEL_IO)) {
+			printk(KERN_ERR PFX "ioremap error in %s\n", __func__);
 			return -ENOMEM;
 		}
-
+		 */
+		paddr = (resource_size_t) (((uint8_t *) DMA_BUFFER_START) + (rh_id * buffer_size));
+		if (!(rh->dma_buffer = memremap(paddr, buffer_size, MEMREMAP_WB))) {
+			printk(KERN_ERR PFX "memremap error in %s\n", __func__);
+			return -ENOMEM;
+		}
 		flush_tlb_all();
 		memset(rh->dma_buffer, 0, buffer_size);
-		if (!rh->dma_buffer) {
-			return -ENOMEM;
-		}
+		/*
 		dma_addr = ib_dma_map_single(rh->device, rh->dma_buffer, buffer_size, DMA_BIDIRECTIONAL);
 		ret = ib_dma_mapping_error(rh->device, dma_addr);
 		if (ret) 
 			goto out_free;
+		DEBUG_LOG(PFX "buffer addr %p, dma addr: %llX, in %s\n", rh->dma_buffer, dma_addr, __func__);
+		*/
+		dma_addr = paddr;
 	}
 
 	step = "alloc mr";
@@ -1335,8 +1346,6 @@ out_dereg:
 	ib_dereg_mr(mr);
 
 out_free:
-	if (rh->dma_buffer)
-		iounmap(rh->dma_buffer);
 	printk(KERN_ERR PFX "fail at %s\n", step);
 	return ret;
 }
@@ -1375,7 +1384,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 		return -ENOMEM;
 
 	/*Post receive request for recieve request pool info*/
-	dma_addr = ib_dma_map_single(rh->device, pp, sizeof(struct pool_info), DMA_FROM_DEVICE);
+	dma_addr = ib_dma_map_single(rh->device, pp, sizeof(struct pool_info), DMA_TO_DEVICE);
 	ret = ib_dma_mapping_error(rh->device, dma_addr);
 	if (ret) 
 		goto out_free;
@@ -1736,6 +1745,7 @@ static int __connect_to_server(int nid, int connection_type)
 	if (ret == 0)
 		goto out_err;
 
+	/*TODO: change nid to MACRO */
 	step = "connect";
 	private_data = (connection_type << 30) | nid;
 	DEBUG_LOG(PFX "%s\n", step);
@@ -2328,16 +2338,11 @@ static void test_fetch(int order)
 	if (server)
 		return;
 
-	/* warm up */
-	for (i = 0; i < 10; i++) {
-		rmm_fetch(1, my_data[1] + (i * size), (void *) FAKE_PA_START + (i * size), order);
-	}
-
 	elapsed = 0;
 	DEBUG_LOG(PFX "fetch start\n");
 	getnstimeofday(&start_tv);
 	for (i = 0; i < 512; i++) {
-		rmm_fetch(0, my_data[0] + (i * size), (void *) FAKE_PA_START + (i * size), order);
+		rmm_fetch(0, my_data[0] + (i * size), ((void *) FAKE_PA_START) + (i * size), order);
 	}
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
@@ -2389,7 +2394,7 @@ static int test_evict(void)
 			index %= 1024;
 
 			ei->l_vaddr = (uint64_t) (my_data[0] + index * (PAGE_SIZE));
-			ei->r_vaddr = index * (PAGE_SIZE);
+			ei->r_vaddr = ((void *) FAKE_PA_START) + index * (PAGE_SIZE);
 			INIT_LIST_HEAD(&ei->next);
 			list_add(&ei->next, &addr_list);
 		}
@@ -2572,7 +2577,6 @@ static int create_worker_thread(void)
 
 static int start_connection(void)
 {
-	int i; 
 
 	return 0;
 }
@@ -2612,12 +2616,14 @@ int __init init_rmm_rdma(void)
 	}
 
 	/* reserve virtual address space */
+	/*
 	area = get_vm_area_virt(DMA_BUFFER_SIZE * MAX_NUM_NODES, 
 			GFP_KERNEL, DMA_VADDR_START);  	
 	if (!area) {
 		printk("reservation failed\n");
 		return -ENOSPC;	
 	}
+	*/
 
 	if (!identify_myself(&my_ip)) 
 		return -EINVAL;
@@ -2692,8 +2698,8 @@ int __init init_rmm_rdma(void)
 	if (!server) {
 		printk(PFX "remote memory alloc\n");
 		for (i = 0; i < ARRAY_SIZE(ip_addresses); i++) {
-			rmm_alloc(i, 0);
-			rmm_free(i, 0);
+			rmm_alloc(i, FAKE_PA_START);
+			rmm_free(i, FAKE_PA_START);
 		}
 	}
 #endif
