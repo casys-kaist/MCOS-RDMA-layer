@@ -144,7 +144,6 @@ put:
 
 	return ret;
 }
-EXPORT_SYMBOL(rmm_alloc);
 
 int rmm_alloc_async(int nid, u64 vaddr)
 {
@@ -200,7 +199,6 @@ put:
 
 	return ret;
 }
-EXPORT_SYMBOL(rmm_alloc_async);
 
 int rmm_free(int nid, u64 vaddr)
 {
@@ -256,7 +254,6 @@ put:
 
 	return ret;
 }
-EXPORT_SYMBOL(rmm_free);
 
 
 static unsigned long elapsed_fetch = 0;
@@ -334,7 +331,6 @@ put:
 
 	return ret;
 }
-EXPORT_SYMBOL(rmm_fetch);
 
 int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 {
@@ -409,7 +405,21 @@ put:
 
 	return ret;
 }
-EXPORT_SYMBOL(rmm_evict);
+
+/*
+int mcos_rmm_alloc(int nid, u64 vaddr)
+{
+}
+int mcos_rmm_free(int nid, u64 vaddr)
+{
+}
+int mcos_rmm_fetch(int nid, void *src, void * r_vaddr, unsigned int order)
+{
+}
+int mcps_rmm_evict(int nid, struct list_head *evict_list, int num_page)
+{
+}
+*/
 
 static inline int __get_rpc_buffer(struct rdma_handle *rh) 
 {
