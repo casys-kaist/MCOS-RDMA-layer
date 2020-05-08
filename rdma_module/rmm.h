@@ -48,6 +48,7 @@ enum rpc_opcode {
 	RPC_OP_FETCH,
 	RPC_OP_EVICT,
 	RPC_OP_ALLOC,
+	RPC_OP_FREE,
 };
 
 enum wr_type {
@@ -58,6 +59,12 @@ enum wr_type {
 	WORK_TYPE_SEND_ADDR,
 	WORK_TYPE_RPC_REQ,
 	WORK_TYPE_RPC_ACK,
+};
+
+struct rpc_header {
+	int nid;
+	enum rpc_opcode op;
+	int wr_id;
 };
 
 struct recv_work {

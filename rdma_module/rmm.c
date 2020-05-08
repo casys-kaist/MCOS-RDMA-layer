@@ -23,7 +23,7 @@
 #include "rmm.h"
 
 #define NUM_QPS (MAX_NUM_NODES * 2)
-#define NUM_BACKUP_QPS (MAX_BACKUPS * 2)
+#define NUM_BACKUP_QPS (NUM_BACKUPS * 2)
 
 static int debug = 0;
 module_param(debug, int, 0);
@@ -418,15 +418,15 @@ put:
 
 int mcos_rmm_alloc(int nid, u64 vaddr)
 {
-	rmm_alloc(nid, vaddr - FAKE_PA_START);
+	return rmm_alloc(nid, vaddr - FAKE_PA_START);
 }
 int mcos_rmm_free(int nid, u64 vaddr)
 {
-	rmm_free(nid, vaddr - FAKE_PA_START);
+	return rmm_free(nid, vaddr - FAKE_PA_START);
 }
 int mcos_rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
-	rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
+	return rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
 }
 int mcos_rmm_evict(int nid, struct list_head *evict_list, int num_page)
 {
@@ -436,7 +436,7 @@ int mcos_rmm_evict(int nid, struct list_head *evict_list, int num_page)
 		struct evict_info *e = list_entry(l, struct evict_info, next);
 		e->r_vaddr -= FAKE_PA_START;
 	}
-	rmm_evict(nid, evict_list, num_page);
+	return rmm_evict(nid, evict_list, num_page);
 }
 
 static inline int __get_rpc_buffer(struct rdma_handle *rh) 
@@ -649,9 +649,10 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint16_t id, uint16
 	rw->rh = rh;
 	rw->slot = -1;
 
-	DEBUG_LOG(PFX "nid: %d, offset: %d, id: %d, vaddr: %llX op: \n", nid, offset, id, vaddr, op);
+	DEBUG_LOG(PFX "nid: %d, offset: %d, id: %d, vaddr: %llX op: %d\n", nid, offset, id, vaddr, op);
 
 	if (op == 0)  {
+		/* rm_alloc and free return true when they success */
 		ret = rm_alloc(vaddr);
 		if (cr_on && ret)
 			rmm_alloc(0, vaddr);
@@ -722,14 +723,14 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 	}
 
 	if (cr_on) {
-		debug_log(pfx "replicate to backup server\n");
+		DEBUG_LOG(PFX "replicate to backup server\n");
 		rmm_evict(0, &addr_list, num_page);
 
 		list_for_each_safe(pos, n, &addr_list) {
 			ei = list_entry(pos, struct evict_info, next);
 			kfree(ei);
 		}
-		debug_log(pfx "replicate done\n");
+		DEBUG_LOG(PFX "replicate done\n");
 	}
 
 	/* set buffer to -1 to send ack to caller */
@@ -821,7 +822,7 @@ static int __handle_rpc(struct ib_wc *wc)
 	struct rdma_handle *rh;
 	uint32_t imm_data;
 	uint16_t id;
-	int offset;
+	int offset, op;
 	const struct ib_recv_wr *bad_wr = NULL;
 	int header;
 	int processed = 0;
@@ -1798,7 +1799,7 @@ static int __connect_to_server(int nid, int connection_type)
 
 	/*TODO: change nid to MACRO */
 	step = "connect";
-	private_data = (connection_type << 31) | (backup << 30) | nid;
+	private_data = (connection_type << 31) | (rh->backup << 30) | nid;
 	DEBUG_LOG(PFX "%s\n", step);
 	{
 		struct rdma_conn_param conn_param = {
@@ -2449,7 +2450,7 @@ static int test_evict(void)
 			index %= 1024;
 
 			ei->l_vaddr = (uint64_t) (my_data[0] + index * (PAGE_SIZE));
-			ei->r_vaddr = ((void *) FAKE_PA_START) + index * (PAGE_SIZE);
+			ei->r_vaddr = (uint64_t) (((void *) FAKE_PA_START) + index * (PAGE_SIZE));
 			INIT_LIST_HEAD(&ei->next);
 			list_add(&ei->next, &addr_list);
 		}
@@ -2643,7 +2644,6 @@ static int start_connection(void)
 int __init init_rmm_rdma(void)
 {
 	int i;
-	struct vm_struct *area;
 
 #ifdef CONFIG_RM
 	server = 1;
@@ -2668,16 +2668,6 @@ int __init init_rmm_rdma(void)
 		printk(KERN_ERR PFX "cannot create /proc/rmm\n");
 		return -ENOMEM;
 	}
-
-	/* reserve virtual address space */
-	/*
-	   area = get_vm_area_virt(DMA_BUFFER_SIZE * MAX_NUM_NODES, 
-	   GFP_KERNEL, DMA_VADDR_START);  	
-	   if (!area) {
-	   printk("reservation failed\n");
-	   return -ENOSPC;	
-	   }
-	 */
 
 	if (!identify_myself(&my_ip)) 
 		return -EINVAL;
