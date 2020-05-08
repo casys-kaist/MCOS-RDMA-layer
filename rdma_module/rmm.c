@@ -115,6 +115,8 @@ int rmm_alloc(int nid, u64 vaddr)
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
 	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	if (!rw)
+		return -ENOMEM;
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -171,6 +173,8 @@ int rmm_alloc_async(int nid, u64 vaddr)
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
 	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	if (!rw)
+		return -ENOMEM;
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -230,6 +234,8 @@ int rmm_free(int nid, u64 vaddr)
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
 	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	if (!rw)
+		return -ENOMEM;
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -293,7 +299,8 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 
 	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, 
 			remote_rpc_dma_addr, rh->rpc_rkey);
-
+	if (!rw)
+		return -ENOMEM;
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -339,7 +346,7 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 
 put:
 	__put_rpc_buffer(rh, i);
-	__put_rdma_work(rh, rw);
+	__put_rdma_work_nonsleep(rh, rw);
 
 	return ret;
 }
@@ -348,7 +355,7 @@ put:
 int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 {
 	int offset;
-	uint8_t *evict_buffer, *temp;
+	uint8_t *evict_buffer = NULL, *temp = NULL;
 	dma_addr_t evict_dma_addr, remote_evict_dma_addr;
 	struct rdma_work *rw;
 	struct rdma_handle *rh;	
@@ -368,10 +375,14 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 #endif
 
 	evict_buffer = ring_buffer_get_mapped(rh->rb, size , &evict_dma_addr);
+	if (!evict_buffer)
+		return -ENOMEM;
 	offset = evict_buffer - (uint8_t *) rh->evict_buffer;
 	remote_evict_dma_addr = rh->remote_rpc_dma_addr + offset;
 
 	rw = __get_rdma_work_nonsleep(rh, evict_dma_addr, size, remote_evict_dma_addr, rh->rpc_rkey);
+	if (!rw)
+		return -ENOMEM;
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = evict_buffer;
@@ -415,7 +426,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 put:
 	memset(evict_buffer, 0, size);
 	ring_buffer_put(rh->rb, evict_buffer);
-	__put_rdma_work(rh, rw);
+	__put_rdma_work_nonsleep(rh, rw);
 
 	return ret;
 }
@@ -595,6 +606,9 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	remote_sink_dma_addr = rh->remote_sink_dma_addr + (i * PAGE_SIZE);
 
 	rw = __get_rdma_work(rh, sink_dma_addr, payload_size, remote_sink_dma_addr, rh->sink_rkey);
+	if (!rw) {
+		return -ENOMEM;
+	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | id);
 	rw->work_type = WORK_TYPE_RPC_ACK;
 	rw->addr = sink_addr;
@@ -647,6 +661,8 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint16_t id, uint16
 		vaddr = (*(uint64_t *) (rpc_buffer + sizeof(int)));
 
 	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	if (!rw)
+		return -ENOMEM;
 	rw->wr.wr.ex.imm_data = cpu_to_be32((offset << 16) | id | 0x8000);
 	rw->work_type = WORK_TYPE_RPC_ACK;
 	rw->addr = rpc_buffer;
@@ -719,7 +735,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 				ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
 				if (!ei) {
 					printk("fail to replicate, error in %s\n", __func__);
-					break;
+					goto out_free;
 				}
 				ei->l_vaddr = dest;
 				ei->r_vaddr = dest;
@@ -762,6 +778,12 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 	}
 
 	return 0;
+out_free:
+	list_for_each_safe(pos, n, &addr_list) {
+		ei = list_entry(pos, struct evict_info, next);
+		kfree(ei);
+	}
+	return -ENOMEM;
 }
 
 #endif
@@ -1315,7 +1337,6 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	char *step = NULL;
 	int rh_id = 0;
 	resource_size_t paddr;
-
 
 	step = "alloc dma buffer";
 	rh_id = nid_to_rh(rh->nid);
@@ -2734,7 +2755,7 @@ int __init init_rmm_rdma(void)
 		rh->nid = i;
 		rh->state = RDMA_INIT;
 		rh->backup = 1;
-		rh->vaddr_start;
+		rh->vaddr_start = 0;
 
 		spin_lock_init(&rh->rdma_work_head_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
