@@ -28,7 +28,6 @@
 
 #define CONNECTION_FETCH	0
 #define CONNECTION_EVICT	1
-#define CONNECTION_BACKUP	2
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
@@ -87,7 +86,7 @@ struct rdma_work {
 	struct rdma_work *next;
 	struct ib_sge sgl;
 	struct ib_rdma_wr wr;
-	bool done;
+	int done;
 	void *addr;
 	dma_addr_t dma_addr;
 
@@ -153,6 +152,7 @@ struct rdma_handle {
 	struct recv_work *recv_works;
 
 	int connection_type;
+	int backup;
 
 	/* local */
 	void *recv_buffer;

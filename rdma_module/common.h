@@ -15,7 +15,7 @@
 #include "config.h"
 
 #define MAX_NUM_NODES		(16)
-#define NUM_BACKUPS		1	
+#define NUM_BACKUPS		(1)	
 #define NUM_RNICS		2
 
 static uint32_t ip_table[MAX_NUM_NODES] = { 0 };
