@@ -441,7 +441,7 @@ int mcos_rmm_free(int nid, u64 vaddr)
 }
 int mcos_rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
-	return rmm_fetch(nid, l_vaddr, (void *) (((u64) r_vaddr) - FAKE_PA_START), order);
+	return rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
 }
 int mcos_rmm_evict(int nid, struct list_head *evict_list, int num_page)
 {
@@ -2707,7 +2707,7 @@ int __init init_rmm_rdma(void)
 	}
 #endif /* end for TEST */
 
-#endif
+#endif /*end for CONFIG_RM */
 
 	printk(PFX "init rmm rdma\n");
 	rmm_proc = proc_create("rmm", 0666, NULL, &rmm_ops);
@@ -2732,7 +2732,6 @@ int __init init_rmm_rdma(void)
 
 		rh->nid = i;
 		rh->state = RDMA_INIT;
-		//rh->connection_type = CONNECTION_FETCH;
 
 		spin_lock_init(&rh->rdma_work_head_lock);
 		spin_lock_init(&rh->rpc_slots_lock);
