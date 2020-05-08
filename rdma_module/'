@@ -291,7 +291,7 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
-	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, 
+	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, 
 			remote_rpc_dma_addr, rh->rpc_rkey);
 
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
@@ -371,7 +371,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	offset = evict_buffer - (uint8_t *) rh->evict_buffer;
 	remote_evict_dma_addr = rh->remote_rpc_dma_addr + offset;
 
-	rw = __get_rdma_work_nonsleep(rh, evict_dma_addr, size, remote_evict_dma_addr, rh->rpc_rkey);
+	rw = __get_rdma_work(rh, evict_dma_addr, size, remote_evict_dma_addr, rh->rpc_rkey);
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = evict_buffer;
@@ -716,7 +716,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
 		/* making evict info list for replication */
 		if (cr_on) {
 			if (rh->connection_type == CONNECTION_EVICT) {
-				ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
+				ei = kmalloc(sizeof(struct evict_info), GFP_ATOMIC);
 				if (!ei) {
 					printk("fail to replicate, error in %s\n", __func__);
 					break;
@@ -1536,37 +1536,7 @@ static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_
 	return rw;
 }
 
-static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_addr_t dma_addr, 
-		size_t size, dma_addr_t rdma_addr, u32 rdma_key)
-{
-	struct rdma_work *rw;
-
-	spin_lock(&rh->rdma_work_head_lock);
-	rw = rh->rdma_work_head;
-	rh->rdma_work_head = rh->rdma_work_head->next;
-	spin_unlock(&rh->rdma_work_head_lock);
-
-	if (!rh->rdma_work_head)
-		return NULL;
-
-	rw->sgl.addr = dma_addr;
-	rw->sgl.length = size;
-
-	rw->wr.remote_addr = rdma_addr;
-	rw->wr.rkey = rdma_key;
-	return rw;
-}
-
 static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
-{
-	might_sleep();
-	spin_lock(&rh->rdma_work_head_lock);
-	rw->next = rh->rdma_work_head;
-	rh->rdma_work_head = rw;
-	spin_unlock(&rh->rdma_work_head_lock);
-}
-
-static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw)
 {
 	might_sleep();
 	spin_lock(&rh->rdma_work_head_lock);
