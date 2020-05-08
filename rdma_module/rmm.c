@@ -663,7 +663,7 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint16_t id, uint16
 			rmm_free(0, vaddr);
 	}
 
-	ret = *((int *) rpc_buffer);
+	*((int *) (rpc_buffer + 4)) = ret;
 	DEBUG_LOG(PFX "ret in %s, %d\n", __func__, ret);
 
 	/* -1 means this packet is ack */
@@ -822,7 +822,8 @@ static int __handle_rpc(struct ib_wc *wc)
 	struct rdma_handle *rh;
 	uint32_t imm_data;
 	uint16_t id;
-	int offset, op;
+	int op;
+	uint16_t offset;
 	const struct ib_recv_wr *bad_wr = NULL;
 	int header;
 	int processed = 0;
@@ -835,8 +836,10 @@ static int __handle_rpc(struct ib_wc *wc)
 	if (rh->connection_type == CONNECTION_EVICT) {
 		header = *((int *) (rh->evict_buffer + imm_data));
 		id = *((uint16_t *) (rh->evict_buffer + (imm_data + 4)));
-		rpc_handle_evict_done(rh, id);
-		processed = 1;
+		if (header == -1) {
+			rpc_handle_evict_done(rh, id);
+			processed = 1;
+		}
 	}
 
 	if (rh->connection_type == CONNECTION_FETCH) {
@@ -846,12 +849,14 @@ static int __handle_rpc(struct ib_wc *wc)
 		header = *((int *) (rh->evict_buffer + (offset * RPC_ARGS_SIZE)));
 		if (op == 1 && header == -1) {
 			rpc_handle_alloc_free_done(rh, id, offset);
+			processed = 1;
 		}
-		processed = 1;
 	}
 
-	if (!processed)
+	if (!processed) {
+		DEBUG_LOG(PFX "enqueue work in %s\n", __func__);
 		enqueue_work(rh, imm_data);
+	}
 
 	ret = ib_post_recv(rh->qp, &rw->wr, &bad_wr);
 	if (ret || bad_wr)  {
@@ -1326,7 +1331,6 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 			printk(KERN_ERR PFX "memremap error in %s\n", __func__);
 			return -ENOMEM;
 		}
-		flush_tlb_all();
 		memset(rh->dma_buffer, 0, buffer_size);
 		/*
 		   dma_addr = ib_dma_map_single(rh->device, rh->dma_buffer, buffer_size, DMA_BIDIRECTIONAL);
@@ -2743,7 +2747,7 @@ int __init init_rmm_rdma(void)
 		printk(PFX "remote memory alloc\n");
 		for (i = 0; i < ARRAY_SIZE(ip_addresses); i++) {
 			mcos_rmm_alloc(i, FAKE_PA_START);
-			mcos_rmm_free(i, FAKE_PA_START);
+//			mcos_rmm_free(i, FAKE_PA_START);
 		}
 	}
 #endif
