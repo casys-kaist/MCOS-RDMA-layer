@@ -61,11 +61,13 @@ enum wr_type {
 	WORK_TYPE_RPC_ACK,
 };
 
+#pragma pack(push, 1)
 struct rpc_header {
 	int nid;
 	enum rpc_opcode op;
-	int wr_id;
+	uint16_t wr_id;
 };
+#pragma pack(pop)
 
 struct recv_work {
 	enum wr_type work_type;
@@ -87,7 +89,7 @@ struct send_work {
 };
 
 struct rdma_work {
-	uint8_t id;
+	uint16_t id;
 	enum wr_type work_type;
 	struct rdma_handle *rh;
 	struct rdma_work *next;
@@ -187,6 +189,7 @@ struct rdma_handle {
 	size_t rpc_buffer_size;
 
 	/* remote */
+	dma_addr_t remote_dma_addr;
 	dma_addr_t remote_rpc_dma_addr;
 	dma_addr_t remote_sink_dma_addr;
 	size_t remote_rpc_size;

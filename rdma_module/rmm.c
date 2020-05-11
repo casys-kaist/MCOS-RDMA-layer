@@ -93,14 +93,21 @@ static inline unsigned long long get_ns(void)
 
 int rmm_alloc(int nid, u64 vaddr)
 {
-	int i, ret = 0;
-	uint8_t *rpc_buffer;
-	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+	int offset, ret = 0;
+	uint8_t *dma_buffer, *args;
+	struct rpc_header *rhp;
+	dma_addr_t dma_addr, remote_dma_addr;
 	struct rdma_handle *rh;	
 	struct rdma_work *rw;
 	const struct ib_send_wr *bad_wr = NULL;
 	bool done_copy;
 
+	/*
+	---------------------------------
+	|rpc_header| vaddr(8bytes) |
+	---------------------------------
+	*/
+	int size = sizeof(struct rpc_header) + 8;
 	int index = nid_to_rh(nid);
 
 #ifdef CONFIG_RM
@@ -109,27 +116,31 @@ int rmm_alloc(int nid, u64 vaddr)
 	rh = rdma_handles[index];
 #endif
 
-	i = __get_rpc_buffer(rh);
-	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
-	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
-	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
+	dma_buffer = ring_buffer_get_mapped(rh->rb, size , &dma_addr);
+	if (!dma_buffer)
+		return -ENOMEM;
+	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
+	remote_dma_addr = rh->remote_dma_addr + offset;
 
-	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+
+	rw = __get_rdma_work(rh, dma_addr, size, remote_dma_addr, rh->rpc_rkey);
 	if (!rw)
 		return -ENOMEM;
-	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
+	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->work_type = WORK_TYPE_RPC_REQ;
-	rw->addr = rpc_buffer;
-	rw->dma_addr = rpc_dma_addr;
+	rw->addr = dma_buffer;
+	rw->dma_addr = dma_addr;
 	rw->done = 0;
 	rw->rh = rh;
 
-	/*copy rpc args to buffer */
-	*((uint16_t *) rpc_buffer) = nid;
-	*((uint16_t *) (rpc_buffer + 2)) = 0;
-	*((uint64_t *) (rpc_buffer + sizeof(int))) = vaddr;
+	rhp = (struct rpc_header *) dma_buffer;
+	rhp->nid = nid;
+	rhp->op = RPC_OP_ALLOC;
+	rhp->wr_id = rw->id;
 
-	DEBUG_LOG(PFX "nid: %d remote dma addr: %llx\n", nid, remote_rpc_dma_addr);
+	/*copy rpc args to buffer */
+	args = dma_buffer + sizeof(struct rpc_header);
+	*((uint64_t *) args) = vaddr;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -144,10 +155,11 @@ int rmm_alloc(int nid, u64 vaddr)
 	while(!(done_copy = rw->done))
 		cpu_relax();
 
-	ret = *((int *) (rpc_buffer + 4));
+	ret = *((int *) (args));
 	DEBUG_LOG(PFX "alloc done %d\n", ret);
 put:
-	__put_rpc_buffer(rh, i);
+	memset(dma_buffer, 0, size);
+	ring_buffer_put(rh->rb, dma_buffer);
 	__put_rdma_work(rh, rw);
 
 	return ret;
@@ -212,14 +224,16 @@ put:
 
 int rmm_free(int nid, u64 vaddr)
 {
-	int i, ret = 0;
-	uint8_t *rpc_buffer;
-	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+	int offset, ret = 0;
+	uint8_t *dma_buffer, *args;
+	dma_addr_t dma_addr, remote_dma_addr;
 	struct rdma_handle *rh;	
 	struct rdma_work *rw;
+	struct rpc_header *rhp;
 	const struct ib_send_wr *bad_wr = NULL;
 	bool done_copy;
 
+	int size = sizeof(struct rpc_header) + 8;
 	int index = nid_to_rh(nid);
 
 #ifdef CONFIG_RM
@@ -228,27 +242,31 @@ int rmm_free(int nid, u64 vaddr)
 	rh = rdma_handles[index];
 #endif
 
-	i = __get_rpc_buffer(rh);
-	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
-	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
-	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
+	dma_buffer = ring_buffer_get_mapped(rh->rb, size , &dma_addr);
+	if (!dma_buffer)
+		return -ENOMEM;
+	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
+	remote_dma_addr = rh->remote_dma_addr + offset;
 
-	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+
+	rw = __get_rdma_work(rh, dma_addr, size, remote_dma_addr, rh->rpc_rkey);
 	if (!rw)
 		return -ENOMEM;
-	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
+	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->work_type = WORK_TYPE_RPC_REQ;
-	rw->addr = rpc_buffer;
-	rw->dma_addr = rpc_dma_addr;
+	rw->addr = dma_buffer;
+	rw->dma_addr = dma_addr;
 	rw->done = 0;
 	rw->rh = rh;
 
-	/*copy rpc args to buffer */
-	*((uint16_t *) rpc_buffer) = nid;
-	*((uint16_t *) (rpc_buffer + 2)) = 1;
-	*((uint64_t *) (rpc_buffer + sizeof(int))) = vaddr;
+	rhp = (struct rpc_header *) dma_buffer;
+	rhp->nid = nid;
+	rhp->op = RPC_OP_FREE;
+	rhp->wr_id = rw->id;
 
-	DEBUG_LOG(PFX "nid: %d remote addr: %llx\n", nid, remote_rpc_dma_addr);
+	/*copy rpc args to buffer */
+	args = dma_buffer + sizeof(struct rpc_header);
+	*((uint64_t *) args) = vaddr;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -263,10 +281,12 @@ int rmm_free(int nid, u64 vaddr)
 	while(!(done_copy = rw->done))
 		cpu_relax();
 
-	ret = *((int *) (rpc_buffer + 4));
+	ret = *((int *) (args));
 	DEBUG_LOG(PFX "free done %d\n", ret);
 put:
-	__put_rpc_buffer(rh, i);
+
+	memset(dma_buffer, 0, size);
+	ring_buffer_put(rh->rb, dma_buffer);
 	__put_rdma_work(rh, rw);
 
 	return ret;
@@ -277,46 +297,55 @@ static unsigned long elapsed_fetch = 0;
 
 int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
-	int i, ret = 0;
-	uint8_t *rpc_buffer;
-	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+	int offset, ret = 0;
+	uint8_t *dma_buffer, *args;
+	dma_addr_t dma_addr, remote_dma_addr;
 	struct rdma_handle *rh;
+	struct rpc_header *rhp;
 	struct rdma_work *rw;
 	const struct ib_send_wr *bad_wr = NULL;
 	bool done_copy;
 
 	//struct timespec start_tv, end_tv;
+	/*
+	---------------------------------------------
+	|rpc_header| r_vaddr(8bytes) | order(4bytes)|
+	---------------------------------------------
+	*/
+	int size = sizeof(struct rpc_header) + 12;
 	int index = nid_to_rh(nid);
 
 //	getnstimeofday(&start_tv);
 	
 	rh = rdma_handles[index];
 
-	i = __get_rpc_buffer(rh);
-	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
-	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
-	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
+	dma_buffer = ring_buffer_get_mapped(rh->rb, size , &dma_addr);
+	if (!dma_buffer)
+		return -ENOMEM;
+	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
+	remote_dma_addr = rh->remote_dma_addr + offset;
 
-	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, 
-			remote_rpc_dma_addr, rh->rpc_rkey);
+	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, 
+			remote_dma_addr, rh->rpc_rkey);
 	if (!rw)
 		return -ENOMEM;
-	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
+	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->work_type = WORK_TYPE_RPC_REQ;
-	rw->addr = rpc_buffer;
-	rw->dma_addr = rpc_dma_addr;
+	rw->addr = dma_buffer;
+	rw->dma_addr = dma_addr;
 	rw->done = 0;
 	rw->l_vaddr = l_vaddr;
 	rw->rh = rh;
 
-	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
+	rhp = (struct rpc_header *) dma_buffer;
+	rhp->nid = nid;
+	rhp->op = RPC_OP_FETCH;
+	rhp->wr_id = rw->id;
 
 	/*copy rpc args to buffer */
-	*((uint64_t *) (rpc_buffer)) = (uint64_t)  r_vaddr;
-	*((uint64_t *) (rpc_buffer + 8)) = order;
-
-	DEBUG_LOG(PFX "r_vaddr: %llX %llX\n", (uint64_t)  r_vaddr, 
-			*((uint64_t *) (rpc_buffer)));
+	args = dma_buffer + sizeof(struct rpc_header);
+	*((uint64_t *) (args)) = (uint64_t)  r_vaddr;
+	*((unsigned int *) (args + 8)) = order;
 
 	/*
 	getnstimeofday(&end_tv);
@@ -345,7 +374,8 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	//DEBUG_LOG(PFX "reclaim done %s\n", my_data);
 
 put:
-	__put_rpc_buffer(rh, i);
+	memset(dma_buffer, 0, size);
+	ring_buffer_put(rh->rb, dma_buffer);
 	__put_rdma_work_nonsleep(rh, rw);
 
 	return ret;
@@ -355,16 +385,22 @@ put:
 int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 {
 	int offset;
-	uint8_t *evict_buffer = NULL, *temp = NULL;
+	uint8_t *evict_buffer = NULL, *temp = NULL, *args;
 	dma_addr_t evict_dma_addr, remote_evict_dma_addr;
 	struct rdma_work *rw;
 	struct rdma_handle *rh;	
+	struct rpc_header *rhp;
 	struct list_head *l;
 	bool done_evict;
 
-	/* 8 is space for address */
 	int ret = 0;
-	int size = 6 + ((8 + PAGE_SIZE) * num_page);
+
+	/*
+	--------------------------------------------------
+	|rpc_header| num_page(4byte) | (r_vaddr, page)...|
+	--------------------------------------------------
+	*/
+	int size = sizeof(struct rpc_header) + 4 + ((8 + PAGE_SIZE) * num_page);
 	const struct ib_send_wr *bad_wr = NULL;
 	int index = nid_to_rh(nid) + 1;
 
@@ -373,7 +409,6 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 #else
 	rh = rdma_handles[index];
 #endif
-
 	evict_buffer = ring_buffer_get_mapped(rh->rb, size , &evict_dma_addr);
 	if (!evict_buffer)
 		return -ENOMEM;
@@ -388,18 +423,19 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	rw->addr = evict_buffer;
 	rw->dma_addr = evict_dma_addr;
 	rw->done = 0;
-	rw->rh = rh;
+	rw->rh = rh; 
+
+	rhp = (struct rpc_header *) evict_buffer;
+	rhp->nid = nid;
+	rhp->op = RPC_OP_EVICT;
+	rhp->wr_id = rw->id;
 
 	DEBUG_LOG(PFX "copy args, %s, %p\n", __func__, evict_buffer);
 	/*copy rpc args to buffer */
-	/*
-	---------------------------------
-	|num_page(4byte) | rw id(2byte) |
-	---------------------------------
-	*/
-	*((int32_t *) evict_buffer) = num_page;
-	*((uint16_t *) (evict_buffer + 4)) = rw->id;
-	temp = evict_buffer + 6;
+	args = evict_buffer + sizeof(struct rpc_header);
+
+	*((int32_t *) args) = num_page;
+	temp = args + 4;
 
 	list_for_each(l, evict_list) {
 		struct evict_info *e = list_entry(l, struct evict_info, next);
@@ -917,6 +953,7 @@ static int __handle_recv(struct ib_wc *wc)
 			else
 				rp = backup_rpc_pools[rh->nid];
 			rh->remote_rpc_dma_addr = rp->addr;
+			rh->remote_dma_addr = rp->addr;
 			rh->remote_rpc_size = rp->size;
 			rh->rpc_rkey = rp->rkey;
 			kfree(rw);
@@ -978,6 +1015,13 @@ static int __handle_send(struct ib_wc *wc)
 	}
 
 	return 0;
+}
+
+static void handle_error(struct ib_wc *wc)
+{
+	printk(KERN_ERR PFX "cq completion failed with "
+			"wr_id %Lx status %d opcode %d vendor_err %x\n",
+			wc->wr_id, wc->status, wc->opcode, wc->vendor_err);
 }
 
 static int put_work(struct ib_wc *wc)
@@ -1043,9 +1087,7 @@ static int polling_cq(void * args)
 						continue;
 					} 
 					else {
-						printk(KERN_ERR PFX "cq completion failed with "
-								"wr_id %Lx status %d opcode %d vendor_err %x\n",
-								wc[i].wr_id, wc[i].status, wc[i].opcode, wc[i].vendor_err);
+						handle_error(&wc[i]);
 						goto error;
 					}
 				}
@@ -1409,9 +1451,8 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	rh->evict_buffer = rh->dma_buffer;
 	rh->evict_dma_addr = rh->dma_addr;
 
-	if (rh->connection_type == CONNECTION_EVICT)
-		if (!rh->rb)
-			rh->rb = ring_buffer_create(rh->dma_buffer, dma_addr, "evict buffer"); 
+	if (!rh->rb)
+		rh->rb = ring_buffer_create(rh->dma_buffer, dma_addr, "dma buffer"); 
 
 	return 0;
 out_dereg:
