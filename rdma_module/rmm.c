@@ -481,7 +481,11 @@ static inline int __get_rpc_buffer(struct rdma_handle *rh)
 
 static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot) 
 {
+	uint8_t * rpc_buffer;
+
 	spin_lock(&rh->rpc_slots_lock);
+	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (slot * RPC_ARGS_SIZE);
+	memset(rpc_buffer, 0, RPC_ARGS_SIZE);
 	/*
 	   BUG_ON(!test_bit(slot, rh->rpc_slots));
 	 */
@@ -581,11 +585,11 @@ static struct args_worker *dequeue_work(struct worker_thread *wt)
 /*rpc handle function for mem server */
 
 #ifdef CONFIG_RM
-static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t offset)
+static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint32_t offset)
 {
 	int i, ret = 0;
 	int payload_size;
-	void *dest;
+	void *src;
 	void *sink_addr;
 	dma_addr_t sink_dma_addr, remote_sink_dma_addr;
 	unsigned int order;
@@ -594,11 +598,11 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	uint8_t *rpc_buffer;
 
 	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE);
-	dest = (void *) *((uint64_t *) (rpc_buffer)) + (rh->vaddr_start);
+	src = (void *) *((uint64_t *) (rpc_buffer)) + (rh->vaddr_start);
 	order = *((uint64_t *) (rpc_buffer + 8));
 	payload_size = (1 << order) * PAGE_SIZE;
 
-	DEBUG_LOG(PFX "dest: %llx order: %u num_page: %d\n", (uint64_t) dest, order, 1 << order);
+	DEBUG_LOG(PFX "src: %llx order: %u num_page: %d\n", (uint64_t) src, order, 1 << order);
 
 	i = __get_sink_buffer(rh, order);
 	sink_addr = ((uint8_t *) rh->sink_buffer) + (i * PAGE_SIZE);
@@ -622,7 +626,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, id, rw->wr.wr.ex.imm_data);
 
 	//delta[head] = get_ns();
-	memcpy(sink_addr, dest, payload_size);
+	memcpy(sink_addr, src, payload_size);
 	//delta[head] = cpu_clock(0) - delta[head];
 	//accum += delta[head++];
 
@@ -637,7 +641,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint16_t of
 	return ret;
 }
 
-static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint16_t id, uint16_t offset)
+static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint16_t id, uint32_t offset)
 {
 	int ret = 0;
 	uint16_t nid = 0;
@@ -656,9 +660,9 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint16_t id, uint16
 	op = * (uint16_t *) (rpc_buffer + 2); 
 	/*Add offset */
 	if (!rh->backup)
-		vaddr = (*(uint64_t *) (rpc_buffer + sizeof(int))) + (rh->vaddr_start);
+		vaddr = (*(uint64_t *) (rpc_buffer + sizeof(uint32_t))) + (rh->vaddr_start);
 	else 
-		vaddr = (*(uint64_t *) (rpc_buffer + sizeof(int)));
+		vaddr = (*(uint64_t *) (rpc_buffer + sizeof(uint32_t)));
 
 	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
 	if (!rw)
@@ -701,7 +705,7 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint16_t id, uint16
 	return ret;
 }
 
-static int rpc_handle_evict_mem(struct rdma_handle *rh,  int offset)
+static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 {
 	int i, num_page, ret;
 	u64 dest;
@@ -790,7 +794,7 @@ out_free:
 
 /*rpc handle functions for cpu server */
 #ifndef CONFIG_RM
-static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint16_t offset)
+static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint32_t offset)
 {
 	int num_page;
 	void *sink_addr;
@@ -816,7 +820,7 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint16_t of
 
 #endif
 
-static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint16_t id, uint16_t offset)
+static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint16_t id, uint32_t offset)
 {
 	void *rpc_addr;
 	dma_addr_t rpc_dma_addr;
@@ -1580,6 +1584,7 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 
 static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
 {
+	memset(rw, 0, sizeof(struct rdma_work));
 	might_sleep();
 	spin_lock(&rh->rdma_work_head_lock);
 	rw->next = rh->rdma_work_head;
@@ -1589,7 +1594,7 @@ static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
 
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw)
 {
-	might_sleep();
+	memset(rw, 0, sizeof(struct rdma_work));
 	spin_lock(&rh->rdma_work_head_lock);
 	rw->next = rh->rdma_work_head;
 	rh->rdma_work_head = rw;
