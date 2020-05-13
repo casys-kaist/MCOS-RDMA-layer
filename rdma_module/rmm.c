@@ -1594,7 +1594,6 @@ static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
 
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw)
 {
-	memset(rw, 0, sizeof(struct rdma_work));
 	spin_lock(&rh->rdma_work_head_lock);
 	rw->next = rh->rdma_work_head;
 	rh->rdma_work_head = rw;
