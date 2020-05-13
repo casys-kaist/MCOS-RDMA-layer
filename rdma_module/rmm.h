@@ -101,7 +101,7 @@ struct rdma_work {
 
 	/* buffer info */
 	int slot;
-	int order;
+	int nr_pages;
 	void *l_vaddr;
 
 	/* */

@@ -295,7 +295,7 @@ put:
 
 static unsigned long elapsed_fetch = 0;
 
-int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
+int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int nr_pages)
 {
 	int offset, ret = 0;
 	uint8_t *dma_buffer, *args;
@@ -309,7 +309,7 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	//struct timespec start_tv, end_tv;
 	/*
 	---------------------------------------------
-	|rpc_header| r_vaddr(8bytes) | order(4bytes)|
+	|rpc_header| r_vaddr(8bytes) | nr_pages(4bytes)|
 	---------------------------------------------
 	*/
 	int size = sizeof(struct rpc_header) + 12;
@@ -345,7 +345,7 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	/*copy rpc args to buffer */
 	args = dma_buffer + sizeof(struct rpc_header);
 	*((uint64_t *) (args)) = (uint64_t)  r_vaddr;
-	*((unsigned int *) (args + 8)) = order;
+	*((unsigned int *) (args + 8)) = nr_pages;
 
 	/*
 	getnstimeofday(&end_tv);
@@ -475,9 +475,9 @@ int mcos_rmm_free(int nid, u64 vaddr)
 {
 	return rmm_free(nid, vaddr - FAKE_PA_START);
 }
-int mcos_rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
+int mcos_rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int nr_pages)
 {
-	return rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
+	return rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, nr_pages);
 }
 int mcos_rmm_evict(int nid, struct list_head *evict_list, int num_page)
 {
@@ -621,26 +621,33 @@ static struct args_worker *dequeue_work(struct worker_thread *wt)
 /*rpc handle function for mem server */
 
 #ifdef CONFIG_RM
-static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint32_t offset)
+static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 {
 	int i, ret = 0;
 	int payload_size;
 	void *src;
 	void *sink_addr;
 	dma_addr_t sink_dma_addr, remote_sink_dma_addr;
-	unsigned int order;
-	struct rdma_work *rw;
-	const struct ib_send_wr *bad_wr = NULL;
+	unsigned int nr_pages;
 	uint8_t *rpc_buffer;
+	uint16_t wr_id;
 
-	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE);
+	struct rdma_work *rw;
+	struct rpc_header *rhp;
+
+	const struct ib_send_wr *bad_wr = NULL;
+
+	rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
+
+
+	rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
 	src = (void *) *((uint64_t *) (rpc_buffer)) + (rh->vaddr_start);
-	order = *((uint64_t *) (rpc_buffer + 8));
-	payload_size = (1 << order) * PAGE_SIZE;
+	nr_pages = *((uint64_t *) (rpc_buffer + 8));
+	payload_size = nr_pages * PAGE_SIZE;
 
-	DEBUG_LOG(PFX "src: %llx order: %u num_page: %d\n", (uint64_t) src, order, 1 << order);
+//	DEBUG_LOG(PFX "src: %llx nr_pages: %u num_page: %d\n", (uint64_t) src, nr_pages);
 
-	i = __get_sink_buffer(rh, order);
+	i = __get_sink_buffer(rh, nr_pages);
 	sink_addr = ((uint8_t *) rh->sink_buffer) + (i * PAGE_SIZE);
 	sink_dma_addr = rh->sink_dma_addr + (i * PAGE_SIZE);
 	remote_sink_dma_addr = rh->remote_sink_dma_addr + (i * PAGE_SIZE);
@@ -656,7 +663,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint32_t of
 	rw->done = 0;
 
 	rw->rh = rh;
-	rw->order = order;
+	rw->nr_pages = nr_pages;
 	rw->slot = i;
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, id, rw->wr.wr.ex.imm_data);
@@ -889,6 +896,7 @@ static int __handle_rpc(struct ib_wc *wc)
 	int ret = 0;
 	struct recv_work *rw;
 	struct rdma_handle *rh;
+	struct rpc_header *rhp;
 	uint32_t imm_data;
 	uint16_t id;
 	int op;
@@ -1032,16 +1040,16 @@ static int put_work(struct ib_wc *wc)
 {
 	struct rdma_work *rw;
 	struct rdma_handle *rh;
-	int slot, order;
+	int slot, nr_pages;
 
 	rw = (struct rdma_work *) wc->wr_id;
 	rh = rw->rh;
 
 	slot = rw->slot;
-	order = rw->order;
+	nr_pages = rw->nr_pages;
 
-	if (slot >= 0)
-		__put_sink_buffer(rh, slot, order);
+	if (slot >= 0) 
+		__put_sink_buffer(rh, slot, nr_pages);
 	__put_rdma_work(rh, rw);
 
 	return 0;
@@ -1056,7 +1064,7 @@ static int polling_cq(void * args)
 	int i;
 
 	int ret = 0;
-	int num_poll = 25;
+	int num_poll = 1;
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
 	wc = kmalloc(sizeof(struct ib_wc) * num_poll, GFP_KERNEL);
@@ -1455,8 +1463,10 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	rh->evict_buffer = rh->dma_buffer;
 	rh->evict_dma_addr = rh->dma_addr;
 
-	if (!rh->rb)
-		rh->rb = ring_buffer_create(rh->dma_buffer, dma_addr, "dma buffer"); 
+	if (!rh->rb && rh->connection_type == CONNECTION_FETCH)
+		rh->rb = ring_buffer_create(rh->rpc_buffer, rh->rpc_dma_addr, RPC_BUFFER_SIZE,"rpc buffer"); 
+	else if (!rh->rb && rh->connection_type == CONNECTION_EVICT)
+		rh->rb = ring_buffer_create(rh->evict_buffer, rh->evict_dma_addr, DMA_BUFFER_SIZE,"eivct buffer"); 
 
 	return 0;
 out_dereg:
@@ -2621,13 +2631,15 @@ static struct completion done_thread;
 
 static int handle_message(void *args)
 {
-	struct worker_thread *wt = (struct worker_thread *) args;
-	struct args_worker *aw;
-	struct rdma_handle *rh;
 	enum rpc_opcode op;
 	uint16_t id;
 	uint16_t offset;
 	uint32_t imm_data;
+
+	struct args_worker *aw;
+	struct rdma_handle *rh;
+	struct rpc_header *rhp;
+	struct worker_thread *wt = (struct worker_thread *) args;
 
 	wt->cpu = smp_processor_id();
 	printk(PFX "woker thread created cpu id: %d\n", wt->cpu);
