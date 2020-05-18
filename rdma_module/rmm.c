@@ -11,10 +11,6 @@
 #include <linux/kernel.h>
 #include <linux/sched_clock.h>
 
-#include <asm/tlbflush.h>
-
-//#include <mcos/mcos.h>
-
 #include <rdma/rdma_cm.h>
 #include <rdma/ib_verbs.h>
 
@@ -776,13 +772,14 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	rw->rh = rh;
 	rw->slot = -1;
 
-
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
 	}
+
+	DEBUG_LOG(PFX "evict done, %s\n", __func__);
 
 	return 0;
 out_free:
@@ -1028,7 +1025,7 @@ static int polling_cq(void * args)
 	int i;
 
 	int ret = 0;
-	int num_poll = 25;
+	int num_poll = 1;
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
 	wc = kmalloc(sizeof(struct ib_wc) * num_poll, GFP_KERNEL);
@@ -1043,7 +1040,6 @@ static int polling_cq(void * args)
 
 		if (ret == 0) {
 			/* FIXME: */
-			cpu_relax();
 			continue;
 		}
 
@@ -1526,7 +1522,6 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 
 static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
 {
-	memset(rw, 0, sizeof(struct rdma_work));
 	might_sleep();
 	spin_lock(&rh->rdma_work_head_lock);
 	rw->next = rh->rdma_work_head;
@@ -1749,8 +1744,8 @@ static int __connect_to_server(int nid, int connection_type)
 		};
 
 		if (rh->backup) {
-			addr.sin_addr.s_addr = backup_ip_table[nid];
-			DEBUG_LOG(PFX "resolve addr(backup): %pI4\n", &backup_ip_table[nid]);
+			addr.sin_addr.s_addr = backup_ip_table[index];
+			DEBUG_LOG(PFX "resolve addr(backup): %pI4\n", &backup_ip_table[index]);
 
 		}
 
@@ -2647,12 +2642,14 @@ int __init init_rmm_rdma(void)
 	for (i = 0; i < MAX_NUM_NODES; i++)
 		vaddr_start_arr[i] = rm_machine_init();
 
-#ifdef RMM_TEST
 	if (ARRAY_SIZE(backup_ip_addresses) > 0) {
 		printk(PFX "CR is on\n");
 		cr_on = 1;
 	}
+#endif /*end for CONFIG_RM */
 
+
+#ifdef RMM_TEST
 	rmm_proc = proc_create("rmm", 0666, NULL, &rmm_ops);
 	if (rmm_proc == NULL) {
 		printk(KERN_ERR PFX "cannot create /proc/rmm\n");
@@ -2660,7 +2657,6 @@ int __init init_rmm_rdma(void)
 	}
 #endif /* end for TEST */
 
-#endif /*end for CONFIG_RM */
 
 	printk(PFX "init rmm rdma\n");
 
@@ -2725,7 +2721,7 @@ int __init init_rmm_rdma(void)
 	create_worker_thread();
 
 	if (__establish_connections())
-		return -1;
+		goto out_free;
 
 #ifdef RMM_TEST
 	for (i = 0; i < MAX_NUM_NODES; i++) {
@@ -2738,7 +2734,7 @@ int __init init_rmm_rdma(void)
 		printk(PFX "remote memory alloc\n");
 		for (i = 0; i < ARRAY_SIZE(ip_addresses); i++) {
 			mcos_rmm_alloc(i, FAKE_PA_START);
-			//			mcos_rmm_free(i, FAKE_PA_START);
+			mcos_rmm_free(i, FAKE_PA_START);
 		}
 	}
 #endif
