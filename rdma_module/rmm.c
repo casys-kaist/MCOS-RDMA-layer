@@ -53,8 +53,6 @@ static struct pool_info *backup_sink_pools[NUM_BACKUP_QPS] = { NULL };
 static struct ib_pd *rdma_pd = NULL;
 /*Global CQ */
 static struct ib_cq *rdma_cq = NULL;
-static volatile int creating_qp = 0;
-static volatile int polling_stopped = 0;
 
 static struct task_struct *accept_k = NULL;
 static struct task_struct *polling_k = NULL;
@@ -308,12 +306,13 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	rw->done = 0;
 	rw->l_vaddr = l_vaddr;
 	rw->rh = rh;
+	rw->order = order;
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
 
 	/*copy rpc args to buffer */
 	*((uint64_t *) (rpc_buffer)) = (uint64_t)  r_vaddr;
-	*((uint64_t *) (rpc_buffer + 8)) = order;
+	*((uint32_t *) (rpc_buffer + 8)) = order;
 
 	DEBUG_LOG(PFX "r_vaddr: %llX %llX\n", (uint64_t)  r_vaddr, 
 			*((uint64_t *) (rpc_buffer)));
@@ -435,14 +434,17 @@ int mcos_rmm_alloc(int nid, u64 vaddr)
 {
 	return rmm_alloc(nid, vaddr - FAKE_PA_START);
 }
+
 int mcos_rmm_free(int nid, u64 vaddr)
 {
 	return rmm_free(nid, vaddr - FAKE_PA_START);
 }
+
 int mcos_rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
 	return rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
 }
+
 int mcos_rmm_evict(int nid, struct list_head *evict_list, int num_page)
 {
 	struct list_head *l;
@@ -599,7 +601,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint16_t id, uint32_t of
 
 	rpc_buffer = rh->rpc_buffer + (offset * RPC_ARGS_SIZE);
 	src = (void *) *((uint64_t *) (rpc_buffer)) + (rh->vaddr_start);
-	order = *((uint64_t *) (rpc_buffer + 8));
+	order = *((uint32_t *) (rpc_buffer + 8));
 	payload_size = (1 << order) * PAGE_SIZE;
 
 	DEBUG_LOG(PFX "src: %llx order: %u num_page: %d\n", (uint64_t) src, order, 1 << order);
@@ -726,9 +728,9 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	DEBUG_LOG(PFX "num_page %d, from %s\n", num_page, __func__);
 	for (i = 0; i < num_page; i++) {
 		if (rh->backup)
-			dest = (u64) *((uint64_t *) (page_pointer));
+			dest =  *((uint64_t *) (page_pointer));
 		else
-			dest = ((u64) *((uint64_t *) (page_pointer))) + (rh->vaddr_start);
+			dest = (*((uint64_t *) (page_pointer))) + (rh->vaddr_start);
 		memcpy((void *) dest, page_pointer + 8, PAGE_SIZE);
 		page_pointer += (8 + PAGE_SIZE);
 		DEBUG_LOG(PFX "dest: %llx, data: %s\n", dest, (char *) dest);
@@ -763,6 +765,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	/* set buffer to -1 to send ack to caller */
 	/* id is already in evict_buffer + 4 */
 	*((int *) evict_buffer) = -1;
+	/* FIXME: In current implementation, rpc_dma_addr == evict_dma_addr */
 	rw = __get_rdma_work(rh, rh->evict_dma_addr + offset, 4, rh->remote_rpc_dma_addr + offset, rh->rpc_rkey);
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->work_type = WORK_TYPE_RPC_ACK;
@@ -808,6 +811,7 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint32_t of
 
 	//delta[head] = get_ns();
 	memcpy(rw->l_vaddr, sink_addr, PAGE_SIZE * num_page);
+	barrier();
 	//delta[head] = get_ns() - delta[head];
 	//accum += delta[head++];
 
@@ -879,7 +883,7 @@ static int __handle_rpc(struct ib_wc *wc)
 		offset = imm_data >> 16;
 		id = imm_data & 0x00007FFF;
 		op = (imm_data & 0x00008000) >> 15;
-		header = *((int *) (rh->evict_buffer + (offset * RPC_ARGS_SIZE)));
+		header = *((int *) (rh->rpc_buffer + (offset * RPC_ARGS_SIZE)));
 		if (op == 1 && header == -1) {
 			rpc_handle_alloc_free_done(rh, id, offset);
 			processed = 1;
@@ -914,12 +918,18 @@ static int __handle_recv(struct ib_wc *wc)
 		case WORK_TYPE_RPC_ADDR:
 			ib_dma_unmap_single(rh->device, rw->dma_addr, 
 					sizeof(struct pool_info), DMA_FROM_DEVICE);
-			if (rh->connection_type == CONNECTION_FETCH)
-				rp = rpc_pools[rh->nid*2];
-			else if (rh->connection_type == CONNECTION_EVICT)
-				rp = rpc_pools[(rh->nid*2)+1];
-			else
-				rp = backup_rpc_pools[rh->nid];
+			if (!rh->backup) {
+				if (rh->connection_type == CONNECTION_FETCH)
+					rp = rpc_pools[rh->nid*2];
+				else if (rh->connection_type == CONNECTION_EVICT)
+					rp = rpc_pools[(rh->nid*2)+1];
+			}
+			else {
+				if (rh->connection_type == CONNECTION_FETCH)
+					rp = backup_rpc_pools[rh->nid*2];
+				else if (rh->connection_type == CONNECTION_EVICT)
+					rp = backup_rpc_pools[(rh->nid*2)+1];
+			}
 			rh->remote_rpc_dma_addr = rp->addr;
 			rh->remote_rpc_size = rp->size;
 			rh->rpc_rkey = rp->rkey;
@@ -931,12 +941,18 @@ static int __handle_recv(struct ib_wc *wc)
 		case WORK_TYPE_SINK_ADDR:
 			ib_dma_unmap_single(rh->device, rw->dma_addr, 
 					sizeof(struct pool_info), DMA_FROM_DEVICE);
-			if (rh->connection_type == CONNECTION_FETCH)
-				rp = sink_pools[rh->nid*2];
-			else if (rh->connection_type == CONNECTION_EVICT)
-				rp = sink_pools[(rh->nid*2)+1];
-			else
-				rp = backup_sink_pools[rh->nid];
+			if (!rh->backup) {
+				if (rh->connection_type == CONNECTION_FETCH)
+					rp = sink_pools[rh->nid*2];
+				else if (rh->connection_type == CONNECTION_EVICT)
+					rp = sink_pools[(rh->nid*2)+1];
+			}
+			else {
+				if (rh->connection_type == CONNECTION_FETCH)
+					rp = backup_sink_pools[rh->nid*2];
+				else if (rh->connection_type == CONNECTION_EVICT)
+					rp = backup_sink_pools[(rh->nid*2)+1];
+			}
 			rh->remote_sink_dma_addr = rp->addr;
 			rh->remote_sink_size = rp->size;
 			rh->sink_rkey = rp->rkey;
@@ -1021,93 +1037,83 @@ static int polling_cq(void * args)
 		return -ENOMEM;
 	}
 
-	while (true) {
+	while ((ret = ib_poll_cq(cq, num_poll, wc)) >= 0) {
+		if (kthread_should_stop())
+			goto free;
 
-		/* to prevent livelock between ib_poll_cq and rdma_create_qp */
-		/*
-		   if (creating_qp) {
-		   polling_stopped = 1;
-		   continue;
-		   }
-		 */
+		if (ret == 0) {
+			/* FIXME: */
+			cpu_relax();
+			continue;
+		}
 
-		polling_stopped = 0;
-		while ((ret = ib_poll_cq(cq, num_poll, wc)) >= 0) {
-			if (kthread_should_stop())
-				goto free;
-			if (creating_qp)
-				break;
-			if (ret == 0)
-				continue;
+		for (i = 0; i < ret; i++) {
+			if (wc[i].status) {
+				if (wc[i].status == IB_WC_WR_FLUSH_ERR) {
+					DEBUG_LOG("cq flushed\n");
+					continue;
+				} 
+				else {
+					printk(KERN_ERR PFX "cq completion failed with "
+							"wr_id %Lx status %d opcode %d vendor_err %x\n",
+							wc[i].wr_id, wc[i].status, wc[i].opcode, wc[i].vendor_err);
+					goto error;
+				}
+			}
 
-			for (i = 0; i < ret; i++) {
-				if (wc[i].status) {
-					if (wc[i].status == IB_WC_WR_FLUSH_ERR) {
-						DEBUG_LOG("cq flushed\n");
-						continue;
-					} 
-					else {
-						printk(KERN_ERR PFX "cq completion failed with "
-								"wr_id %Lx status %d opcode %d vendor_err %x\n",
-								wc[i].wr_id, wc[i].status, wc[i].opcode, wc[i].vendor_err);
-						goto error;
+			switch (wc[i].opcode) {
+				case IB_WC_SEND:
+					DEBUG_LOG(PFX "send completion\n");
+					__handle_send(&wc[i]);
+					break;
+
+				case IB_WC_RDMA_WRITE:
+					if (wc[i].wc_flags == IB_WC_WITH_IMM) {
+						DEBUG_LOG(PFX "rdma write-imm completion\n");
+						rw = (struct rdma_work *) wc[i].wr_id;
+
+						if (rw->work_type == WORK_TYPE_RPC_ACK) {
+							if (server)
+								put_work(&wc[i]);
+						}
+						else if (rw->work_type == WORK_TYPE_RPC_REQ) {
+							/*
+							   if (rw->rh->connection_type == CONNECTION_EVICT)
+							   rw->done = true;
+							 */
+						}
 					}
-				}
+					else {
+						DEBUG_LOG(PFX "rdma write completion\n");
+					}
+					break;
 
-				switch (wc[i].opcode) {
-					case IB_WC_SEND:
-						DEBUG_LOG(PFX "send completion\n");
-						__handle_send(&wc[i]);
-						break;
+				case IB_WC_RDMA_READ:
+					rh = (struct rdma_handle *) wc[i].wr_id; 
+					complete(&rh->init_done);
+					DEBUG_LOG(PFX "rdma read completion\n");
+					break;
 
-					case IB_WC_RDMA_WRITE:
-						if (wc[i].wc_flags == IB_WC_WITH_IMM) {
-							DEBUG_LOG(PFX "rdma write-imm completion\n");
-							rw = (struct rdma_work *) wc[i].wr_id;
+				case IB_WC_RECV:
+					DEBUG_LOG(PFX "recv completion\n");
+					__handle_recv(&wc[i]);
+					break;
+				case IB_WC_RECV_RDMA_WITH_IMM:
+					DEBUG_LOG(PFX "recv rpc\n");
+					__handle_rpc(&wc[i]);
+					break;
 
-							if (rw->work_type == WORK_TYPE_RPC_ACK) {
-								if (server)
-									put_work(&wc[i]);
-							}
-							else if (rw->work_type == WORK_TYPE_RPC_REQ) {
-								/*
-								   if (rw->rh->connection_type == CONNECTION_EVICT)
-								   rw->done = true;
-								 */
-							}
-						}
-						else {
-							DEBUG_LOG(PFX "rdma write completion\n");
-						}
-						break;
+				case IB_WC_REG_MR:
+					rh = (struct rdma_handle *) wc[i].wr_id; 
+					complete(&rh->init_done);
+					DEBUG_LOG(PFX "mr registered\n");
+					break;
 
-					case IB_WC_RDMA_READ:
-						rh = (struct rdma_handle *) wc[i].wr_id; 
-						complete(&rh->init_done);
-						DEBUG_LOG(PFX "rdma read completion\n");
-						break;
-
-					case IB_WC_RECV:
-						DEBUG_LOG(PFX "recv completion\n");
-						__handle_recv(&wc[i]);
-						break;
-					case IB_WC_RECV_RDMA_WITH_IMM:
-						DEBUG_LOG(PFX "recv rpc\n");
-						__handle_rpc(&wc[i]);
-						break;
-
-					case IB_WC_REG_MR:
-						rh = (struct rdma_handle *) wc[i].wr_id; 
-						complete(&rh->init_done);
-						DEBUG_LOG(PFX "mr registered\n");
-						break;
-
-					default:
-						printk(KERN_ERR PFX
-								"%s:%d Unexpected opcode %d\n",
-								__func__, __LINE__, wc[i].opcode);
-						goto error;
-				}
+				default:
+					printk(KERN_ERR PFX
+							"%s:%d Unexpected opcode %d\n",
+							__func__, __LINE__, wc[i].opcode);
+					goto error;
 			}
 		}
 	}
@@ -1119,76 +1125,6 @@ error:
 	kfree(wc);
 	return -1;
 }
-
-/*
-   static int rmm_wait_for_completion(struct rdma_handle *rh, enum ib_wc_opcode exit_condition)
-   {
-   struct ib_wc wc = {0};
-//const struct ib_recv_wr *bad_wr;
-int ret;
-
-DEBUG_LOG(PFX "wait CQE: %d\n", exit_condition);
-while ((ret = ib_poll_cq(rh->cq, 1, &wc)) >= 0) {
-if (ret == 0) {
-if (rh->state == RDMA_CLOSED)
-goto  error;
-continue;
-}
-
-if (wc.status) {
-if (wc.status == IB_WC_WR_FLUSH_ERR) {
-DEBUG_LOG("cq flushed\n");
-continue;
-} 
-else {
-printk(KERN_ERR PFX "cq completion failed with "
-"wr_id %Lx status %d opcode %d vendor_err %x\n",
-wc.wr_id, wc.status, wc.opcode, wc.vendor_err);
-goto error;
-}
-}
-
-switch (wc.opcode) {
-case IB_WC_SEND:
-DEBUG_LOG(PFX "send completion\n");
-if (wc.wr_id == WORK_TYPE_RPC_ADDR)
-DEBUG_LOG(PFX "send rpc addr %llx\n", rh->rpc_dma_addr);
-else if (wc.wr_id == WORK_TYPE_SINK_ADDR)
-DEBUG_LOG(PFX "send sink addr %llx\n", sink_dma_addr);
-break;
-
-case IB_WC_RDMA_WRITE:
-DEBUG_LOG(PFX "rdma write completion\n");
-break;
-
-case IB_WC_RDMA_READ:
-DEBUG_LOG(PFX "rdma read completion\n");
-break;
-
-case IB_WC_RECV:
-DEBUG_LOG(PFX "recv completion\n");
-__handle_recv(&wc);
-break;
-
-case IB_WC_REG_MR:
-DEBUG_LOG(PFX "mr registered\n");
-break;
-
-default:
-printk(KERN_ERR PFX
-"%s:%d Unexpected opcode %d\n",
-__func__, __LINE__, wc.opcode);
-goto error;
-}
-if (wc.opcode == exit_condition)
-break;
-}
-
-return 0;
-error:
-return -1;
-}
- */
 
 void cq_comp_handler(struct ib_cq *cq, void *context)
 {
@@ -1273,7 +1209,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 		polling_k = kthread_create(polling_cq, rdma_cq, "polling_cq");
 		if (IS_ERR(polling_k))
 			goto out_err;
-		kthread_bind(polling_k, 14);
+		kthread_bind(polling_k, POLL_CPU_ID);
 		wake_up_process(polling_k); 
 		for (i = 0; i < NR_WORKER_THREAD; i++)
 			complete(&done_worker[i]);
@@ -1299,14 +1235,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 			.recv_cq = rdma_cq,
 		};
 
-		creating_qp = 1;
-		/*
-		   while (!polling_stopped)
-		   ;
-		 */
-		printk(PFX "create qp\n");
 		ret = rdma_create_qp(rh->cm_id, rdma_pd, &qp_attr);
-		creating_qp = 0;
 		if (ret) 
 			goto out_err;
 		rh->qp = rh->cm_id->qp;
@@ -1439,20 +1368,32 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 	int index = (rh->nid) * 2;
 
 	if (work_type == WORK_TYPE_RPC_ADDR) {
-		if (rh->connection_type == CONNECTION_FETCH)
-			pp = rpc_pools[index];
-		else if (rh->connection_type == CONNECTION_EVICT)
-			pp = rpc_pools[index+1];
-		else
-			pp = backup_rpc_pools[rh->nid];
+		if (!rh->backup) {
+			if (rh->connection_type == CONNECTION_FETCH)
+				pp = rpc_pools[index];
+			else if (rh->connection_type == CONNECTION_EVICT)
+				pp = rpc_pools[index+1];
+		}
+		else {
+			if (rh->connection_type == CONNECTION_FETCH)
+				pp = backup_rpc_pools[index];
+			else if (rh->connection_type == CONNECTION_EVICT)
+				pp = backup_rpc_pools[index+1];
+		}
 	}
 	else {
-		if (rh->connection_type == CONNECTION_FETCH)
-			pp = sink_pools[index];
-		else if (rh->connection_type == CONNECTION_EVICT)
-			pp = sink_pools[index+1];
-		else
-			pp = backup_sink_pools[rh->nid];
+		if (!rh->backup) {
+			if (rh->connection_type == CONNECTION_FETCH)
+				pp = sink_pools[index];
+			else if (rh->connection_type == CONNECTION_EVICT)
+				pp = sink_pools[index+1];
+		}
+		else {
+			if (rh->connection_type == CONNECTION_FETCH)
+				pp = backup_sink_pools[index];
+			else if (rh->connection_type == CONNECTION_EVICT)
+				pp = backup_sink_pools[index+1];
+		}
 	}
 
 	rw = kmalloc(sizeof(struct recv_work), GFP_KERNEL);
@@ -1537,6 +1478,7 @@ static int __refill_rdma_work(struct rdma_handle *rh, int nr_works)
 	}
 	spin_unlock(&rh->rdma_work_head_lock);
 	BUG_ON(nr_refilled == 0);
+
 	return nr_refilled;
 }
 
@@ -1624,7 +1566,7 @@ static int __setup_recv_works(struct rdma_handle *rh)
 	else {
 	}
 
-	DEBUG_LOG(PFX "post recv for exchaging dma addr\n");
+	DEBUG_LOG(PFX "post recv for exchanging dma addr\n");
 	ret = __setup_recv_addr(rh, WORK_TYPE_RPC_ADDR);
 	if (ret)
 		return ret;
@@ -2153,6 +2095,7 @@ static int __establish_connections(void)
 	}
 	printk(PFX "Connections are established.\n");
 
+
 	return 0;
 }
 #endif
@@ -2590,8 +2533,8 @@ static int handle_message(void *args)
 	wt->cpu = smp_processor_id();
 	printk(PFX "woker thread created cpu id: %d\n", wt->cpu);
 	complete(&done_thread);
-	init_completion(&done_worker[wt->cpu-15]);
-	wait_for_completion_interruptible(&done_worker[wt->cpu-15]);
+	init_completion(&done_worker[wt->cpu-WORKER_CPU_ID]);
+	wait_for_completion_interruptible(&done_worker[wt->cpu-WORKER_CPU_ID]);
 	printk(PFX "woker thread run at cpu %d\n", wt->cpu);
 
 	//local_irq_disable();
@@ -2679,7 +2622,7 @@ static int create_worker_thread(void)
 			printk(KERN_ERR PFX "Cannot create worker thread\n");
 			return -EINVAL;
 		}
-		kthread_bind(wt->task, 15 + i);
+		kthread_bind(wt->task, WORKER_CPU_ID + i);
 		wake_up_process(wt->task); 
 		wait_for_completion_interruptible(&done_thread);
 	}
@@ -2709,16 +2652,17 @@ int __init init_rmm_rdma(void)
 		printk(PFX "CR is on\n");
 		cr_on = 1;
 	}
-#endif /* end for TEST */
 
-#endif /*end for CONFIG_RM */
-
-	printk(PFX "init rmm rdma\n");
 	rmm_proc = proc_create("rmm", 0666, NULL, &rmm_ops);
 	if (rmm_proc == NULL) {
 		printk(KERN_ERR PFX "cannot create /proc/rmm\n");
 		return -ENOMEM;
 	}
+#endif /* end for TEST */
+
+#endif /*end for CONFIG_RM */
+
+	printk(PFX "init rmm rdma\n");
 
 	if (!identify_myself(&my_ip)) 
 		return -EINVAL;
@@ -2800,8 +2744,6 @@ int __init init_rmm_rdma(void)
 #endif
 
 	printk(PFX "Ready on InfiniBand RDMA\n");
-
-
 
 	return 0;
 

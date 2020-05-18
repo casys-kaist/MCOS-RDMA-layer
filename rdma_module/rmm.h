@@ -93,7 +93,9 @@ struct rdma_work {
 	struct rdma_work *next;
 	struct ib_sge sgl;
 	struct ib_rdma_wr wr;
+
 	int done;
+
 	void *addr;
 	dma_addr_t dma_addr;
 
