@@ -733,17 +733,15 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 
 		/* making evict info list for replication */
 		if (cr_on) {
-			if (rh->connection_type == CONNECTION_EVICT) {
-				ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
-				if (!ei) {
-					printk("fail to replicate, error in %s\n", __func__);
-					goto out_free;
-				}
-				ei->l_vaddr = dest;
-				ei->r_vaddr = dest;
-				INIT_LIST_HEAD(&ei->next);
-				list_add(&ei->next, &addr_list);
+			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
+			if (!ei) {
+				printk("fail to replicate, error in %s\n", __func__);
+				goto out_free;
 			}
+			ei->l_vaddr = dest;
+			ei->r_vaddr = dest;
+			INIT_LIST_HEAD(&ei->next);
+			list_add(&ei->next, &addr_list);
 		}
 	}
 
@@ -1744,8 +1742,8 @@ static int __connect_to_server(int nid, int connection_type)
 		};
 
 		if (rh->backup) {
-			addr.sin_addr.s_addr = backup_ip_table[index];
-			DEBUG_LOG(PFX "resolve addr(backup): %pI4\n", &backup_ip_table[index]);
+			addr.sin_addr.s_addr = backup_ip_table[nid];
+			DEBUG_LOG(PFX "resolve addr(backup): %pI4\n", &backup_ip_table[nid]);
 
 		}
 
