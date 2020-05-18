@@ -112,7 +112,7 @@ int rmm_alloc(int nid, u64 vaddr)
 	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
-	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
 	if (!rw)
 		return -ENOMEM;
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
@@ -146,7 +146,7 @@ int rmm_alloc(int nid, u64 vaddr)
 	DEBUG_LOG(PFX "alloc done %d\n", ret);
 put:
 	__put_rpc_buffer(rh, i);
-	__put_rdma_work(rh, rw);
+	__put_rdma_work_nonsleep(rh, rw);
 
 	return ret;
 }
@@ -231,7 +231,7 @@ int rmm_free(int nid, u64 vaddr)
 	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
-	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
 	if (!rw)
 		return -ENOMEM;
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
@@ -265,7 +265,7 @@ int rmm_free(int nid, u64 vaddr)
 	DEBUG_LOG(PFX "free done %d\n", ret);
 put:
 	__put_rpc_buffer(rh, i);
-	__put_rdma_work(rh, rw);
+	__put_rdma_work_nonsleep(rh, rw);
 
 	return ret;
 }
