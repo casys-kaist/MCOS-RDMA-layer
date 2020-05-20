@@ -559,6 +559,21 @@ int mcos_rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	return rmm_evict(nid, evict_list, num_page);
 }
 
+int mcos_rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
+{
+	return rmm_alloc_async(nid, vaddr - FAKE_PA_START, rpage_flags);
+}
+
+int mcos_rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
+{
+	return rmm_free_async(nid, vaddr - FAKE_PA_START, rpage_flags);
+}
+
+int mcos_rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, unsigned long *rpage_flags)
+{
+	return rmm_fetch_async(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, rpage_flags);
+}
+
 static inline int __get_rpc_buffer(struct rdma_handle *rh) 
 {
 	int i;
@@ -2478,6 +2493,7 @@ static void test_fetch(int order)
 	unsigned long elapsed;
 	uint16_t index;
 	uint16_t *arr1, *arr2;
+	unsigned long flags;
 
 	arr1 = kmalloc(512 * sizeof(uint16_t), GFP_KERNEL);
 	if (!arr1)
@@ -2510,7 +2526,7 @@ static void test_fetch(int order)
 	DEBUG_LOG(PFX "fetch start\n");
 	getnstimeofday(&start_tv);
 	for (i = 0; i < 512; i++) {
-		mcos_rmm_fetch(0, my_data[0] + (i * size), ((void *) FAKE_PA_START) + (i * size), order);
+		mcos_rmm_fetch_async(0, my_data[0] + (i * size), ((void *) FAKE_PA_START) + (i * size), order, &flags);
 	}
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
@@ -2756,6 +2772,7 @@ static int start_connection(void)
 int __init init_rmm_rdma(void)
 {
 	int i;
+	unsigned long flags;
 
 #ifdef CONFIG_RM
 	server = 1;
@@ -2858,8 +2875,8 @@ int __init init_rmm_rdma(void)
 	if (!server) {
 		printk(PFX "remote memory alloc\n");
 		for (i = 0; i < ARRAY_SIZE(ip_addresses); i++) {
-			mcos_rmm_alloc(i, FAKE_PA_START);
-			mcos_rmm_free(i, FAKE_PA_START);
+			mcos_rmm_alloc_async(i, FAKE_PA_START, &flags);
+			mcos_rmm_free_async(i, FAKE_PA_START, &flags);
 		}
 	}
 #endif
