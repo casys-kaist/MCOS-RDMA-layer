@@ -297,6 +297,7 @@ int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	rw->dma_addr = rpc_dma_addr;
 	rw->done = 0;
 	rw->rh = rh;
+	rw->rpage_flags = rpage_flags;
 
 	/*copy rpc args to buffer */
 	*((uint16_t *) rpc_buffer) = nid;
@@ -964,21 +965,28 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint16_t id, uint3
 
 	rw->done = 1;
 	if (rw->rpage_flags) {
-		DEBUG_LOG(PFX "asycn alloc is done %s \n", __func__);
 		ret = *((int *) (rpc_addr + 4));
 		op = *((int16_t *) (rpc_addr + 2));
 		 
 		if (ret) {
-			if (!op)
+			if (!op) {
+				DEBUG_LOG(PFX "asycn alloc is done %s \n", __func__);
 				*rw->rpage_flags |= RPAGE_ALLOCED;
-			else
+			}
+			else {
+				DEBUG_LOG(PFX "asycn free is done %s \n", __func__);
 				*rw->rpage_flags |= RPAGE_FREED;
+			}
 		}
 		else {
-			if (!op)
+			if (!op) {
+				DEBUG_LOG(PFX "asycn alloc is failed %s \n", __func__);
 				*rw->rpage_flags |= RPAGE_ALLOC_FAILED;
-			else
+			}
+			else {
+				DEBUG_LOG(PFX "asycn free is failed %s \n", __func__);
 				*rw->rpage_flags |= RPAGE_FREE_FAILED;
+			}
 		}
 		__put_rpc_buffer(rh, offset);
 		__put_rdma_work(rh, rw);
@@ -991,7 +999,7 @@ static int rpc_handle_evict_done(struct rdma_handle *rh,  int id)
 {
 	struct rdma_work *rw = &rh->rdma_work_pool[id];
 
-	DEBUG_LOG(PFX "done id %d\n", id);
+	DEBUG_LOG(PFX "done id %d in %s\n", id, __func__);
 	rw->done = 1;
 
 	return 0;
