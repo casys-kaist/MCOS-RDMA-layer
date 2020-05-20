@@ -44,6 +44,20 @@
 #define DMA_VADDR_START (0xffffd90000000000)
 #endif
 
+/* rpage flags */
+#define RPAGE_PREFETCHED        0x00000001
+#define RPAGE_EVICTED           0x00000002
+#define RPAGE_PREFETCHING       0x00000004
+#define RPAGE_EVICTING          0x00000008
+#define RPAGE_ALLOCATING        0x00000010
+#define RPAGE_ALLOCED           0x00000020
+#define RPAGE_FREEZE_FAIL       0x00000040
+#define RPAGE_ALLOC_FAILED      0x00000080
+#define RPAGE_FREED             0x00000100
+#define RPAGE_FREE_FAILED       0x00000200
+#define RPAGE_FETCHED           0x00000400
+
+
 enum rpc_opcode {
 	RPC_OP_FETCH,
 	RPC_OP_EVICT,
@@ -95,6 +109,7 @@ struct rdma_work {
 	struct ib_rdma_wr wr;
 
 	int done;
+	unsigned long *rpage_flags;
 
 	void *addr;
 	dma_addr_t dma_addr;

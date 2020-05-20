@@ -10,6 +10,7 @@
 #include <linux/string.h>
 #include <linux/kernel.h>
 #include <linux/sched_clock.h>
+#include <linux/jiffies.h>
 
 #include <rdma/rdma_cm.h>
 #include <rdma/ib_verbs.h>
@@ -71,6 +72,10 @@ extern int (*remote_alloc)(int, u64);
 extern int (*remote_free)(int, u64);
 extern int (*remote_fetch)(int, void *, void *, unsigned int);
 extern int (*remote_evict)(int, struct list_head *, int);
+
+extern int (*remote_alloc_async)(int, u64, unsigned long *);
+extern int (*remote_free_async)(int, u64, u64 *, unsigned long *);
+extern int (*remote_fetch_asycn)(int, void *, void *, unsigned int, unsigned long *);
 #endif
 
 static inline int nid_to_rh(int nid)
@@ -83,6 +88,10 @@ static inline unsigned long long get_ns(void)
 	//return (cpu_clock(0) * (1000000L / NSEC_PER_SEC));
 	//return cpu_clock(0);
 	return sched_clock();
+}
+
+static inline void rmm_yield_cpu(void)
+{
 }
 
 int rmm_alloc(int nid, u64 vaddr)
@@ -117,6 +126,7 @@ int rmm_alloc(int nid, u64 vaddr)
 	rw->dma_addr = rpc_dma_addr;
 	rw->done = 0;
 	rw->rh = rh;
+	rw->rpage_flags = NULL;
 
 	/*copy rpc args to buffer */
 	*((uint16_t *) rpc_buffer) = nid;
@@ -147,7 +157,7 @@ put:
 	return ret;
 }
 
-int rmm_alloc_async(int nid, u64 vaddr)
+int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 {
 	int i, ret = 0;
 	uint8_t *rpc_buffer;
@@ -155,7 +165,6 @@ int rmm_alloc_async(int nid, u64 vaddr)
 	struct rdma_handle *rh;	
 	struct rdma_work *rw;
 	const struct ib_send_wr *bad_wr = NULL;
-	bool done_copy;
 
 	int index = nid_to_rh(nid);
 
@@ -175,6 +184,7 @@ int rmm_alloc_async(int nid, u64 vaddr)
 	rw->dma_addr = rpc_dma_addr;
 	rw->done = 0;
 	rw->rh = rh;
+	rw->rpage_flags = rpage_flags;
 
 	/*copy rpc args to buffer */
 	*((uint16_t *) rpc_buffer) = nid;
@@ -188,18 +198,7 @@ int rmm_alloc_async(int nid, u64 vaddr)
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		goto put;
 	}
-
-	DEBUG_LOG(PFX "wait %p\n", rw);
-
-	while(!(done_copy = rw->done))
-		cpu_relax();
-
-	DEBUG_LOG(PFX "free done\n");
-put:
-	__put_rpc_buffer(rh, i);
-	__put_rdma_work(rh, rw);
 
 	return ret;
 }
@@ -266,6 +265,55 @@ put:
 	return ret;
 }
 
+int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
+{
+	int i, ret = 0;
+	uint8_t *rpc_buffer;
+	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+	struct rdma_handle *rh;	
+	struct rdma_work *rw;
+	const struct ib_send_wr *bad_wr = NULL;
+
+	int index = nid_to_rh(nid);
+
+#ifdef CONFIG_RM
+	rh = backup_rh[0];
+#else
+	rh = rdma_handles[index];
+#endif
+
+	i = __get_rpc_buffer(rh);
+	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
+	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
+	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
+
+	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	if (!rw)
+		return -ENOMEM;
+	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
+	rw->work_type = WORK_TYPE_RPC_REQ;
+	rw->addr = rpc_buffer;
+	rw->dma_addr = rpc_dma_addr;
+	rw->done = 0;
+	rw->rh = rh;
+
+	/*copy rpc args to buffer */
+	*((uint16_t *) rpc_buffer) = nid;
+	*((uint16_t *) (rpc_buffer + 2)) = 1;
+	*((uint64_t *) (rpc_buffer + sizeof(int))) = vaddr;
+
+	DEBUG_LOG(PFX "nid: %d remote addr: %llx\n", nid, remote_rpc_dma_addr);
+
+	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	if (ret || bad_wr) {
+		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		if (bad_wr)
+			ret = -EINVAL;
+	}
+
+	return ret;
+}
+
 
 static unsigned long elapsed_fetch = 0;
 
@@ -303,6 +351,7 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	rw->l_vaddr = l_vaddr;
 	rw->rh = rh;
 	rw->order = order;
+	rw->rpage_flags = NULL;
 
 	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
 
@@ -346,6 +395,63 @@ put:
 	return ret;
 }
 
+int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, unsigned long *rpage_flags)
+{
+	int i, ret = 0;
+	uint8_t *rpc_buffer;
+	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+	struct rdma_handle *rh;
+	struct rdma_work *rw;
+	const struct ib_send_wr *bad_wr = NULL;
+
+	//struct timespec start_tv, end_tv;
+	int index = nid_to_rh(nid);
+
+//	getnstimeofday(&start_tv);
+	
+	rh = rdma_handles[index];
+
+	i = __get_rpc_buffer(rh);
+	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
+	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
+	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
+
+	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, 
+			remote_rpc_dma_addr, rh->rpc_rkey);
+	if (!rw)
+		return -ENOMEM;
+	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
+	rw->work_type = WORK_TYPE_RPC_REQ;
+	rw->addr = rpc_buffer;
+	rw->dma_addr = rpc_dma_addr;
+	rw->done = 0;
+	rw->l_vaddr = l_vaddr;
+	rw->rh = rh;
+	rw->order = order;
+	rw->rpage_flags = rpage_flags;
+
+	DEBUG_LOG(PFX "i: %d, id: %d, imm_data: %X\n", i, rw->id, rw->wr.wr.ex.imm_data);
+
+	/*copy rpc args to buffer */
+	*((uint64_t *) (rpc_buffer)) = (uint64_t)  r_vaddr;
+	*((uint32_t *) (rpc_buffer + 8)) = order;
+
+	/*
+	getnstimeofday(&end_tv);
+	elapsed_fetch += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+		(end_tv.tv_nsec - start_tv.tv_nsec);
+		*/
+
+	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	if (ret || bad_wr) {
+		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		if (bad_wr)
+			ret = -EINVAL;
+	}
+
+	return ret;
+}
+
 /* evict_list is a pointer to list_head */
 int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 {
@@ -384,6 +490,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	rw->dma_addr = evict_dma_addr;
 	rw->done = 0;
 	rw->rh = rh;
+	rw->rpage_flags = NULL;
 
 	DEBUG_LOG(PFX "copy args, %s, %p\n", __func__, evict_buffer);
 	/*copy rpc args to buffer */
@@ -812,6 +919,14 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint16_t id, uint32_t of
 
 	rw->delay = get_ns();
 	rw->done = 1;
+
+	if (rw->rpage_flags) {
+		DEBUG_LOG(PFX "asycn fetch is done %s \n", __func__);
+		*rw->rpage_flags |= RPAGE_FETCHED;
+		__put_rpc_buffer(rh, offset);
+		__put_rdma_work(rh, rw);
+	}
+	
 	DEBUG_LOG(PFX "done %p %d\n", rw, rw->done);
 
 	return 0;
@@ -824,7 +939,7 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint16_t id, uint3
 	void *rpc_addr;
 	dma_addr_t rpc_dma_addr;
 	struct rdma_work *rw;
-	int nid;
+	int nid, ret;
 
 	nid = rh->nid;
 	rw = &rh->rdma_work_pool[id];
@@ -832,7 +947,16 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint16_t id, uint3
 	rpc_dma_addr = rh->rpc_dma_addr + (offset * RPC_ARGS_SIZE);
 
 	rw->done = 1;
-	DEBUG_LOG(PFX "done %p %d\n", rw, rw->done);
+	if (rw->rpage_flags) {
+		DEBUG_LOG(PFX "asycn alloc is done %s \n", __func__);
+		ret = *((int *) (rpc_addr + 4));
+		if (ret)
+			*rw->rpage_flags |= RPAGE_ALLOCED;
+		else
+			*rw->rpage_flags |= RPAGE_ALLOC_FAILED;
+		__put_rpc_buffer(rh, offset);
+		__put_rdma_work(rh, rw);
+	}
 
 	return 0;
 }
@@ -1037,7 +1161,6 @@ static int polling_cq(void * args)
 			goto free;
 
 		if (ret == 0) {
-			/* FIXME: */
 			continue;
 		}
 
@@ -2714,6 +2837,10 @@ int __init init_rmm_rdma(void)
 	remote_evict = mcos_rmm_evict;
 	remote_alloc = mcos_rmm_alloc;
 	remote_free = mcos_rmm_free;
+
+	remote_fetch_async = mcos_rmm_fetch_async;
+	remote_alloc_async = mcos_rmm_alloc_asycn;
+	remote_free_async = mcos_rmm_free_asycn;
 #endif
 
 	create_worker_thread();
