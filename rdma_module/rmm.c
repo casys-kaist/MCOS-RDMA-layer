@@ -74,7 +74,7 @@ extern int (*remote_fetch)(int, void *, void *, unsigned int);
 extern int (*remote_evict)(int, struct list_head *, int);
 
 extern int (*remote_alloc_async)(int, u64, unsigned long *);
-extern int (*remote_free_async)(int, u64, u64 *, unsigned long *);
+extern int (*remote_free_async)(int, u64, unsigned long *);
 extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned long *);
 #endif
 
