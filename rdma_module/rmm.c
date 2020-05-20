@@ -75,7 +75,7 @@ extern int (*remote_evict)(int, struct list_head *, int);
 
 extern int (*remote_alloc_async)(int, u64, unsigned long *);
 extern int (*remote_free_async)(int, u64, u64 *, unsigned long *);
-extern int (*remote_fetch_asycn)(int, void *, void *, unsigned int, unsigned long *);
+extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned long *);
 #endif
 
 static inline int nid_to_rh(int nid)
@@ -92,6 +92,7 @@ static inline unsigned long long get_ns(void)
 
 static inline void rmm_yield_cpu(void)
 {
+	cond_resched();
 }
 
 int rmm_alloc(int nid, u64 vaddr)
@@ -130,7 +131,7 @@ int rmm_alloc(int nid, u64 vaddr)
 
 	/*copy rpc args to buffer */
 	*((uint16_t *) rpc_buffer) = nid;
-	*((uint16_t *) (rpc_buffer + 2)) = 0;
+	*((uint16_t *) (rpc_buffer + 2)) = 0; /* opcode */
 	*((uint64_t *) (rpc_buffer + sizeof(int))) = vaddr;
 
 	DEBUG_LOG(PFX "nid: %d remote dma addr: %llx\n", nid, remote_rpc_dma_addr);
@@ -238,7 +239,7 @@ int rmm_free(int nid, u64 vaddr)
 
 	/*copy rpc args to buffer */
 	*((uint16_t *) rpc_buffer) = nid;
-	*((uint16_t *) (rpc_buffer + 2)) = 1;
+	*((uint16_t *) (rpc_buffer + 2)) = 1;  /*op code */
 	*((uint64_t *) (rpc_buffer + sizeof(int))) = vaddr;
 
 	DEBUG_LOG(PFX "nid: %d remote addr: %llx\n", nid, remote_rpc_dma_addr);
@@ -814,7 +815,7 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint16_t id, uint32
 	DEBUG_LOG(PFX "ret in %s, %d\n", __func__, ret);
 
 	/* -1 means this packet is ack */
-	*((int *) rpc_buffer) = -1;
+	*((int16_t *) rpc_buffer) = -1;
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
@@ -954,7 +955,7 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint16_t id, uint3
 	void *rpc_addr;
 	dma_addr_t rpc_dma_addr;
 	struct rdma_work *rw;
-	int nid, ret;
+	int nid, ret, op;
 
 	nid = rh->nid;
 	rw = &rh->rdma_work_pool[id];
@@ -965,10 +966,20 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint16_t id, uint3
 	if (rw->rpage_flags) {
 		DEBUG_LOG(PFX "asycn alloc is done %s \n", __func__);
 		ret = *((int *) (rpc_addr + 4));
-		if (ret)
-			*rw->rpage_flags |= RPAGE_ALLOCED;
-		else
-			*rw->rpage_flags |= RPAGE_ALLOC_FAILED;
+		op = *((int16_t *) (rpc_addr + 2));
+		 
+		if (ret) {
+			if (!op)
+				*rw->rpage_flags |= RPAGE_ALLOCED;
+			else
+				*rw->rpage_flags |= RPAGE_FREED;
+		}
+		else {
+			if (!op)
+				*rw->rpage_flags |= RPAGE_ALLOC_FAILED;
+			else
+				*rw->rpage_flags |= RPAGE_FREE_FAILED;
+		}
 		__put_rpc_buffer(rh, offset);
 		__put_rdma_work(rh, rw);
 	}
@@ -1017,7 +1028,7 @@ static int __handle_rpc(struct ib_wc *wc)
 		offset = imm_data >> 16;
 		id = imm_data & 0x00007FFF;
 		op = (imm_data & 0x00008000) >> 15;
-		header = *((int *) (rh->rpc_buffer + (offset * RPC_ARGS_SIZE)));
+		header = *((int16_t *) (rh->rpc_buffer + (offset * RPC_ARGS_SIZE)));
 		if (op == 1 && header == -1) {
 			rpc_handle_alloc_free_done(rh, id, offset);
 			processed = 1;
@@ -1163,6 +1174,7 @@ static int polling_cq(void * args)
 
 	int ret = 0;
 	int num_poll = 1;
+	u64 start = get_jiffies_64();
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
 	wc = kmalloc(sizeof(struct ib_wc) * num_poll, GFP_KERNEL);
@@ -1176,6 +1188,10 @@ static int polling_cq(void * args)
 			goto free;
 
 		if (ret == 0) {
+			if (get_jiffies_64() - start >= 2000) {
+				rmm_yield_cpu();
+				start = get_jiffies_64();
+			}
 			continue;
 		}
 
@@ -2662,6 +2678,8 @@ static int handle_message(void *args)
 	uint16_t offset;
 	uint32_t imm_data;
 
+	u64 start = get_jiffies_64();
+
 	wt->cpu = smp_processor_id();
 	printk(PFX "woker thread created cpu id: %d\n", wt->cpu);
 	complete(&done_thread);
@@ -2671,10 +2689,15 @@ static int handle_message(void *args)
 
 	//local_irq_disable();
 	//	preempt_disable();
+
 	while (1) {
 		while (!wt->num_queued) {
 			if (kthread_should_stop())
 				return 0;
+			if (get_jiffies_64() - start >= 2000) {
+				rmm_yield_cpu();
+				start = get_jiffies_64();
+			}
 			cpu_relax();
 		}
 
@@ -2856,8 +2879,8 @@ int __init init_rmm_rdma(void)
 	remote_free = mcos_rmm_free;
 
 	remote_fetch_async = mcos_rmm_fetch_async;
-	remote_alloc_async = mcos_rmm_alloc_asycn;
-	remote_free_async = mcos_rmm_free_asycn;
+	remote_alloc_async = mcos_rmm_alloc_async;
+	remote_free_async = mcos_rmm_free_async;
 #endif
 
 	create_worker_thread();
