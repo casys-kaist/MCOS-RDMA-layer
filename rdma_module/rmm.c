@@ -108,7 +108,7 @@ int rmm_alloc(int nid, u64 vaddr)
 	int index = nid_to_rh(nid);
 
 #ifdef CONFIG_RM
-	rh = backup_rh[0];
+	rh = backup_rh[index];
 #else
 	rh = rdma_handles[index];
 #endif
@@ -119,8 +119,9 @@ int rmm_alloc(int nid, u64 vaddr)
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
 	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
-	if (!rw)
+	if (!rw) {
 		return -ENOMEM;
+	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -171,14 +172,21 @@ int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 
 	rh = rdma_handles[index];
 
+	if (!rpage_flags) {
+		printk(KERN_ALERT "null parameter\n");
+		return -EINVAL;
+	}
+
 	i = __get_rpc_buffer(rh);
 	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
 	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
-	rw = __get_rdma_work(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
-	if (!rw)
-		return -ENOMEM;
+	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
+	if (!rw) {
+		ret = -ENOMEM;
+		goto put_rpc;
+	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -197,9 +205,17 @@ int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
-		if (bad_wr)
+		if (bad_wr) 
 			ret = -EINVAL;
+		goto put_rw;
 	}
+
+	return ret;
+
+put_rw:
+	__put_rdma_work_nonsleep(rh, rw);
+put_rpc:
+	__put_rpc_buffer(rh, i);
 
 	return ret;
 }
@@ -217,7 +233,7 @@ int rmm_free(int nid, u64 vaddr)
 	int index = nid_to_rh(nid);
 
 #ifdef CONFIG_RM
-	rh = backup_rh[0];
+	rh = backup_rh[index];
 #else
 	rh = rdma_handles[index];
 #endif
@@ -283,14 +299,21 @@ int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	rh = rdma_handles[index];
 #endif
 
+	if (!rpage_flags) {
+		printk(KERN_ALERT "null parameter\n");
+		return -EINVAL;
+	}
+
 	i = __get_rpc_buffer(rh);
 	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (i * RPC_ARGS_SIZE);
 	rpc_dma_addr = rh->rpc_dma_addr + (i * RPC_ARGS_SIZE);
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
 	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
-	if (!rw)
-		return -ENOMEM;
+	if (!rw) {
+		ret = -ENOMEM;
+		goto put_rpc;
+	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -311,7 +334,15 @@ int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
+		goto put_rw;
 	}
+
+	return ret;
+
+put_rw:
+	__put_rdma_work_nonsleep(rh, rw);
+put_rpc:
+	__put_rpc_buffer(rh, i);
 
 	return ret;
 }
@@ -472,7 +503,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	int index = nid_to_rh(nid) + 1;
 
 #ifdef CONFIG_RM
-	rh = backup_rh[1];
+	rh = backup_rh[index];
 #else
 	rh = rdma_handles[index];
 #endif
@@ -585,19 +616,11 @@ static inline int __get_rpc_buffer(struct rdma_handle *rh)
 		i = find_first_zero_bit(rh->rpc_slots, NR_RPC_SLOTS);
 		if (i < NR_RPC_SLOTS) break;
 		spin_unlock(&rh->rpc_slots_lock);
-		WARN_ON_ONCE("recv buffer is full");
+	//	WARN_ON_ONCE("recv buffer is full");
 	} while (i >= NR_RPC_SLOTS);
 	set_bit(i, rh->rpc_slots);
 	spin_unlock(&rh->rpc_slots_lock);
 
-	/*
-	   if (addr) {
-	 *addr = rdma_sink_addr + RDMA_SLOT_SIZE * i;
-	 }
-	 if (dma_addr) {
-	 *dma_addr = __rdma_sink_dma_addr + RDMA_SLOT_SIZE * i;
-	 }
-	 */
 	return i;
 }
 
@@ -606,8 +629,6 @@ static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot)
 	uint8_t * rpc_buffer;
 
 	spin_lock(&rh->rpc_slots_lock);
-	rpc_buffer = ((uint8_t *) rh->rpc_buffer) + (slot * RPC_ARGS_SIZE);
-	memset(rpc_buffer, 0, RPC_ARGS_SIZE);
 	/*
 	   BUG_ON(!test_bit(slot, rh->rpc_slots));
 	 */
@@ -1181,7 +1202,7 @@ static int polling_cq(void * args)
 	int i;
 
 	int ret = 0;
-	int num_poll = 1;
+	int num_poll = 25;
 	u64 start = get_jiffies_64();
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
@@ -1195,13 +1216,11 @@ static int polling_cq(void * args)
 		if (kthread_should_stop())
 			goto free;
 
+		/*
 		if (ret == 0) {
-			if (get_jiffies_64() - start >= 2000) {
-				rmm_yield_cpu();
-				start = get_jiffies_64();
-			}
 			continue;
 		}
+		*/
 
 		for (i = 0; i < ret; i++) {
 			if (wc[i].status) {
@@ -1272,6 +1291,12 @@ static int polling_cq(void * args)
 					goto error;
 			}
 		}
+
+		if (get_jiffies_64() - start >= MAX_TICKS) {
+			rmm_yield_cpu();
+			start = get_jiffies_64();
+		}
+
 	}
 
 free:
@@ -1644,12 +1669,15 @@ static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_
 	might_sleep();
 
 	spin_lock(&rh->rdma_work_head_lock);
+
+	if (!rh->rdma_work_head) {
+		spin_unlock(&rh->rdma_work_head_lock);
+		return NULL;
+	}
+
 	rw = rh->rdma_work_head;
 	rh->rdma_work_head = rh->rdma_work_head->next;
 	spin_unlock(&rh->rdma_work_head_lock);
-
-	if (!rh->rdma_work_head)
-		return NULL;
 
 	rw->sgl.addr = dma_addr;
 	rw->sgl.length = size;
@@ -1665,12 +1693,15 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 	struct rdma_work *rw;
 
 	spin_lock(&rh->rdma_work_head_lock);
+
+	if (!rh->rdma_work_head) {
+		spin_unlock(&rh->rdma_work_head_lock);
+		return NULL;
+	}
+
 	rw = rh->rdma_work_head;
 	rh->rdma_work_head = rh->rdma_work_head->next;
 	spin_unlock(&rh->rdma_work_head_lock);
-
-	if (!rh->rdma_work_head)
-		return NULL;
 
 	rw->sgl.addr = dma_addr;
 	rw->sgl.length = size;
@@ -2290,10 +2321,12 @@ void __exit exit_rmm_rdma(void)
 			kfree(rh->recv_buffer);
 		}
 
-		if (rh->dma_buffer) {
-			ib_dma_unmap_single(rh->device, rh->dma_addr, 
-					DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
-		}
+		/*
+		   if (rh->dma_buffer) {
+		   ib_dma_unmap_single(rh->device, rh->dma_addr, 
+		   DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
+		   }
+		 */
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
 		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
@@ -2315,10 +2348,12 @@ void __exit exit_rmm_rdma(void)
 			kfree(rh->recv_buffer);
 		}
 
-		if (rh->dma_buffer) {
-			ib_dma_unmap_single(rh->device, rh->dma_addr, 
-					DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
-		}
+		/*
+		   if (rh->dma_buffer) {
+		   ib_dma_unmap_single(rh->device, rh->dma_addr, 
+		   DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
+		   }
+		 */
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
 		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
@@ -2702,7 +2737,7 @@ static int handle_message(void *args)
 		while (!wt->num_queued) {
 			if (kthread_should_stop())
 				return 0;
-			if (get_jiffies_64() - start >= 2000) {
+			if (get_jiffies_64() - start >= MAX_TICKS) {
 				rmm_yield_cpu();
 				start = get_jiffies_64();
 			}
