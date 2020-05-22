@@ -889,6 +889,8 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	id = (*(uint16_t *) (evict_buffer + 4));
 	page_pointer = evict_buffer + 6;
 
+	printk(PFX "num_page %d, from %s\n", num_page, __func__);
+	printk(PFX "%d\n", id);
 	DEBUG_LOG(PFX "num_page %d, from %s\n", num_page, __func__);
 	for (i = 0; i < num_page; i++) {
 		if (rh->backup)
@@ -1039,7 +1041,7 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint16_t id, uint3
 	return 0;
 }
 
-static int rpc_handle_evict_done(struct rdma_handle *rh,  int id)
+static int rpc_handle_evict_done(struct rdma_handle *rh, uint16_t id)
 {
 	struct rdma_work *rw = &rh->rdma_work_pool[id];
 
@@ -1396,6 +1398,11 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 			.comp_vector = 0,
 		};
 
+		if (cq_attr.cqe > rh->device->attrs.max_cqe) {
+			printk(PFX "cqe exceeds max_cqe\n");
+			cq_attr.cqe = rh->device->attrs.max_cqe;
+		}
+
 		printk(PFX "call create cq, cqe %d\n", cq_attr.cqe);
 		rdma_cq = ib_create_cq(
 				rh->device, cq_comp_handler, NULL, rh, &cq_attr);
@@ -1423,6 +1430,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 
 	/* create queue pair */
 	if (!rh->qp) {
+		/*FIXME: max(max_~~_wr, dev_cap.max) */
 		struct ib_qp_init_attr qp_attr = {
 			.event_handler = NULL, // qp_event_handler,
 			.qp_context = rh,
@@ -1438,6 +1446,16 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 			.send_cq = rdma_cq,
 			.recv_cq = rdma_cq,
 		};
+
+		if (qp_attr.cap.max_send_wr > rh->device->attrs.max_qp_wr) {
+			printk(PFX "max_send_wr exceeds max_qp_wr\n");
+			qp_attr.cap.max_send_wr = rh->device->attrs.max_qp_wr;
+		}
+
+		if (qp_attr.cap.max_recv_wr > rh->device->attrs.max_qp_wr) {
+			printk(PFX "max_send_wr exceeds max_qp_wr\n");
+			qp_attr.cap.max_recv_wr = rh->device->attrs.max_qp_wr;
+		}
 
 		ret = rdma_create_qp(rh->cm_id, rdma_pd, &qp_attr);
 		if (ret) 
