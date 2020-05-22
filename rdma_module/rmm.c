@@ -120,7 +120,8 @@ int rmm_alloc(int nid, u64 vaddr)
 
 	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
 	if (!rw) {
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto put_rpc;
 	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
 	rw->work_type = WORK_TYPE_RPC_REQ;
@@ -142,7 +143,7 @@ int rmm_alloc(int nid, u64 vaddr)
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		goto put;
+		goto put_rw;
 	}
 
 	DEBUG_LOG(PFX "wait %p\n", rw);
@@ -152,9 +153,10 @@ int rmm_alloc(int nid, u64 vaddr)
 
 	ret = *((int *) (rpc_buffer + 4));
 	DEBUG_LOG(PFX "alloc done %d\n", ret);
-put:
-	__put_rpc_buffer(rh, i);
+put_rw:
 	__put_rdma_work_nonsleep(rh, rw);
+put_rpc:
+	__put_rpc_buffer(rh, i);
 
 	return ret;
 }
@@ -244,8 +246,10 @@ int rmm_free(int nid, u64 vaddr)
 	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (i * RPC_ARGS_SIZE);
 
 	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, remote_rpc_dma_addr, rh->rpc_rkey);
-	if (!rw)
-		return -ENOMEM;
+	if (!rw) {
+		ret = -ENOMEM;
+		goto put_rpc;
+	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -265,7 +269,7 @@ int rmm_free(int nid, u64 vaddr)
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		goto put;
+		goto put_rw;
 	}
 
 	DEBUG_LOG(PFX "wait %p\n", rw);
@@ -275,9 +279,11 @@ int rmm_free(int nid, u64 vaddr)
 
 	ret = *((int *) (rpc_buffer + 4));
 	DEBUG_LOG(PFX "free done %d\n", ret);
-put:
-	__put_rpc_buffer(rh, i);
+
+put_rw:
 	__put_rdma_work_nonsleep(rh, rw);
+put_rpc:
+	__put_rpc_buffer(rh, i);
 
 	return ret;
 }
@@ -374,8 +380,10 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 
 	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, 
 			remote_rpc_dma_addr, rh->rpc_rkey);
-	if (!rw)
-		return -ENOMEM;
+	if (!rw) {
+		ret = -ENOMEM;
+		goto put_rpc;
+	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -406,7 +414,7 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		goto put;
+		goto put_rw;
 	}
 
 	DEBUG_LOG(PFX "wait %p\n", rw);
@@ -421,9 +429,11 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 
 	//DEBUG_LOG(PFX "reclaim done %s\n", my_data);
 
-put:
-	__put_rpc_buffer(rh, i);
+put_rw:
 	__put_rdma_work_nonsleep(rh, rw);
+
+put_rpc:
+	__put_rpc_buffer(rh, i);
 
 	return ret;
 }
@@ -525,8 +535,10 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	remote_evict_dma_addr = rh->remote_rpc_dma_addr + offset;
 
 	rw = __get_rdma_work_nonsleep(rh, evict_dma_addr, size, remote_evict_dma_addr, rh->rpc_rkey);
-	if (!rw)
-		return -ENOMEM;
+	if (!rw) {
+		ret = -ENOMEM;
+		goto put;
+	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = evict_buffer;
@@ -560,7 +572,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		goto put;
+		goto put_rw;
 	}
 
 	DEBUG_LOG(PFX "wait %p\n", rw);
@@ -568,10 +580,12 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 		cpu_relax();
 
 	ret = rw->done;
+
+put_rw:
+	__put_rdma_work_nonsleep(rh, rw);
 put:
 	memset(evict_buffer, 0, size);
 	ring_buffer_put(rh->rb, evict_buffer);
-	__put_rdma_work_nonsleep(rh, rw);
 
 	return ret;
 }
@@ -1752,7 +1766,7 @@ static int __setup_recv_works(struct rdma_handle *rh)
 
 	/* prevent to duplicated allocation */
 	if (!rh->recv_works) {
-		rws = kmalloc(sizeof(*rws) * (PAGE_SIZE / IMM_DATA_SIZE), GFP_KERNEL);
+		rws = kmalloc(sizeof(*rws) * (MAX_RECV_DEPTH), GFP_KERNEL);
 		if (!rws) {
 			return -ENOMEM;
 		}
@@ -2318,7 +2332,9 @@ void __exit exit_rmm_rdma(void)
 			rdma_disconnect(rdma_handles[i]->cm_id);
 	}
 
+#ifdef RMM_TEST
 	remove_proc_entry("rmm", NULL);
+#endif
 	for (i = 0; i < NUM_QPS; i++) {
 		struct rdma_handle *rh = rdma_handles[i];
 		if (!rh) continue;

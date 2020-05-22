@@ -8,7 +8,7 @@
 #define RPC_ARGS_SIZE 16 /* bytes */
 
 #define SINK_BUFFER_SIZE	(PAGE_SIZE * 4095)
-#define RPC_BUFFER_SIZE		(PAGE_SIZE * 4)
+#define RPC_BUFFER_SIZE		(PAGE_SIZE * 8)
 #define RDMA_BUFFER_SIZE	PAGE_SIZE   /*buffer for rdma work */
 
 #define DMA_BUFFER_SIZE		(SINK_BUFFER_SIZE + RPC_BUFFER_SIZE)
@@ -17,7 +17,7 @@
 #define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
 #define NR_RDMA_SLOTS	(NR_RPC_SLOTS)
 #define NR_SINK_SLOTS	(SINK_BUFFER_SIZE / PAGE_SIZE)
-#define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
+#define MAX_RECV_DEPTH	((NR_RPC_SLOTS * 2) + 10)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 8)
 
 #define NR_WORKER_THREAD 1
@@ -31,7 +31,7 @@
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
-#define RMM_TEST
+//#define RMM_TEST
 
 #define FAKE_PA_START 0x20000000000UL
 
@@ -211,7 +211,7 @@ struct rdma_handle {
 	u32 sink_rkey;
 	/*************/
 
-	DECLARE_BITMAP(rpc_slots, NR_RDMA_SLOTS);
+	DECLARE_BITMAP(rpc_slots, NR_RPC_SLOTS);
 	spinlock_t rpc_slots_lock;
 	DECLARE_BITMAP(sink_slots, NR_SINK_SLOTS);
 	spinlock_t sink_slots_lock;
