@@ -153,6 +153,7 @@ int rmm_alloc(int nid, u64 vaddr)
 
 	ret = *((int *) (rpc_buffer + 4));
 	DEBUG_LOG(PFX "alloc done %d\n", ret);
+
 put_rw:
 	__put_rdma_work_nonsleep(rh, rw);
 put_rpc:

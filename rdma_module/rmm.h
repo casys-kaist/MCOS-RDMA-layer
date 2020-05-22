@@ -100,7 +100,7 @@ struct send_work {
 };
 
 struct rdma_work {
-	uint8_t id;
+	uint16_t id;
 	enum wr_type work_type;
 	struct rdma_handle *rh;
 	struct rdma_work *next;
