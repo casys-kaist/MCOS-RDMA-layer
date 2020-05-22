@@ -294,7 +294,7 @@ int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	int index = nid_to_rh(nid);
 
 #ifdef CONFIG_RM
-	rh = backup_rh[0];
+	rh = backup_rh[index];
 #else
 	rh = rdma_handles[index];
 #endif
@@ -451,8 +451,10 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 
 	rw = __get_rdma_work_nonsleep(rh, rpc_dma_addr, RPC_ARGS_SIZE, 
 			remote_rpc_dma_addr, rh->rpc_rkey);
-	if (!rw)
-		return -ENOMEM;
+	if (!rw) {
+		ret = -ENOMEM;
+		goto put_rpc;
+	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
@@ -480,7 +482,15 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
+		goto put_rw;
 	}
+
+	return ret;
+
+put_rw:
+	__put_rdma_work_nonsleep(rh, rw);
+put_rpc:
+	__put_rpc_buffer(rh, i);
 
 	return ret;
 }
@@ -626,8 +636,6 @@ static inline int __get_rpc_buffer(struct rdma_handle *rh)
 
 static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot) 
 {
-	uint8_t * rpc_buffer;
-
 	spin_lock(&rh->rpc_slots_lock);
 	/*
 	   BUG_ON(!test_bit(slot, rh->rpc_slots));
@@ -1010,7 +1018,7 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint16_t id, uint3
 			}
 		}
 		__put_rpc_buffer(rh, offset);
-		__put_rdma_work(rh, rw);
+		__put_rdma_work_nonsleep(rh, rw);
 	}
 
 	return 0;
@@ -1525,7 +1533,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 
 	if (rh->connection_type == CONNECTION_EVICT)
 		if (!rh->rb)
-			rh->rb = ring_buffer_create(rh->dma_buffer, dma_addr, "evict buffer"); 
+			rh->rb = ring_buffer_create(rh->dma_buffer, dma_addr, buffer_size, "evict buffer"); 
 
 	return 0;
 out_dereg:

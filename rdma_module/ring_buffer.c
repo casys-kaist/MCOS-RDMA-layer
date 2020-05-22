@@ -46,14 +46,14 @@ size_t ring_buffer_usage(struct ring_buffer *rb)
 }
 
 static int __init_ring_buffer(struct ring_buffer *rb, void *buffer, dma_addr_t dma_addr, 
-		const unsigned short nr_chunks, const char *fmt, va_list args)
+		const unsigned short nr_chunks, size_t size, const char *fmt, va_list args)
 {
 	unsigned short i;
 	int ret = 0;
 
 	for (i = 0; i < nr_chunks; i++) {
 		rb->chunk_start[i] = buffer;
-		rb->chunk_end[i] = buffer + (4096 * PAGE_SIZE);
+		rb->chunk_end[i] = buffer + (size);
 		rb->dma_addr_base[i] = dma_addr;
 	}
 
@@ -94,7 +94,7 @@ int ring_buffer_init(struct ring_buffer *rb, const char *namefmt, ...)
 }
 */
 
-struct ring_buffer *ring_buffer_create(void *buffer, dma_addr_t dma_addr, 
+struct ring_buffer *ring_buffer_create(void *buffer, dma_addr_t dma_addr, size_t size,
 		const char *namefmt, ...)
 {
 	struct ring_buffer *rb;
@@ -105,7 +105,7 @@ struct ring_buffer *ring_buffer_create(void *buffer, dma_addr_t dma_addr,
 	if (!rb) return ERR_PTR(ENOMEM);
 
 	va_start(args, namefmt);
-	ret = __init_ring_buffer(rb, buffer, dma_addr, RB_NR_CHUNKS, namefmt, args);
+	ret = __init_ring_buffer(rb, buffer, dma_addr, RB_NR_CHUNKS, size, namefmt, args);
 	va_end(args);
 
 	if (ret) {

@@ -8,7 +8,7 @@
 #define RPC_ARGS_SIZE 16 /* bytes */
 
 #define SINK_BUFFER_SIZE	(PAGE_SIZE * 4095)
-#define RPC_BUFFER_SIZE		(PAGE_SIZE)
+#define RPC_BUFFER_SIZE		(PAGE_SIZE * 4)
 #define RDMA_BUFFER_SIZE	PAGE_SIZE   /*buffer for rdma work */
 
 #define DMA_BUFFER_SIZE		(SINK_BUFFER_SIZE + RPC_BUFFER_SIZE)
@@ -35,13 +35,12 @@
 
 #define FAKE_PA_START 0x20000000000UL
 
+#define MAX_TICKS 1000
 
 #ifdef CONFIG_RM
-#define DMA_VADDR_START (RM_VADDR_START + RM_VADDR_SIZE * MAX_RM_MACHINE)
 #define DMA_BUFFER_START (RM_PADDR_START + RM_PADDR_SIZE)
 #else 
 #define DMA_BUFFER_START (_AC(1, UL) << 36) /* 64GB */
-#define DMA_VADDR_START (0xffffd90000000000)
 #endif
 
 /* rpage flags */
