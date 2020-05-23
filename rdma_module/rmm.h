@@ -17,8 +17,8 @@
 #define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
 #define NR_RDMA_SLOTS	(NR_RPC_SLOTS)
 #define NR_SINK_SLOTS	(SINK_BUFFER_SIZE / PAGE_SIZE)
-#define MAX_RECV_DEPTH	((PAGE_SIZE / IMM_DATA_SIZE) + 10)
-#define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 8)
+#define MAX_RECV_DEPTH	(NR_RDMA_SLOTS + 5)
+#define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 5)
 
 #define NR_WORKER_THREAD 1
 
@@ -35,14 +35,27 @@
 
 #define FAKE_PA_START 0x20000000000UL
 
+#define MAX_TICKS 1000
 
 #ifdef CONFIG_RM
-#define DMA_VADDR_START (RM_VADDR_START + RM_VADDR_SIZE * MAX_RM_MACHINE)
 #define DMA_BUFFER_START (RM_PADDR_START + RM_PADDR_SIZE)
 #else 
 #define DMA_BUFFER_START (_AC(1, UL) << 36) /* 64GB */
-#define DMA_VADDR_START (0xffffd90000000000)
 #endif
+
+/* rpage flags */
+#define RPAGE_PREFETCHED        0x00000001
+#define RPAGE_EVICTED           0x00000002
+#define RPAGE_PREFETCHING       0x00000004
+#define RPAGE_EVICTING          0x00000008
+#define RPAGE_ALLOCATING        0x00000010
+#define RPAGE_ALLOCED           0x00000020
+#define RPAGE_FREEZE_FAIL       0x00000040
+#define RPAGE_ALLOC_FAILED      0x00000080
+#define RPAGE_FREED             0x00000100
+#define RPAGE_FREE_FAILED       0x00000200
+#define RPAGE_FETCHED           0x00000400
+
 
 enum rpc_opcode {
 	RPC_OP_FETCH,
@@ -74,8 +87,16 @@ struct recv_work {
 	struct rdma_handle *rh;
 	struct ib_sge sgl;
 	struct ib_recv_wr wr;
+};
+
+struct recv_work_addr {
+	enum wr_type work_type;
+	struct rdma_handle *rh;
+	struct ib_sge sgl;
+	struct ib_recv_wr wr;
+
 	dma_addr_t dma_addr;
-	void *addr;
+	void * addr;
 };
 
 struct send_work {
@@ -95,13 +116,16 @@ struct rdma_work {
 	struct rdma_work *next;
 	struct ib_sge sgl;
 	struct ib_rdma_wr wr;
+
 	int done;
+	unsigned long *rpage_flags;
+
 	void *addr;
 	dma_addr_t dma_addr;
 
 	/* buffer info */
-	int slot;
-	int nr_pages;
+	int buffer_size;
+	int order;
 	void *l_vaddr;
 
 	/* */
@@ -191,19 +215,12 @@ struct rdma_handle {
 	/* remote */
 	dma_addr_t remote_dma_addr;
 	dma_addr_t remote_rpc_dma_addr;
-	dma_addr_t remote_sink_dma_addr;
 	size_t remote_rpc_size;
-	size_t remote_sink_size;
 	u32 rpc_rkey;
-	u32 sink_rkey;
 	/*************/
 
-	DECLARE_BITMAP(rpc_slots, NR_RDMA_SLOTS);
-	spinlock_t rpc_slots_lock;
-	DECLARE_BITMAP(sink_slots, NR_SINK_SLOTS);
-	spinlock_t sink_slots_lock;
-
 	struct ring_buffer *rb;
+	struct ring_buffer *rb_sink;
 
 	struct rdma_cm_id *cm_id;
 	struct ib_device *device;
@@ -214,10 +231,14 @@ struct rdma_handle {
 
 static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size);
 static int __setup_recv_works(struct rdma_handle *rh);
+
+/*
 static inline int __get_rpc_buffer(struct rdma_handle *rh);
 static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot);
 static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order);
 static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned int order);
+*/
+
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
 static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
 static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);

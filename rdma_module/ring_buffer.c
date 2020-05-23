@@ -46,7 +46,7 @@ size_t ring_buffer_usage(struct ring_buffer *rb)
 }
 
 static int __init_ring_buffer(struct ring_buffer *rb, void *buffer, dma_addr_t dma_addr, 
-		const unsigned short nr_chunks, int size, const char *fmt, va_list args)
+		const unsigned short nr_chunks, size_t size, const char *fmt, va_list args)
 {
 	unsigned short i;
 	int ret = 0;
@@ -94,8 +94,8 @@ int ring_buffer_init(struct ring_buffer *rb, const char *namefmt, ...)
 }
 */
 
-struct ring_buffer *ring_buffer_create(void *buffer, dma_addr_t dma_addr, 
-		int size, const char *namefmt, ...)
+struct ring_buffer *ring_buffer_create(void *buffer, dma_addr_t dma_addr, size_t size,
+		const char *namefmt, ...)
 {
 	struct ring_buffer *rb;
 	int ret;
