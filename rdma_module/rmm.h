@@ -7,8 +7,8 @@
 #define IMM_DATA_SIZE 4 /* bytes */
 #define RPC_ARGS_SIZE 16 /* bytes */
 
-#define SINK_BUFFER_SIZE	(PAGE_SIZE * 4095 * 2)
-#define RPC_BUFFER_SIZE		(PAGE_SIZE * 2)
+#define SINK_BUFFER_SIZE	(PAGE_SIZE * 4095)
+#define RPC_BUFFER_SIZE		(PAGE_SIZE)
 #define RDMA_BUFFER_SIZE	PAGE_SIZE   /*buffer for rdma work */
 
 #define DMA_BUFFER_SIZE		(SINK_BUFFER_SIZE + RPC_BUFFER_SIZE)
@@ -17,8 +17,8 @@
 #define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
 #define NR_RDMA_SLOTS	(NR_RPC_SLOTS)
 #define NR_SINK_SLOTS	(SINK_BUFFER_SIZE / PAGE_SIZE)
-#define MAX_RECV_DEPTH	((NR_RPC_SLOTS) + 10)
-#define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 8)
+#define MAX_RECV_DEPTH	(NR_RDMA_SLOTS + 5)
+#define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 5)
 
 #define NR_WORKER_THREAD 1
 
@@ -85,8 +85,16 @@ struct recv_work {
 	struct rdma_handle *rh;
 	struct ib_sge sgl;
 	struct ib_recv_wr wr;
+};
+
+struct recv_work_addr {
+	enum wr_type work_type;
+	struct rdma_handle *rh;
+	struct ib_sge sgl;
+	struct ib_recv_wr wr;
+
 	dma_addr_t dma_addr;
-	void *addr;
+	void * addr;
 };
 
 struct send_work {

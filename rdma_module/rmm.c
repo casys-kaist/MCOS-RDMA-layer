@@ -124,6 +124,8 @@ int rmm_alloc(int nid, u64 vaddr)
 		goto put_rpc;
 	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
+
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
 	rw->dma_addr = rpc_dma_addr;
@@ -191,6 +193,8 @@ int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 		goto put_rpc;
 	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
+
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
 	rw->dma_addr = rpc_dma_addr;
@@ -252,6 +256,8 @@ int rmm_free(int nid, u64 vaddr)
 		goto put_rpc;
 	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
+
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
 	rw->dma_addr = rpc_dma_addr;
@@ -322,6 +328,8 @@ int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 		goto put_rpc;
 	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id | 0x8000);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
+
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
 	rw->dma_addr = rpc_dma_addr;
@@ -386,6 +394,8 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 		goto put_rpc;
 	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
+
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
 	rw->dma_addr = rpc_dma_addr;
@@ -467,6 +477,8 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 		goto put_rpc;
 	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32((i << 16) | rw->id);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
+
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = rpc_buffer;
 	rw->dma_addr = rpc_dma_addr;
@@ -541,6 +553,8 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 		goto put;
 	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+
 	rw->work_type = WORK_TYPE_RPC_REQ;
 	rw->addr = evict_buffer;
 	rw->dma_addr = evict_dma_addr;
@@ -1108,10 +1122,10 @@ static int __handle_recv(struct ib_wc *wc)
 {
 	int ret = 0;
 	struct pool_info *rp;
-	struct recv_work *rw;
+	struct recv_work_addr *rw;
 	struct rdma_handle *rh;
 
-	rw = (struct recv_work *) wc->wr_id;
+	rw = (struct recv_work_addr *) wc->wr_id;
 	rh = rw->rh;
 	switch (rw->work_type) {
 		case WORK_TYPE_RPC_ADDR:
@@ -1120,13 +1134,13 @@ static int __handle_recv(struct ib_wc *wc)
 			if (!rh->backup) {
 				if (rh->connection_type == CONNECTION_FETCH)
 					rp = rpc_pools[rh->nid*2];
-				else if (rh->connection_type == CONNECTION_EVICT)
+				else 
 					rp = rpc_pools[(rh->nid*2)+1];
 			}
 			else {
 				if (rh->connection_type == CONNECTION_FETCH)
 					rp = backup_rpc_pools[rh->nid*2];
-				else if (rh->connection_type == CONNECTION_EVICT)
+				else 
 					rp = backup_rpc_pools[(rh->nid*2)+1];
 			}
 			rh->remote_rpc_dma_addr = rp->addr;
@@ -1143,13 +1157,13 @@ static int __handle_recv(struct ib_wc *wc)
 			if (!rh->backup) {
 				if (rh->connection_type == CONNECTION_FETCH)
 					rp = sink_pools[rh->nid*2];
-				else if (rh->connection_type == CONNECTION_EVICT)
+				else 
 					rp = sink_pools[(rh->nid*2)+1];
 			}
 			else {
 				if (rh->connection_type == CONNECTION_FETCH)
 					rp = backup_sink_pools[rh->nid*2];
-				else if (rh->connection_type == CONNECTION_EVICT)
+				else 
 					rp = backup_sink_pools[(rh->nid*2)+1];
 			}
 			rh->remote_sink_dma_addr = rp->addr;
@@ -1400,7 +1414,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 
 		if (cq_attr.cqe > rh->device->attrs.max_cqe) {
 			printk(PFX "cqe exceeds max_cqe\n");
-			cq_attr.cqe = rh->device->attrs.max_cqe;
+			cq_attr.cqe = rh->device->attrs.max_cqe - 1;
 		}
 
 		printk(PFX "call create cq, cqe %d\n", cq_attr.cqe);
@@ -1449,12 +1463,12 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 
 		if (qp_attr.cap.max_send_wr > rh->device->attrs.max_qp_wr) {
 			printk(PFX "max_send_wr exceeds max_qp_wr\n");
-			qp_attr.cap.max_send_wr = rh->device->attrs.max_qp_wr;
+			qp_attr.cap.max_send_wr = rh->device->attrs.max_qp_wr - 1;
 		}
 
 		if (qp_attr.cap.max_recv_wr > rh->device->attrs.max_qp_wr) {
 			printk(PFX "max_send_wr exceeds max_qp_wr\n");
-			qp_attr.cap.max_recv_wr = rh->device->attrs.max_qp_wr;
+			qp_attr.cap.max_recv_wr = rh->device->attrs.max_qp_wr - 1;
 		}
 
 		ret = rdma_create_qp(rh->cm_id, rdma_pd, &qp_attr);
@@ -1585,7 +1599,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 	const struct ib_recv_wr *bad_wr = NULL;
 	struct ib_sge sgl = {0};
 	struct pool_info *pp;
-	struct recv_work *rw;
+	struct recv_work_addr *rw;
 
 	int index = (rh->nid) * 2;
 
@@ -1593,13 +1607,13 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 		if (!rh->backup) {
 			if (rh->connection_type == CONNECTION_FETCH)
 				pp = rpc_pools[index];
-			else if (rh->connection_type == CONNECTION_EVICT)
+			else 
 				pp = rpc_pools[index+1];
 		}
 		else {
 			if (rh->connection_type == CONNECTION_FETCH)
 				pp = backup_rpc_pools[index];
-			else if (rh->connection_type == CONNECTION_EVICT)
+			else 
 				pp = backup_rpc_pools[index+1];
 		}
 	}
@@ -1607,18 +1621,18 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 		if (!rh->backup) {
 			if (rh->connection_type == CONNECTION_FETCH)
 				pp = sink_pools[index];
-			else if (rh->connection_type == CONNECTION_EVICT)
+			else 
 				pp = sink_pools[index+1];
 		}
 		else {
 			if (rh->connection_type == CONNECTION_FETCH)
 				pp = backup_sink_pools[index];
-			else if (rh->connection_type == CONNECTION_EVICT)
+			else 
 				pp = backup_sink_pools[index+1];
 		}
 	}
 
-	rw = kmalloc(sizeof(struct recv_work), GFP_KERNEL);
+	rw = kmalloc(sizeof(struct recv_work_addr), GFP_KERNEL);
 	if (!rw)
 		return -ENOMEM;
 
@@ -1773,7 +1787,7 @@ static int __setup_work_request_pools(struct rdma_handle *rh)
 {
 	int ret;
 	/* Initalize rdma work request pool */
-	ret = __refill_rdma_work(rh, NR_RPC_SLOTS);
+	ret = __refill_rdma_work(rh, NR_RDMA_SLOTS);
 	return ret;
 
 }
