@@ -1535,7 +1535,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 {
 	int ret = 0;
 	dma_addr_t dma_addr;
-	size_t buffer_size = RPC_BUFFER_SIZE + SINK_BUFFER_SIZE;
+	size_t buffer_size = DMA_BUFFER_SIZE;
 	struct ib_reg_wr reg_wr = {
 		.wr = {
 			.opcode = IB_WR_REG_MR,
