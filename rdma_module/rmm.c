@@ -1453,7 +1453,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 	DEBUG_LOG(PFX "alloc cq\n");
 	if (!rdma_cq) {
 		struct ib_cq_init_attr cq_attr = {
-			.cqe = (MAX_SEND_DEPTH + MAX_RECV_DEPTH + NR_RPC_SLOTS) * MAX_NUM_NODES,
+			.cqe = (MAX_SEND_DEPTH + MAX_RECV_DEPTH + NR_RDMA_SLOTS) * MAX_NUM_NODES,
 			.comp_vector = 0,
 		};
 
@@ -2111,7 +2111,7 @@ static int __connect_to_server(int nid, int connection_type)
 
 	step = "send pool addr";
 	DEBUG_LOG(PFX "%s %llx %llx\n", step, rh->rpc_dma_addr, rh->sink_dma_addr);
-	ret = __send_dma_addr(rh, rh->rpc_dma_addr, RPC_BUFFER_SIZE);
+	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE);
 	if (ret)
 		goto out_err;
 
@@ -2183,7 +2183,7 @@ static int __accept_client(int num)
 
 	step = "post send";
 	DEBUG_LOG(PFX "%s\n", step);
-	ret = __send_dma_addr(rh, rh->rpc_dma_addr, RPC_BUFFER_SIZE);
+	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE);
 	if (ret)  goto out_err;
 
 	wait_for_completion_interruptible(&rh->init_done);
