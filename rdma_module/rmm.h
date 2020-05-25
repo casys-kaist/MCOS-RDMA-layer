@@ -7,11 +7,11 @@
 #define IMM_DATA_SIZE 4 /* bytes */
 #define RPC_ARGS_SIZE 16 /* bytes */
 
-#define DMA_BUFFER_SIZE		(PAGE_SIZE * 8912)
+#define DMA_BUFFER_SIZE		(PAGE_SIZE * 8192)
 
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
 //#define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
-#define NR_RDMA_SLOTS	(8000)
+#define NR_RDMA_SLOTS	(5000)
 //#define NR_SINK_SLOTS	(SINK_BUFFER_SIZE / PAGE_SIZE)
 #define MAX_RECV_DEPTH	(NR_RDMA_SLOTS + 5)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 5)
@@ -27,7 +27,7 @@
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
-#define RMM_TEST
+//#define RMM_TEST
 
 #define FAKE_PA_START 0x20000000000UL
 
