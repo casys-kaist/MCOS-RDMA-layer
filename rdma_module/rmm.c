@@ -51,7 +51,6 @@ static struct ib_pd *rdma_pd = NULL;
 /*Global CQ */
 static struct ib_cq *rdma_cq = NULL;
 
-static struct task_struct *accept_k = NULL;
 static struct task_struct *polling_k = NULL;
 
 /*proc file for control */
@@ -404,7 +403,7 @@ put_buffer:
 }
 
 
-static unsigned long elapsed_fetch = 0;
+//static unsigned long elapsed_fetch = 0;
 
 int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
@@ -698,6 +697,13 @@ int mcos_rmm_free(int nid, u64 vaddr)
 
 int mcos_rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
+	static u64 i = 0;
+	
+	if (i % 2)
+		nid = 0;
+	else
+		nid = 1;
+	i++;
 	return rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
 }
 
@@ -2086,7 +2092,7 @@ static int __connect_to_server(int nid, int connection_type)
 
 	/*TODO: change nid to MACRO */
 	step = "connect";
-	private_data = (connection_type << 31) | (rh->backup << 30) | nid;
+	private_data = (connection_type << 31) | (rh->backup << 30) | NID;
 	DEBUG_LOG(PFX "%s\n", step);
 	{
 		struct rdma_conn_param conn_param = {
@@ -2140,16 +2146,12 @@ out_err:
 
 /*Function for Mem server */
 #ifdef CONFIG_RM
-static int __accept_client(int num)
+static int __accept_client(struct rdma_handle *rh)
 {
-	struct rdma_handle *rh;
 	struct rdma_conn_param conn_param = {0};
 	char *step = NULL;
 	int ret;
 
-	rh = rdma_handles[num];
-
-	DEBUG_LOG(PFX "accept client %d\n", num);
 	ret = wait_for_completion_interruptible(&rh->cm_done);
 	if (rh->state != RDMA_ROUTE_RESOLVED) return -EINVAL;
 
@@ -2205,17 +2207,11 @@ out_err:
 
 static int accept_client(void *args)
 {
-	int i;
 	int ret = 0;
 
 	printk(KERN_INFO PFX "accept thread running\n");
-	for (i = 0; i < NUM_QPS; i++) {
-		if (kthread_should_stop())
-			return 0;
-		if ((ret = __accept_client(i))) 
-			return ret;
-	}
-	printk(KERN_INFO PFX "Cannot accepts more clients\n");
+	if ((ret = __accept_client(args))) 
+		return ret;
 
 	return 0;
 }
@@ -2226,13 +2222,14 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 {
 	int index;
 	struct rdma_handle *rh;
+	struct task_struct *accept_k = NULL;
 	unsigned private = *(int *)cm_event->param.conn.private_data;
 
 	unsigned nid = private & 0x3FFFFFFF;
 	unsigned connection_type = (private & 0x80000000) >> 31; 
 	unsigned backup = (private & 0x40000000) >> 30;
 
-	DEBUG_LOG(PFX "nid: %d, connection type %d\n", nid, connection_type);
+	DEBUG_LOG(PFX "nid: %d, connection type %d, %s\n", nid, connection_type, __func__);
 	if (nid == MAX_NUM_NODES)
 		return 0;
 
@@ -2240,7 +2237,10 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 	if (connection_type == CONNECTION_EVICT)
 		index++;
 
-	rh = rdma_handles[index];
+	if (!backup)
+		rh = rdma_handles[index];
+	else
+		rh = backup_rh[index];
 
 	rh->nid = nid;
 	cm_id->context = rh;
@@ -2250,8 +2250,12 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 	rh->backup = backup;
 	rh->state = RDMA_ROUTE_RESOLVED;
 
-	DEBUG_LOG(PFX "connecting done\n");
 	complete(&rh->cm_done);
+
+	accept_k = kthread_create(accept_client, rh, "accept thread");
+	if (!accept_k)
+		return -ENOMEM;
+	wake_up_process(accept_k); 
 
 	return 0;
 }
@@ -2354,11 +2358,6 @@ static int __establish_connections(void)
 	ret = __listen_to_connection();
 	if (ret) 
 		return ret;
-	accept_k = kthread_create(accept_client, NULL, "accept thread");
-	if (!accept_k)
-		return -ENOMEM;
-	//kthread_bind(accept_k, ACC_CPU_ID);
-	wake_up_process(accept_k); 
 
 	return 0;
 }
@@ -2392,12 +2391,7 @@ void __exit exit_rmm_rdma(void)
 
 	if (polling_k)
 		kthread_stop(polling_k);
-	if (server && accept_k) {
-		for (i = 0; i < NUM_QPS; i++) {
-			complete(&rdma_handles[i]->cm_done);
-		}
-		kthread_stop(accept_k);
-	}
+
 	for (i = 0; i < NR_WORKER_THREAD; i++)
 		kthread_stop(w_threads[i].task);
 
@@ -2693,8 +2687,8 @@ static void test_fetch(int order)
 
 	printk(KERN_INFO PFX "total elapsed time %lu (ns)\n", elapsed);
 	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 512);
-	printk(KERN_INFO PFX "average elapsed time for preparing fetch %lu (ns)\n", 
-			elapsed_fetch / 512);
+	//	printk(KERN_INFO PFX "average elapsed time for preparing fetch %lu (ns)\n", 
+	//			elapsed_fetch / 512);
 
 	kfree(arr1);
 	kfree(arr2);
@@ -3014,10 +3008,10 @@ int __init init_rmm_rdma(void)
 	remote_free = mcos_rmm_free;
 
 	/*
-	remote_fetch_async = mcos_rmm_fetch_async;
-	remote_alloc_async = mcos_rmm_alloc_async;
-	remote_free_async = mcos_rmm_free_async;
-	*/
+	   remote_fetch_async = mcos_rmm_fetch_async;
+	   remote_alloc_async = mcos_rmm_alloc_async;
+	   remote_free_async = mcos_rmm_free_async;
+	 */
 #endif
 
 	create_worker_thread();
@@ -3041,7 +3035,7 @@ int __init init_rmm_rdma(void)
 	else {
 		for (i = 0; i < 1024; i++) {
 			sprintf(my_data[0] + (i * PAGE_SIZE), "Data in server: %d", i);
-			printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
+			//		printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
 		}
 	}
 #endif
