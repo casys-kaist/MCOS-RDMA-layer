@@ -697,13 +697,6 @@ int mcos_rmm_free(int nid, u64 vaddr)
 
 int mcos_rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
-	static u64 i = 0;
-	
-	if (i % 2)
-		nid = 0;
-	else
-		nid = 1;
-	i++;
 	return rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
 }
 
