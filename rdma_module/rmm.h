@@ -27,7 +27,7 @@
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
-//#define RMM_TEST
+#define RMM_TEST
 
 #define FAKE_PA_START 0x20000000000UL
 
@@ -52,7 +52,6 @@
 #define RPAGE_FREE_FAILED       0x00000200
 #define RPAGE_FETCHED           0x00000400
 
-
 enum rpc_opcode {
 	RPC_OP_FETCH,
 	RPC_OP_EVICT,
@@ -74,8 +73,33 @@ enum wr_type {
 struct rpc_header {
 	int nid;
 	enum rpc_opcode op;
-	uint16_t wr_id;
+	bool async;
 };
+
+struct fetch_args {
+	u64 r_vaddr;
+	u32 order;
+};
+
+struct fetch_aux {
+	u64 l_vaddr;
+	union {
+		u64 rpage_flags;
+		int done;
+	} async;
+};
+
+struct mem_args {
+	u64 vaddr;
+};
+
+struct mem_aux {
+	union  {
+		u64 rpage_flags;
+		int done;
+	} async;
+};
+
 #pragma pack(pop)
 
 struct recv_work {
@@ -107,25 +131,10 @@ struct send_work {
 
 struct rdma_work {
 	uint16_t id;
-	enum wr_type work_type;
 	struct rdma_handle *rh;
 	struct rdma_work *next;
 	struct ib_sge sgl;
 	struct ib_rdma_wr wr;
-
-	int done;
-	unsigned long *rpage_flags;
-
-	void *addr;
-	dma_addr_t dma_addr;
-
-	/* buffer info */
-	int buffer_size;
-	int order;
-	void *l_vaddr;
-
-	/* */
-	unsigned long delay;
 };
 
 struct worker_thread {
@@ -229,11 +238,11 @@ static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)
 static int __setup_recv_works(struct rdma_handle *rh);
 
 /*
-static inline int __get_rpc_buffer(struct rdma_handle *rh);
-static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot);
-static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order);
-static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned int order);
-*/
+   static inline int __get_rpc_buffer(struct rdma_handle *rh);
+   static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot);
+   static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order);
+   static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned int order);
+ */
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
 static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
