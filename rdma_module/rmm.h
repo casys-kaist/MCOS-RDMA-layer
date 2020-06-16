@@ -27,7 +27,7 @@
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
-#define RMM_TEST
+//#define RMM_TEST
 
 #define FAKE_PA_START 0x20000000000UL
 
@@ -130,7 +130,6 @@ struct send_work {
 };
 
 struct rdma_work {
-	uint16_t id;
 	struct rdma_handle *rh;
 	struct rdma_work *next;
 	struct ib_sge sgl;

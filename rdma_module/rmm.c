@@ -121,14 +121,17 @@ int rmm_alloc(int nid, u64 vaddr)
 #endif
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &dma_addr);
-	if (!dma_buffer)
+	if (!dma_buffer) {
+		printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
 		return -ENOMEM;
+	}
 	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
 	remote_dma_addr = rh->remote_dma_addr + offset;
 
 	/* We need to pass virtual address since using INLINE flag */
 	rw = __get_rdma_work_nonsleep(rh, (dma_addr_t) dma_buffer, payload_size, remote_dma_addr, rh->rpc_rkey);
 	if (!rw) {
+		printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
 		ret = -ENOMEM;
 		goto put_buffer;
 	}
@@ -149,22 +152,22 @@ int rmm_alloc(int nid, u64 vaddr)
 	*done = 0;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		__put_rdma_work_nonsleep(rh, rw);
 		goto put_buffer;
 	}
 
-	DEBUG_LOG(PFX "wait %p\n", rw);
+//	DEBUG_LOG(PFX "wait %p\n", rw);
 
 	while(!(ret = *done))
 		cpu_relax();
 
 	ret = *((int *) (args + 4));
 
-	DEBUG_LOG(PFX "alloc done %d\n", ret);
+//	DEBUG_LOG(PFX "alloc done %d\n", ret);
 
 put_buffer:
 	memset(dma_buffer, 0, buffer_size);
@@ -225,11 +228,11 @@ int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	*((uint64_t *) (args + 8)) = (uint64_t) rpage_flags;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		__put_rdma_work_nonsleep(rh, rw);
 		goto put_buffer;
 	}
 
@@ -270,13 +273,16 @@ int rmm_free(int nid, u64 vaddr)
 #endif
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &dma_addr);
-	if (!dma_buffer)
+	if (!dma_buffer) {
+		printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
 		return -ENOMEM;
+	}
 	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
 	remote_dma_addr = rh->remote_dma_addr + offset;
 
 	rw = __get_rdma_work_nonsleep(rh, (dma_addr_t) dma_buffer, payload_size, remote_dma_addr, rh->rpc_rkey);
 	if (!rw) {
+		printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
 		ret = -ENOMEM;
 		goto put_buffer;
 	}
@@ -297,21 +303,21 @@ int rmm_free(int nid, u64 vaddr)
 	*done = 0;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		__put_rdma_work_nonsleep(rh, rw);
 		goto put_buffer;
 	}
 
-	DEBUG_LOG(PFX "wait %p\n", rw);
+//	DEBUG_LOG(PFX "wait %p\n", rw);
 
 	while(!(ret = *done))
 		cpu_relax();
 
 	ret = *((int *) (args + 4));
-	DEBUG_LOG(PFX "free done %d\n", ret);
+//	DEBUG_LOG(PFX "free done %d\n", ret);
 
 put_buffer:
 	memset(dma_buffer, 0, buffer_size);
@@ -367,11 +373,11 @@ int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	*((uint64_t *) (args + 8)) = (uint64_t) rpage_flags;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		__put_rdma_work_nonsleep(rh, rw);
 		goto put_buffer;
 	}
 
@@ -415,14 +421,17 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	rh = rdma_handles[index];
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size, &dma_addr);
-	if (!dma_buffer)
+	if (!dma_buffer) {
+		printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
 		return -ENOMEM;
+	}
 	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
 	remote_dma_addr = rh->remote_dma_addr + offset;
 
 	rw = __get_rdma_work_nonsleep(rh, (dma_addr_t) dma_buffer, payload_size, 
 			remote_dma_addr, rh->rpc_rkey);
 	if (!rw) {
+		printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
 		ret = -ENOMEM;
 		goto put_buffer;
 	}
@@ -445,8 +454,6 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	aux->l_vaddr = (uint64_t) l_vaddr;
 	aux->async.done = 0;
 
-	DEBUG_LOG(PFX "l_vaddr: %llX\n", aux->l_vaddr);
-
 	/*
 	getnstimeofday(&end_tv);
 	elapsed_fetch += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
@@ -454,16 +461,18 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 		*/
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
-		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		printk(KERN_ALERT PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		__put_rdma_work_nonsleep(rh, rw);
 		goto put_buffer;
 	}
 
+
 	while(!(ret = aux->async.done))
 		cpu_relax();
+
 
 put_buffer:
 	memset(dma_buffer, 0, buffer_size);
@@ -539,11 +548,11 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 	 */
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		__put_rdma_work_nonsleep(rh, rw);
 		goto put_buffer;
 	}
 
@@ -588,13 +597,16 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	rh = rdma_handles[index];
 #endif
 	evict_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &evict_dma_addr);
-	if (!evict_buffer)
+	if (!evict_buffer) {
+		printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
 		return -ENOMEM;
+	}
 	offset = evict_buffer - (uint8_t *) rh->evict_buffer;
 	remote_evict_dma_addr = rh->remote_rpc_dma_addr + offset;
 
 	rw = __get_rdma_work_nonsleep(rh, evict_dma_addr, payload_size, remote_evict_dma_addr, rh->rpc_rkey);
 	if (!rw) {
+		printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
 		ret = -ENOMEM;
 		goto put;
 	}
@@ -628,15 +640,14 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	DEBUG_LOG(PFX "iterate done\n");
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
-		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		printk(KERN_ALERT PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		__put_rdma_work_nonsleep(rh, rw);
 		goto put;
 	}
 
-	DEBUG_LOG(PFX "address of done: %llX, temp: %llX\n", done, temp);
 	while(!(ret = *done))
 		cpu_relax();
 
@@ -824,7 +835,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 	fap = (struct fetch_args *) rpc_buffer;
 	src = (void *) (fap->r_vaddr + rh->vaddr_start);
 
-	//	src = my_data[0] + (u64) src;
+//	src = my_data[0] + (u64) fap->r_vaddr;
 
 	order = fap->order;
 	payload_size = (1 << order) * PAGE_SIZE;
@@ -843,11 +854,13 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 		return -ENOMEM;
 	}
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
 	rw->rh = rh;
 
 	memcpy(dest_addr, src, payload_size);
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p %s\n", ret, bad_wr, __func__);
 		if (bad_wr)
@@ -887,6 +900,7 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 	if (!rw)
 		return -ENOMEM;
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
 	rw->rh = rh;
 
 	DEBUG_LOG(PFX "nid: %d, offset: %d, vaddr: %llX op: %d\n", nid, offset, vaddr, op);
@@ -909,6 +923,7 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 	/* -1 means this packet is ack */
 	*((int *) rpc_buffer) = -1;
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
@@ -944,7 +959,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 			dest = (*((uint64_t *) (page_pointer))) + (rh->vaddr_start);
 		memcpy((void *) dest, page_pointer + 8, PAGE_SIZE);
 		page_pointer += (8 + PAGE_SIZE);
-		DEBUG_LOG(PFX "dest: %llx, data: %s\n", dest, (char *) dest);
+//		DEBUG_LOG(PFX "dest: %llx, data: %s\n", dest, (char *) dest);
 
 		/* making evict info list for replication */
 		if (cr_on) {
@@ -977,10 +992,12 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	rw = __get_rdma_work(rh, rh->evict_dma_addr + offset + sizeof(struct rpc_header) + 4,
 			4, rh->remote_rpc_dma_addr + offset + sizeof(struct rpc_header) + 4, rh->rpc_rkey);
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
 
 	rw->rh = rh;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
@@ -1023,11 +1040,10 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 	order = fap->order;
 	src = (uint8_t *) rh->rpc_buffer + (offset + sizeof(struct rpc_header) +
 			sizeof(struct fetch_args) + sizeof(struct fetch_aux));
-	dest = aux->l_vaddr; 
+	dest = (void *) aux->l_vaddr; 
 
 	num_page = 1 << order;
 
-	DEBUG_LOG(PFX "memcpy to %llX (order %d) in %s\n", dest, order, __func__);
 	memcpy(dest, src, PAGE_SIZE * num_page);
 
 	/*aux_asycn->rpage_flags is arleary copied to local var */
@@ -1037,8 +1053,6 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 		*rpage_flags |= RPAGE_FETCHED;
 		ring_buffer_put(rh->rb, rh->rpc_buffer + offset);
 	}
-
-	DEBUG_LOG(PFX "done %s\n", __func__);
 
 	return 0;
 }
@@ -1096,11 +1110,10 @@ static int rpc_handle_evict_done(struct rdma_handle *rh, uint32_t offset)
 {
 	uint8_t *buffer = rh->dma_buffer + offset;
 	unsigned nr_pages = *(int *) (buffer + sizeof(struct rpc_header));
-	int *done = (int *) (buffer + sizeof(struct rpc_header));
+	int *done;
 
 	done = (int *) (buffer + sizeof(struct rpc_header) + 4 + (nr_pages * (PAGE_SIZE + 8)));
 
-	/*point to done */
 	*done = 1;
 
 	return 0;
@@ -1123,7 +1136,7 @@ static int __handle_rpc(struct ib_wc *wc)
 	imm_data = be32_to_cpu(wc->ex.imm_data);
 	rhp = rh->rpc_buffer + imm_data;
 
-	DEBUG_LOG(PFX "%08X\n", imm_data);
+//	DEBUG_LOG(PFX "%08X\n", imm_data);
 
 	if (rh->connection_type == CONNECTION_EVICT) {
 		header = *(int *) (rh->evict_buffer + (imm_data + sizeof(struct rpc_header) + 4));
@@ -1232,7 +1245,7 @@ static int __handle_send(struct ib_wc *wc)
 
 static void handle_error(struct ib_wc *wc)
 {
-	printk(KERN_ERR PFX "cq completion failed with "
+	printk(KERN_ALERT PFX "cq completion failed with "
 			"wr_id %Lx status %d opcode %d vendor_err %x\n",
 			wc->wr_id, wc->status, wc->opcode, wc->vendor_err);
 }
@@ -1245,7 +1258,7 @@ static int put_work(struct ib_wc *wc)
 	rw = (struct rdma_work *) wc->wr_id;
 	rh = rw->rh;
 
-	__put_rdma_work(rh, rw);
+	__put_rdma_work_nonsleep(rh, rw);
 
 	return 0;
 }
@@ -1254,12 +1267,12 @@ static int polling_cq(void * args)
 {
 	struct ib_cq *cq = (struct ib_cq *) args;
 	struct ib_wc *wc;
-	struct rdma_work *rw;
+//	struct rdma_work *rw;
 	struct rdma_handle *rh;
 	int i;
 
 	int ret = 0;
-	int num_poll = 25;
+	int num_poll = 1;
 	u64 start = get_jiffies_64();
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
@@ -1294,8 +1307,10 @@ static int polling_cq(void * args)
 				case IB_WC_RDMA_WRITE:
 					if (wc[i].wc_flags == IB_WC_WITH_IMM) {
 						DEBUG_LOG(PFX "rdma write-imm completion\n");
+						/*
 						rw = (struct rdma_work *) wc[i].wr_id;
 						put_work(&wc[i]);
+						*/
 					}
 					else {
 						DEBUG_LOG(PFX "rdma write completion\n");
@@ -1680,6 +1695,8 @@ static int __refill_rdma_work(struct rdma_handle *rh, int nr_works)
 	struct rdma_work *work_list = NULL;
 	struct rdma_work *last_work = NULL;
 
+
+	/*FIXME */
 	if (!rh->rdma_work_pool) {
 		rh->rdma_work_pool = kzalloc(sizeof(struct rdma_work) * nr_works, GFP_KERNEL);
 		if (!rh->rdma_work_pool)
@@ -1688,9 +1705,6 @@ static int __refill_rdma_work(struct rdma_handle *rh, int nr_works)
 
 	for (i = 0; i < nr_works; i++) {
 		struct rdma_work *rw = &rh->rdma_work_pool[i];
-
-		//rw->work_type = WORK_TYPE_RPC;
-		rw->id = i;
 
 		rw->sgl.addr = 0;
 		rw->sgl.length = 0;
@@ -2194,7 +2208,8 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 
 	complete(&rh->cm_done);
 
-	//basic_memory_init(nid);
+	if (connection_type == CONNECTION_FETCH)
+		basic_memory_init(nid);
 
 	accept_k = kthread_create(accept_client, rh, "accept thread");
 	if (!accept_k)
@@ -2820,10 +2835,6 @@ static int handle_message(void *args)
 					//	delta[head++] = aw->time_dequeue_ns - aw->time_enqueue_ns;
 					//	accum += delta[head-1];
 				}
-				/*
-				   else
-				   rpc_handle_alloc_free_done(rh, id, offset);
-				 */
 			}
 #endif
 			kfree(aw);
@@ -2831,8 +2842,6 @@ static int handle_message(void *args)
 		}
 		spin_unlock(&wt->lock_wt);
 	}
-	//local_irq_enable();
-	//	preempt_enable();
 
 	return 0;
 }
@@ -2970,14 +2979,14 @@ int __init init_rmm_rdma(void)
 
 	if (!server) {
 		printk(PFX "remote memory alloc\n");
-		for (i = 0; i < 1024; i++) {
+		for (i = 0; i < 1; i++) {
 			mcos_rmm_alloc(0, FAKE_PA_START + i * 4096);
 		}
 	}
 	else {
 		for (i = 0; i < 1024; i++) {
 			sprintf(my_data[0] + (i * PAGE_SIZE), "Data in server: %d", i);
-			//		printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
+					printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
 		}
 	}
 #endif
