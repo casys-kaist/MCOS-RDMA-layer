@@ -39,6 +39,8 @@
 #define DMA_BUFFER_START (_AC(1, UL) << 36) /* 64GB */
 #endif
 
+//#define CONFIG_MCOS_IRQ_LOCK
+
 /* rpage flags */
 #define RPAGE_PREFETCHED        0x00000001
 #define RPAGE_EVICTED           0x00000002
@@ -171,7 +173,6 @@ struct evict_info {
 
 	struct list_head next;
 };
-
 
 struct rdma_handle {
 	int nid;

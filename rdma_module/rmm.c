@@ -446,7 +446,7 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	rhp->async = false;
 
 	/*copy rpc args to buffer */
-	fap = (struct fetch_args *) (dma_buffer + sizeof(struct rpc_header));
+	fap = (struct fetch_args *) (rhp + 1);
 	fap->r_vaddr = (u64) r_vaddr;
 	fap->order = (u32) order;
 
@@ -522,6 +522,7 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 		ret = -ENOMEM;
 		goto put_buffer;
 	}
+
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
 
@@ -533,7 +534,7 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 	rhp->async = true;
 
 	/*copy rpc args to buffer */
-	fap = (struct fetch_args *) dma_buffer + sizeof(struct rpc_header);
+	fap = (struct fetch_args *) (rhp + 1);
 	fap->r_vaddr = (u64) r_vaddr;
 	fap->order = (u32) order;
 
@@ -1033,6 +1034,7 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 	fap = (struct fetch_args *) (rhp + 1);
 	aux = (struct fetch_aux *) (fap + 1);
 
+
 	if (rhp->async) {
 		rpage_flags = (unsigned long *) aux->async.rpage_flags;
 	}
@@ -1049,7 +1051,7 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 	/*aux_asycn->rpage_flags is arleary copied to local var */
 	aux->async.done = 1;
 	if (rpage_flags) {
-		DEBUG_LOG(PFX "asycn fetch is done %s \n", __func__);
+		DEBUG_LOG(PFX "async fetch is done %s \n", __func__);
 		*rpage_flags |= RPAGE_FETCHED;
 		ring_buffer_put(rh->rb, rh->rpc_buffer + offset);
 	}
@@ -1346,10 +1348,11 @@ static int polling_cq(void * args)
 			}
 		}
 
-		if (get_jiffies_64() - start >= MAX_TICKS) {
+		/*if (get_jiffies_64() - start >= MAX_TICKS) {
 			rmm_yield_cpu();
 			start = get_jiffies_64();
-		}
+		}*/
+		rmm_yield_cpu();
 
 	}
 
@@ -1764,17 +1767,32 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 		size_t size, dma_addr_t rdma_addr, u32 rdma_key)
 {
 	struct rdma_work *rw;
+#ifdef CONFIG_MCOS_IRQ_LOCK
+	unsigned long flags;
+#endif
 
+#ifdef CONFIG_MCOS_IRQ_LOCK
+	spin_lock_irqsave(&rh->rdma_work_head_lock, flags);
+#else
 	spin_lock(&rh->rdma_work_head_lock);
+#endif
 
 	if (!rh->rdma_work_head) {
+#ifdef CONFIG_MCOS_IRQ_LOCK
+		spin_unlock_irqrestore(&rh->rdma_work_head_lock, flags);
+#else
 		spin_unlock(&rh->rdma_work_head_lock);
+#endif
 		return NULL;
 	}
 
 	rw = rh->rdma_work_head;
 	rh->rdma_work_head = rh->rdma_work_head->next;
+#ifdef CONFIG_MCOS_IRQ_LOCK
+	spin_unlock_irqrestore(&rh->rdma_work_head_lock, flags);
+#else
 	spin_unlock(&rh->rdma_work_head_lock);
+#endif
 
 	rw->sgl.addr = dma_addr;
 	rw->sgl.length = size;
@@ -1795,10 +1813,22 @@ static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
 
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw)
 {
+#ifdef CONFIG_MCOS_IRQ_LOCK
+	unsigned long flags;
+#endif
+
+#ifdef CONFIG_MCOS_IRQ_LOCK
+	spin_lock_irqsave(&rh->rdma_work_head_lock, flags);
+#else
 	spin_lock(&rh->rdma_work_head_lock);
+#endif
 	rw->next = rh->rdma_work_head;
 	rh->rdma_work_head = rw;
+#ifdef CONFIG_MCOS_IRQ_LOCK
+	spin_unlock_irqrestore(&rh->rdma_work_head_lock, flags);
+#else
 	spin_unlock(&rh->rdma_work_head_lock);
+#endif
 }
 
 static int __setup_work_request_pools(struct rdma_handle *rh)
@@ -2788,10 +2818,11 @@ static int handle_message(void *args)
 		while (!wt->num_queued) {
 			if (kthread_should_stop())
 				return 0;
-			if (get_jiffies_64() - start >= MAX_TICKS) {
+			/*if (get_jiffies_64() - start >= MAX_TICKS) {
 				rmm_yield_cpu();
 				start = get_jiffies_64();
-			}
+			}*/
+			rmm_yield_cpu();
 			cpu_relax();
 		}
 
@@ -2957,6 +2988,7 @@ int __init init_rmm_rdma(void)
 	remote_evict = mcos_rmm_evict;
 	remote_alloc = mcos_rmm_alloc;
 	remote_free = mcos_rmm_free;
+	remote_fetch_async = mcos_rmm_fetch_async;
 
 	/*
 	   remote_fetch_async = mcos_rmm_fetch_async;
