@@ -173,6 +173,17 @@ struct evict_info {
 
 	struct list_head next;
 };
+<<<<<<< HEAD
+=======
+
+struct fetch_info {
+	u64 l_vaddr;	// virtual address to be received
+	u64 r_vaddr;	// virtual address (fake pa)
+	unsigned long *rpage_flags;
+	
+	struct list_head next;
+};
+>>>>>>> 8f358f3... optimize evict chaining
 
 struct rdma_handle {
 	int nid;
