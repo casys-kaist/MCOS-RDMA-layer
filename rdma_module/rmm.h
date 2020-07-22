@@ -39,7 +39,10 @@
 #define DMA_BUFFER_START (_AC(1, UL) << 36) /* 64GB */
 #endif
 
+#define CONFIG_MCOS_RMM_PREFETCH
+
 //#define CONFIG_MCOS_IRQ_LOCK
+#define CONFIG_MCOS_WO_RPAGE_LOCK_RMM
 
 /* rpage flags */
 #define RPAGE_PREFETCHED        0x00000001
@@ -54,11 +57,30 @@
 #define RPAGE_FREE_FAILED       0x00000200
 #define RPAGE_FETCHED           0x00000400
 
+#define MCOS_MAX_PREFETCH_SIZE	32 // FIXME
+
+/*
+enum remote_page_flags {
+	RP_PREFETCHED	= 0,
+	RP_EVICTED	= 1,
+	RP_PREFETCHING	= 2,
+	RP_EVICTING	= 3,
+	RP_ALLOCATING	= 4,
+	RP_ALLOCED	= 5,
+	RP_FREEZE_FAIL	= 6,
+	RP_ALLOC_FAILED	= 7,
+	RP_FREED	= 8,
+	RP_FREE_FAILED	= 9,
+	RP_FETCHED	= 10,
+};
+*/
+
 enum rpc_opcode {
 	RPC_OP_FETCH,
 	RPC_OP_EVICT,
 	RPC_OP_ALLOC,
 	RPC_OP_FREE,
+	RPC_OP_PREFETCH,
 };
 
 enum wr_type {
@@ -167,12 +189,20 @@ struct pool_info {
 	size_t size;
 };
 
-struct evict_info {
+/*struct evict_info {
 	u64 l_vaddr;
 	u64 r_vaddr;
 
 	struct list_head next;
-};
+};*/
+
+/*struct fetch_info {
+	u64 l_vaddr;	// virtual address to be received
+	u64 r_vaddr;	// virtual address (fake pa)
+	unsigned long *rpage_flags;
+	
+	struct list_head next;
+};*/
 
 struct rdma_handle {
 	int nid;

@@ -75,6 +75,7 @@ extern int (*remote_evict)(int, struct list_head *, int);
 extern int (*remote_alloc_async)(int, u64, unsigned long *);
 extern int (*remote_free_async)(int, u64, unsigned long *);
 extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned long *);
+extern int (*remote_prefetch_async)(int, struct list_head *, int);
 #endif
 
 static inline int nid_to_rh(int nid)
@@ -567,6 +568,104 @@ put_buffer:
 	return ret;
 }
 
+#ifdef CONFIG_MCOS_RMM_PREFETCH
+int rmm_prefetch_async(int nid, struct list_head *fetch_list, int num_page)
+{
+	int offset, ret = 0;
+	uint8_t *dma_buffer, *temp = NULL, *args, *l_vaddr_ptr, *rpage_flags_ptr;
+	dma_addr_t dma_addr, remote_dma_addr;
+
+	struct rdma_handle *rh;
+	struct rpc_header *rhp;
+	struct rdma_work *rw;
+
+	struct list_head *l;
+	int i = 0;
+
+	const struct ib_send_wr *bad_wr = NULL;
+
+	/*
+   rhp	      args	        temp(r_vaddr_ptr)     l_vaddr_ptr	    rpage_flags_ptr	      page_ptr
+   ---------------------------------------------------------------------------------------------------------------------------
+   |rpc_header| num_page(4byte) | r_vaddr(8bytes) ... | l_vaddr(8bytes) ... | rpage_flags(8bytes) ... |reserved area for pages|
+   ---------------------------------------------------------------------------------------------------------------------------
+	 */
+
+	int buffer_size = sizeof(struct rpc_header) + 4 +
+		          ((24 + PAGE_SIZE) * num_page);
+	int payload_size = sizeof(struct rpc_header) + 4 + (8 * num_page);
+	int index = nid_to_rh(nid);
+
+	rh = rdma_handles[index];
+
+	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size, &dma_addr);
+	if (!dma_buffer)
+		return -ENOMEM;
+	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
+	remote_dma_addr = rh->remote_dma_addr + offset;
+
+	/*rw = __get_rdma_work_nonsleep(rh, (dma_addr_t)dma_buffer, payload_size, 
+			remote_dma_addr, rh->rpc_rkey);*/
+	rw = __get_rdma_work_nonsleep(rh, dma_addr, payload_size, 
+			remote_dma_addr, rh->rpc_rkey);
+	if (!rw) {
+		ret = -ENOMEM;
+		goto put_buffer;
+	}
+
+	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+	//rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+	// If you don't use IB_SEND_INLINE, use dma_addr instead of dma_buffer in __get_rdma_work_nonsleep
+
+	rhp = (struct rpc_header *) dma_buffer;
+	rhp->nid = nid;
+	rhp->op = RPC_OP_PREFETCH;
+	rhp->async = true;
+
+	DEBUG_LOG(PFX "copy args, %s, %p\n", __func__, dma_buffer);
+	args = dma_buffer + sizeof(struct rpc_header);
+	DEBUG_LOG(PFX "args: %p\n", args);
+
+	*((int32_t *) args) = num_page;
+	temp = args + 4;
+	// temp indicates first r_vaddr
+
+	l_vaddr_ptr = temp + 8 * num_page;
+	rpage_flags_ptr = l_vaddr_ptr + 8 * num_page;
+	DEBUG_LOG(PFX "temp: %p\n", temp);
+
+	list_for_each(l, fetch_list) {
+		struct fetch_info *fi = list_entry(l, struct fetch_info, next);
+		*((uint64_t*) (temp)) = (uint64_t) fi->r_vaddr - FAKE_PA_START;
+		//printk(KERN_ALERT "rmm_prefetch_async: %lx\n", (uint64_t)fi->r_vaddr);
+		temp += 8;
+		*((uint64_t*) (l_vaddr_ptr)) = (uint64_t) fi->l_vaddr;
+		l_vaddr_ptr += 8;
+		*((uint64_t*) (rpage_flags_ptr)) = (uint64_t) fi->rpage_flags;
+		rpage_flags_ptr += 8;
+	}
+	// Fill the other part of prefetch_aux now
+
+	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
+	if (ret || bad_wr) {
+		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		if (bad_wr)
+			ret = -EINVAL;
+		goto put_buffer;
+	}
+
+	return ret;
+
+put_buffer:
+	memset(dma_buffer, 0, buffer_size);
+	ring_buffer_put(rh->rb, dma_buffer);
+
+	return ret;
+
+}
+#endif
 
 /* evict_list is a pointer to list_head */
 int rmm_evict(int nid, struct list_head *evict_list, int num_page)
@@ -700,6 +799,11 @@ int mcos_rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int or
 	return rmm_fetch_async(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, rpage_flags);
 }
 
+int mcos_rmm_prefetch_async(int nid, struct list_head *fetch_list, int num_page)
+{
+	return rmm_prefetch_async(nid, fetch_list, num_page);
+}
+
 /*
    static inline int __get_rpc_buffer(struct rdma_handle *rh) 
    {
@@ -814,6 +918,67 @@ static struct args_worker *dequeue_work(struct worker_thread *wt)
 /*rpc handle function for mem server */
 
 #ifdef CONFIG_RM
+#ifdef CONFIG_MCOS_RMM_PREFETCH
+static int rpc_handle_prefetch_mem(struct rdma_handle *rh, uint32_t offset)
+{
+	int ret = 0;
+	int payload_size;
+	dma_addr_t dest_dma_addr, remote_dest_dma_addr;
+	uint8_t *rpc_buffer, *args, *r_vaddr_ptr, *l_vaddr_ptr, *rpage_flags_ptr, *page_ptr;
+
+	struct rdma_work *rw;
+	struct rpc_header *rhp;
+	int num_page;
+	int i;
+	void *src, *dest;
+	// copy r_vaddr to page
+
+	const struct ib_send_wr *bad_wr = NULL;
+
+	rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
+	
+	rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
+	num_page = (*(int32_t *)rpc_buffer);
+	r_vaddr_ptr = rpc_buffer + 4;
+	rpage_flags_ptr = r_vaddr_ptr + 16 * num_page;
+	page_ptr = rpage_flags_ptr + 8 * num_page;
+
+	payload_size = num_page * PAGE_SIZE;
+
+	dest_dma_addr = rh->rpc_dma_addr + offset + 
+			sizeof(struct rpc_header) + 4 + 24 * num_page;
+	remote_dest_dma_addr = rh->remote_rpc_dma_addr + offset +
+			sizeof(struct rpc_header) + 4 + 24 * num_page;
+	
+	rw = __get_rdma_work_nonsleep(rh, dest_dma_addr, payload_size, remote_dest_dma_addr, rh->rpc_rkey);
+	if (!rw) {
+		return -ENOMEM;
+	}
+	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+	rw->rh = rh;
+
+	for (i = 0; i < num_page; i++) {
+		src = (void *) (rh->vaddr_start + (*(uint64_t *)r_vaddr_ptr));
+		//printk(KERN_ALERT "prefetch_mem: %lx\n", (*(uint64_t *)r_vaddr_ptr));
+		dest = page_ptr;
+		memcpy(dest, src, PAGE_SIZE);	// fault
+		r_vaddr_ptr += 8;
+		page_ptr += PAGE_SIZE;
+	}
+
+	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
+	if (ret || bad_wr) {
+		printk(KERN_ERR PFX "Cannot post send wr, %d %p %s\n", ret, bad_wr, __func__);
+		if (bad_wr)
+			ret = -EINVAL;
+	}
+
+	return ret;
+}
+#endif
+
 static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 {
 	int ret = 0;
@@ -1020,6 +1185,42 @@ out_free:
 
 /*rpc handle functions for cpu server */
 #ifndef CONFIG_RM
+#ifdef CONFIG_MCOS_RMM_PREFETCH
+static int rpc_handle_prefetch_cpu(struct rdma_handle *rh, uint32_t offset)
+{
+	unsigned long *rpage_flags = NULL;
+	struct rpc_header *rhp;
+	uint8_t *temp, *args, *l_vaddr_ptr, *rpage_flags_ptr, *page_ptr;
+	int num_page;
+	int i;
+
+	rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
+	args = (uint8_t *)rhp + sizeof(struct rpc_header);
+	num_page = (*(int32_t *)args);
+	temp = args + 4;
+	l_vaddr_ptr = temp + 8 * num_page;
+	rpage_flags_ptr = l_vaddr_ptr + 8 * num_page;
+	page_ptr = rpage_flags_ptr + 8 * num_page;
+
+	// memcpy and set RPAGE_FETCHED
+	for(i = 0; i < num_page; i++) {
+		// memcpy page to l_vaddr
+		memcpy(*((uint64_t*)l_vaddr_ptr), page_ptr, PAGE_SIZE);
+		l_vaddr_ptr += 8;
+		page_ptr += PAGE_SIZE;
+		rpage_flags = *((uint64_t*)rpage_flags_ptr);
+#ifdef CONFIG_MCOS_WO_RPAGE_LOCK_RMM
+		set_bit(RP_FETCHED, rpage_flags);
+#else
+		*rpage_flags |= RPAGE_FETCHED;
+#endif
+		rpage_flags_ptr += 8;
+	}
+	ring_buffer_put(rh->rb, rh->rpc_buffer + offset);
+
+	return 0;
+}
+#endif
 static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 {
 	int num_page, order;
@@ -1052,7 +1253,11 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 	aux->async.done = 1;
 	if (rpage_flags) {
 		DEBUG_LOG(PFX "async fetch is done %s \n", __func__);
+#ifdef CONFIG_MCOS_WO_RPAGE_LOCK_RMM
+		set_bit(RP_FETCHED, rpage_flags);
+#else
 		*rpage_flags |= RPAGE_FETCHED;
+#endif
 		ring_buffer_put(rh->rb, rh->rpc_buffer + offset);
 	}
 
@@ -1081,11 +1286,11 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint32_t offset)
 		if (ret) {
 			if (op == RPC_OP_ALLOC) {
 				DEBUG_LOG(PFX "asycn alloc is done %s \n", __func__);
-				*rpage_flags |= RPAGE_ALLOCED;
+				//*rpage_flags |= RPAGE_ALLOCED;
 			}
 			else {
 				DEBUG_LOG(PFX "asycn free is done %s \n", __func__);
-				*rpage_flags |= RPAGE_FREED;
+				//*rpage_flags |= RPAGE_FREED;
 			}
 		}
 		else {
@@ -2844,6 +3049,11 @@ static int handle_message(void *args)
 					//	delta[head++] = aw->time_dequeue_ns - aw->time_enqueue_ns;
 					//	accum += delta[head-1];
 				}
+#ifdef CONFIG_MCOS_RMM_PREFETCH
+				else if (op == RPC_OP_PREFETCH) {
+					rpc_handle_prefetch_mem(rh, offset);
+				}
+#endif
 				else 
 					rpc_handle_alloc_free_mem(rh,offset);
 			}    
@@ -2866,6 +3076,11 @@ static int handle_message(void *args)
 					//	delta[head++] = aw->time_dequeue_ns - aw->time_enqueue_ns;
 					//	accum += delta[head-1];
 				}
+#ifdef CONFIG_MCOS_RMM_PREFETCH
+				else if (op == RPC_OP_PREFETCH) {
+					rpc_handle_prefetch_cpu(rh, offset);
+				}
+#endif
 			}
 #endif
 			kfree(aw);
@@ -2989,6 +3204,7 @@ int __init init_rmm_rdma(void)
 	remote_alloc = mcos_rmm_alloc;
 	remote_free = mcos_rmm_free;
 	remote_fetch_async = mcos_rmm_fetch_async;
+	remote_prefetch_async = mcos_rmm_prefetch_async;
 
 	/*
 	   remote_fetch_async = mcos_rmm_fetch_async;
