@@ -189,20 +189,20 @@ struct pool_info {
 	size_t size;
 };
 
-/*struct evict_info {
+struct evict_info {
 	u64 l_vaddr;
 	u64 r_vaddr;
 
 	struct list_head next;
-};*/
+};
 
-/*struct fetch_info {
+struct fetch_info {
 	u64 l_vaddr;	// virtual address to be received
 	u64 r_vaddr;	// virtual address (fake pa)
 	unsigned long *rpage_flags;
 	
 	struct list_head next;
-};*/
+};
 
 struct rdma_handle {
 	int nid;

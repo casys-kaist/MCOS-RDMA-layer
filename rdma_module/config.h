@@ -6,7 +6,6 @@
  */
 
 const char *ip_addresses[] = {
-	"10.0.0.23",
 };
 
 const char *backup_ip_addresses[] = {
@@ -14,7 +13,7 @@ const char *backup_ip_addresses[] = {
 };
 
 const char *rnic_ip_addresses[] = {
-	/* Node 0 */ "10.0.0.27",
+	/* Node 0 */ "10.0.0.26",
 };
 
 #define NID 0

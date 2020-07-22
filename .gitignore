@@ -2,6 +2,7 @@ tags
 *.swp
 #text
 *.txt
+config.h
 
 #core file
 core
