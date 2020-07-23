@@ -2518,56 +2518,6 @@ void __exit exit_rmm_rdma(void)
 	return;
 }
 
-/*
-   static int test_maplat(void)
-   {
-   int ret = 0;
-   char *test, *test2;
-   char *dummy;
-   dma_addr_t dma_test;
-   struct scatterlist sg = {};
-   struct timespec start_tv, end_tv;
-   struct rdma_handle *rh = rdma_handles[0];
-   unsigned long elapsed, map_total = 0, cpy_total = 0;
-
-   test = kmalloc(4096, GFP_KERNEL);
-   test2 = kmalloc(4096, GFP_KERNEL);
-   dummy = kmalloc(4096, GFP_KERNEL);
-
-   getnstimeofday(&start_tv);
-
-   dma_test = ib_dma_map_single(rh->device, test, 4096, DMA_FROM_DEVICE);
-   sg_dma_address(&sg) = dma_test; 
-   sg_dma_len(&sg) = 4096;
-   ret = ib_map_mr_sg(rh->mr, &sg, 1, NULL, 4096);
-   if (ret != 1) {
-   printk("Cannot map scatterlist to mr, %d\n", ret);
-   return -1;
-   }
-   getnstimeofday(&end_tv);
-   elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-   (end_tv.tv_nsec - start_tv.tv_nsec);
-   map_total += elapsed;
-
-   getnstimeofday(&start_tv);
-   memcpy((void *) test2, dummy, 4096);
-   getnstimeofday(&end_tv);
-   elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-   (end_tv.tv_nsec - start_tv.tv_nsec);
-   cpy_total += elapsed;
-
-   printk(KERN_INFO PFX "mean map lat: %lu\n", map_total);
-   printk(KERN_INFO PFX "mean cpy lat: %lu\n", cpy_total);
-
-   kfree(test);
-   kfree(test2);
-   kfree(dummy);
-
-   ib_dma_unmap_single(rh->device, dma_test, 4096, DMA_FROM_DEVICE);
-
-   return 0;
-   }
- */
 
 static atomic_t num_done = ATOMIC_INIT(0);
 
@@ -2580,6 +2530,23 @@ struct worker_info {
 	uint16_t *random_index2;
 	struct completion *done;
 };
+
+static int dummy_thread(void *args)
+{
+	int i;
+	int nid = (int) args;
+
+
+	i = 0;
+	while (1)  {
+		if (kthread_should_stop())
+			return 0;
+		rmm_fetch(nid, my_data[nid] + (i * (PAGE_SIZE)), (void *) (i * (PAGE_SIZE)), 0);
+		i = (i + 1) % 262144;
+	}
+
+	return 0;
+}
 
 static int tt_worker(void *args)
 {
@@ -2611,6 +2578,7 @@ static int tt_worker(void *args)
 }
 
 static uint64_t elapsed_th[MAX_NUM_NODES];
+
 
 static void test_throughput(int test_size, int order)
 {
@@ -2809,7 +2777,9 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	static int num = 1;
 	char *cmd, *val;
 	int i = 0;
+	int head = 0;
 	static int order = 0;
+	struct task_struct *t_arr[20];
 
 	cmd = kmalloc(count, GFP_KERNEL);
 	if (cmd == NULL) {
@@ -2844,6 +2814,14 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	}
 	else if (strcmp("start", cmd) == 0)
 		start_connection();
+	else if (strcmp("make dummy", cmd) == 0)
+		t_arr[head++] = kthread_create(dummy_thread, 0, "dummy thread %d", head);
+	else if (strcmp("stop dummy", cmd) == 0) {
+		for (i = 0; i < head; i++)  {
+			kthread_stop(t_arr[i]);
+			head = 0;
+		}
+	}
 
 	return count;
 }
@@ -2866,7 +2844,7 @@ static int handle_message(void *args)
 	struct rpc_header *rhp;
 	struct worker_thread *wt = (struct worker_thread *) args;
 
-//	u64 start = get_jiffies_64();
+	//	u64 start = get_jiffies_64();
 
 	wt->cpu = smp_processor_id();
 	printk(PFX "woker thread created cpu id: %d\n", wt->cpu);
@@ -2975,7 +2953,7 @@ static int start_connection(void)
 int __init init_rmm_rdma(void)
 {
 	int i;
-//	unsigned long flags;
+	//	unsigned long flags;
 
 #ifdef CONFIG_RM
 	server = 1;
@@ -2990,14 +2968,11 @@ int __init init_rmm_rdma(void)
 #endif /*end for CONFIG_RM */
 
 
-#ifdef RMM_TEST
 	rmm_proc = proc_create("rmm", 0666, NULL, &rmm_ops);
 	if (rmm_proc == NULL) {
 		printk(KERN_ERR PFX "cannot create /proc/rmm\n");
 		return -ENOMEM;
 	}
-#endif /* end for TEST */
-
 
 	printk(PFX "init rmm rdma\n");
 
