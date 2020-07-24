@@ -2779,7 +2779,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	int i = 0;
 	static int head = 0;
 	static int order = 0;
-	struct task_struct *t_arr[20];
+	static struct task_struct *t_arr[20];
 
 	cmd = kmalloc(count, GFP_KERNEL);
 	if (cmd == NULL) {
