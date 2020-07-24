@@ -64,7 +64,7 @@ char *my_data[MAX_NUM_NODES] = { NULL };
 
 unsigned long delta[512], delta_delay[512];
 unsigned long accum = 0, accum_delay = 0;
-int head = 0, head_delay = 0;
+//int head = 0, head_delay = 0;
 
 #ifdef CONFIG_MCOS
 extern int (*remote_alloc)(int, u64);
@@ -2777,7 +2777,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	static int num = 1;
 	char *cmd, *val;
 	int i = 0;
-	int head = 0;
+	static int head = 0;
 	static int order = 0;
 	struct task_struct *t_arr[20];
 
