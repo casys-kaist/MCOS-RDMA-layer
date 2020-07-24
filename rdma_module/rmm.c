@@ -2542,7 +2542,7 @@ static int dummy_thread(void *args)
 		if (kthread_should_stop())
 			return 0;
 		rmm_fetch(nid, my_data[nid] + (i * (PAGE_SIZE)), (void *) (i * (PAGE_SIZE)), 0);
-		i = (i + 1) % 262144;
+		i = (i + 1) % 1024;
 	}
 
 	return 0;
@@ -2819,8 +2819,8 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	else if (strcmp("stop dummy", cmd) == 0) {
 		for (i = 0; i < head; i++)  {
 			kthread_stop(t_arr[i]);
-			head = 0;
 		}
+		head = 0;
 	}
 
 	return count;
@@ -3045,6 +3045,7 @@ int __init init_rmm_rdma(void)
 			return -1;
 	}
 
+	/*
 	if (!server) {
 		printk(PFX "remote memory alloc\n");
 		for (i = 0; i < 1; i++) {
@@ -3057,6 +3058,7 @@ int __init init_rmm_rdma(void)
 			printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
 		}
 	}
+	*/
 #endif
 
 	printk(PFX "Ready on InfiniBand RDMA\n");
