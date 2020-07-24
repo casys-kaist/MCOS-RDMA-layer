@@ -2543,6 +2543,7 @@ static int dummy_thread(void *args)
 			return 0;
 		rmm_fetch(nid, my_data[nid] + (i * (PAGE_SIZE)), (void *) (i * (PAGE_SIZE)), 0);
 		i = (i + 1) % 1024;
+		rmm_yield_cpu();
 	}
 
 	return 0;
@@ -2815,7 +2816,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	else if (strcmp("start", cmd) == 0)
 		start_connection();
 	else if (strcmp("make dummy", cmd) == 0)
-		t_arr[head++] = kthread_create(dummy_thread, 0, "dummy thread %d", head);
+		t_arr[head++] = kthread_run(dummy_thread, 0, "dummy thread %d", head);
 	else if (strcmp("stop dummy", cmd) == 0) {
 		for (i = 0; i < head; i++)  {
 			kthread_stop(t_arr[i]);
