@@ -1,6 +1,8 @@
 #ifndef __RMM_H__
 #define __RMM_H__
 
+
+
 #define RDMA_PORT 11453
 #define RDMA_ADDR_RESOLVE_TIMEOUT_MS 5000
 
@@ -54,12 +56,6 @@
 #define RPAGE_FREE_FAILED       0x00000200
 #define RPAGE_FETCHED           0x00000400
 
-enum rpc_opcode {
-	RPC_OP_FETCH,
-	RPC_OP_EVICT,
-	RPC_OP_ALLOC,
-	RPC_OP_FREE,
-};
 
 enum wr_type {
 	WORK_TYPE_REG,
@@ -70,39 +66,6 @@ enum wr_type {
 	WORK_TYPE_RPC_REQ,
 	WORK_TYPE_RPC_ACK,
 };
-
-#pragma pack(push, 1)
-struct rpc_header {
-	int nid;
-	enum rpc_opcode op;
-	bool async;
-};
-
-struct fetch_args {
-	u64 r_vaddr;
-	u32 order;
-};
-
-struct fetch_aux {
-	u64 l_vaddr;
-	union {
-		u64 rpage_flags;
-		int done;
-	} async;
-};
-
-struct mem_args {
-	u64 vaddr;
-};
-
-struct mem_aux {
-	union  {
-		u64 rpage_flags;
-		int done;
-	} async;
-};
-
-#pragma pack(pop)
 
 struct recv_work {
 	enum wr_type work_type;
@@ -234,21 +197,12 @@ struct rdma_handle {
 	struct ib_mr *mr;
 };
 
-static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size);
-static int __setup_recv_works(struct rdma_handle *rh);
+static inline int nid_to_rh(int nid)
+{
+	return nid * 2;
+}
 
-/*
-   static inline int __get_rpc_buffer(struct rdma_handle *rh);
-   static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot);
-   static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order);
-   static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned int order);
- */
 
-static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
-static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
-static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
-static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw);
-static int start_connection(void);
 
 /* prototype of symbol */
 /*
