@@ -83,8 +83,8 @@ extern int (*remote_evict)(int, struct list_head *, int);
 extern int (*remote_alloc_async)(int, u64, unsigned long *);
 extern int (*remote_free_async)(int, u64, unsigned long *);
 extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned long *);
+extern int (*remote_prefetch_async)(int, struct fetch_info *, int);
 #endif
-
 
 static inline unsigned long long get_ns(void)
 {
@@ -138,6 +138,11 @@ int mcos_rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 int mcos_rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, unsigned long *rpage_flags)
 {
 	return rmm_fetch_async(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, rpage_flags);
+}
+
+int mcos_rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page)
+{
+	return rmm_prefetch_async(nid, fi_array, num_page);
 }
 
 /*
@@ -273,11 +278,11 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint32_t offset)
 		if (ret) {
 			if (op == RPC_OP_ALLOC) {
 				DEBUG_LOG(PFX "asycn alloc is done %s \n", __func__);
-				*rpage_flags |= RPAGE_ALLOCED;
+				//*rpage_flags |= RPAGE_ALLOCED;
 			}
 			else {
 				DEBUG_LOG(PFX "asycn free is done %s \n", __func__);
-				*rpage_flags |= RPAGE_FREED;
+				//*rpage_flags |= RPAGE_FREED;
 			}
 		}
 		else {
@@ -2069,6 +2074,7 @@ int __init init_rmm_rdma(void)
 	remote_alloc = mcos_rmm_alloc;
 	remote_free = mcos_rmm_free;
 	remote_fetch_async = mcos_rmm_fetch_async;
+	remote_prefetch_async = mcos_rmm_prefetch_async;
 
 	/*
 	   remote_fetch_async = mcos_rmm_fetch_async;

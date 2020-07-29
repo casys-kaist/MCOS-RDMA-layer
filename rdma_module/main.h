@@ -55,8 +55,21 @@
 #define RPAGE_FREED             0x00000100
 #define RPAGE_FREE_FAILED       0x00000200
 #define RPAGE_FETCHED           0x00000400
-
-
+/*
+enum remote_page_flags {
+	RP_PREFETCHED	= 0,
+	RP_EVICTED	= 1,
+	RP_PREFETCHING	= 2,
+	RP_EVICTING	= 3,
+	RP_ALLOCATING	= 4,
+	RP_ALLOCED	= 5,
+	RP_FREEZE_FAIL	= 6,
+	RP_ALLOC_FAILED	= 7,
+	RP_FREED	= 8,
+	RP_FREE_FAILED	= 9,
+	RP_FETCHED	= 10,
+};
+*/
 enum wr_type {
 	WORK_TYPE_REG,
 	WORK_TYPE_RPC_ADDR,
@@ -130,12 +143,20 @@ struct pool_info {
 	size_t size;
 };
 
-struct evict_info {
+/*struct evict_info {
 	u64 l_vaddr;
 	u64 r_vaddr;
 
 	struct list_head next;
 };
+
+struct fetch_info {
+	u64 l_vaddr;	// virtual address to be received
+	u64 r_vaddr;	// virtual address (fake pa)
+	unsigned long *rpage_flags;
+
+	//struct list_head next;
+};*/
 
 struct rdma_handle {
 	int nid;
