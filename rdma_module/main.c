@@ -250,10 +250,7 @@ static struct args_worker *dequeue_work(struct worker_thread *wt)
 }
 
 
-/*rpc handle function for mem server */
-
-
-static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint32_t offset)
+int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint32_t offset)
 {
 	void *rpc_addr;
 	struct rpc_header *rhp;
@@ -300,25 +297,24 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint32_t offset)
 	return 0;
 }
 
-static int rpc_handle_evict_done(struct rdma_handle *rh, uint32_t offset)
+int rpc_handle_evict_done(struct rdma_handle *rh, uint32_t offset)
 {
 	struct rpc_header *rhp;
 	uint8_t *buffer = rh->dma_buffer + offset;
 	unsigned nr_pages = *(int *) (buffer + sizeof(struct rpc_header));
-	int *done;
-	int **done_p;
+	atomic_t *done;
+	atomic_t **done_p;
 
 	rhp = (struct rpc_header *) buffer;
 	if (!rhp->async) {
-		done = (int *) (buffer + sizeof(struct rpc_header) + 4 + (nr_pages * (PAGE_SIZE + 8)));
-		*done = 1;
+		done = (atomic_t *) (buffer + sizeof(struct rpc_header) + 4 + (nr_pages * (PAGE_SIZE + 8)));
 	}
 	else {
-		done_p = (int **) (buffer + sizeof(struct rpc_header) + 4 + (nr_pages * (PAGE_SIZE + 8)));
+		done_p = (atomic_t **) (buffer + sizeof(struct rpc_header) + 4 + (nr_pages * (PAGE_SIZE + 8)));
 		done = *done_p;
-		atomic_fetch_add(1, done);
 		ring_buffer_put(rh->rb, buffer);
 	}
+	atomic_fetch_add(1, done);
 
 	return 0;
 }

@@ -130,13 +130,6 @@ struct pool_info {
 	size_t size;
 };
 
-struct evict_info {
-	u64 l_vaddr;
-	u64 r_vaddr;
-
-	struct list_head next;
-};
-
 struct rdma_handle {
 	int nid;
 	enum {
@@ -202,6 +195,8 @@ static inline int nid_to_rh(int nid)
 	return nid * 2;
 }
 
+int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint32_t offset);
+int rpc_handle_evict_done(struct rdma_handle *rh, uint32_t offset);
 
 
 /* prototype of symbol */
