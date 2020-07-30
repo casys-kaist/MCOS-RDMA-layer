@@ -29,8 +29,8 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw);
 
 /* SANGJIN START */
-static int req_cnt = 0;
-static int ack_cnt = 0;
+static atomic_t req_cnt = ATOMIC_INIT(0);
+static atomic_t ack_cnt = ATOMIC_INIT(0); 
 /* SANGJIN END */
 
 
@@ -673,7 +673,7 @@ put:
 	return ret;
 }
 
-int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
+int rmm_evict_forward(int nid, void *src_buffer, int payload_size, atomic_t *done)
 {
 	int offset;
 	uint8_t *evict_buffer = NULL;
@@ -718,7 +718,7 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 	memcpy(evict_buffer, src_buffer, payload_size);
 	rhp = (struct rpc_header *) evict_buffer;
 	rhp->async = true;
-	*((int **) (evict_buffer + payload_size)) = done;
+	*((atomic_t **) (evict_buffer + payload_size)) = done;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	__put_rdma_work_nonsleep(rh, rw);
@@ -950,7 +950,7 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 {
 	int i, num_page, ret;
-	int done = 0;
+	atomic_t done = ATOMIC_INIT(0);
 	u64 dest;
 	struct rdma_work *rw;
 	uint8_t *evict_buffer, *page_pointer;
@@ -1097,7 +1097,7 @@ static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
 	DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
 
 	// busy wait until full consistentcy with r1 and r2
-	while (!(req_cnt == ack_cnt))
+	while (!(atomic_read(&req_cnt) == atomic_read(&ack_cnt)))
 		cpu_relax();
 
 	*((int *) (rpc_buffer + 4)) = ret;

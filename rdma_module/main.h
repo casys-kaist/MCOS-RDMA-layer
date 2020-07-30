@@ -218,6 +218,8 @@ static inline int nid_to_rh(int nid)
 	return nid * 2;
 }
 
+int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint32_t offset);
+int rpc_handle_evict_done(struct rdma_handle *rh, uint32_t offset);
 
 
 /* prototype of symbol */

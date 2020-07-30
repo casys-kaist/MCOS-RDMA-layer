@@ -18,7 +18,7 @@ const char *ip_addresses[] = {
 
 /* SANGJIN START */
 // True if asynchronous replication
-#define BACKUP 1
+#define CONFIG_RECOVERY 1
 /* SANGJIN END */
 
 #endif
@@ -89,7 +89,7 @@ const char *ip_addresses[] = {
  *	Backup Server
  * };
  *
- * #define BACKUP 1
+ * #define CONFIG_RECOVERY 1
  *
  * __________________________________________
  *
