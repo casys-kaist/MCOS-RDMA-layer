@@ -19,17 +19,18 @@
 #include "main.h"
 #include "ring_buffer.h"
 
-extern int cr_on;
 extern int debug;
 extern struct rdma_handle *rdma_handles[];
-extern struct rdma_handle *backup_rh[];
+extern struct connection_info c_infos[];
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
 static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
 //static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw);
 
-static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key)
+
+static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, 
+		size_t size, dma_addr_t rdma_addr, u32 rdma_key)
 {
 	struct rdma_work *rw;
 	might_sleep();
@@ -53,8 +54,8 @@ static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_
 	return rw;
 }
 
-static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_addr_t dma_addr, 
-		size_t size, dma_addr_t rdma_addr, u32 rdma_key)
+static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, 
+		dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key)
 {
 	struct rdma_work *rw;
 #ifdef CONFIG_MCOS_IRQ_LOCK
@@ -143,11 +144,7 @@ int rmm_alloc(int nid, u64 vaddr)
 	int payload_size = sizeof(struct rpc_header) + 8;
 	int index = nid_to_rh(nid);
 
-#ifdef CONFIG_RM
-	rh = backup_rh[index];
-#else
 	rh = rdma_handles[index];
-#endif
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &dma_addr);
 	if (!dma_buffer) {
@@ -224,11 +221,7 @@ int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	int payload_size = sizeof(struct rpc_header) + 8;
 	int index = nid_to_rh(nid);
 
-#ifdef CONFIG_RM
-	rh = backup_rh[index];
-#else
 	rh = rdma_handles[index];
-#endif
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &dma_addr);
 	if (!dma_buffer)
@@ -295,11 +288,7 @@ int rmm_free(int nid, u64 vaddr)
 	int payload_size = sizeof(struct rpc_header) + 8;
 	int index = nid_to_rh(nid);
 
-#ifdef CONFIG_RM
-	rh = backup_rh[index];
-#else
 	rh = rdma_handles[index];
-#endif
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &dma_addr);
 	if (!dma_buffer) {
@@ -369,11 +358,7 @@ int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	int payload_size = sizeof(struct rpc_header) + 8;
 	int index = nid_to_rh(nid);
 
-#ifdef CONFIG_RM
-	rh = backup_rh[index];
-#else
 	rh = rdma_handles[index];
-#endif
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &dma_addr);
 	if (!dma_buffer)
@@ -620,11 +605,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	const struct ib_send_wr *bad_wr = NULL;
 	int index = nid_to_rh(nid) + 1;
 
-#ifdef CONFIG_RM
-	rh = backup_rh[index];
-#else
 	rh = rdma_handles[index];
-#endif
 	evict_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &evict_dma_addr);
 	if (!evict_buffer) {
 		printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
@@ -708,7 +689,7 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 	int index = nid_to_rh(nid) + 1;
 
 	buffer_size += 4;
-	rh = backup_rh[index];
+	rh = rdma_handles[index];
 
 	evict_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &evict_dma_addr);
 	if (!evict_buffer) {
@@ -811,6 +792,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 
 static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 {
+	int i;
 	int ret = 0;
 	uint16_t nid = 0;
 	uint16_t op = 0;
@@ -830,10 +812,7 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 	nid = rhp->nid;
 	op = rhp->op; 
 	/*Add offset */
-	if (!rh->backup)
-		vaddr = (*(uint64_t *) (rpc_buffer)) + (rh->vaddr_start);
-	else 
-		vaddr = (*(uint64_t *) (rpc_buffer));
+	vaddr = (*(uint64_t *) (rpc_buffer)) + (rh->vaddr_start);
 
 	rw = __get_rdma_work(rh, rpc_dma_addr, 8, remote_rpc_dma_addr, rh->rpc_rkey);
 	if (!rw)
@@ -847,13 +826,21 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 	if (op == RPC_OP_ALLOC)  {
 		/* rm_alloc and free return true when they success */
 		ret = rm_alloc(vaddr);
-		if (cr_on && ret)
-			rmm_alloc(0, vaddr);
+		if (ret) {
+			for (i = 0; c_infos[i].nid >= 0; i++) {
+				if (c_infos[i].c_type == SYNC)
+					rmm_alloc(c_infos[i].nid, vaddr);
+			}
+		}
 	}
 	else if (op == RPC_OP_FREE) {
 		ret = rm_free(vaddr);
-		if (cr_on && ret)
-			rmm_free(0, vaddr);
+		if (ret) {
+			for (i = 0; c_infos[i].nid >= 0; i++) {
+				if (c_infos[i].c_type == SYNC)
+					rmm_alloc(c_infos[i].nid, vaddr);
+			}
+		}
 	}
 
 	*((int *) (rpc_buffer + 4)) = ret;
@@ -880,6 +867,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	struct rdma_work *rw;
 	uint8_t *evict_buffer, *page_pointer;
 	const struct ib_send_wr *bad_wr = NULL;
+	bool wait_for_replication = false;
 
 	struct rpc_header *rhp;
 
@@ -888,21 +876,23 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	num_page = (*(int32_t *) evict_buffer);
 	page_pointer = evict_buffer + 4;
 
-	if (!rh->backup) {
+	if (rh->c_type == PRIMARY) {
 		for (i = 0; i < num_page; i++) {
 			*((uint64_t *) (page_pointer)) = 
 				(*((uint64_t *) (page_pointer))) + (rh->vaddr_start);
 			page_pointer += (8 + PAGE_SIZE);
 		}
 	}
-
-	if (cr_on) {
-		DEBUG_LOG(PFX "replicate to backup server\n");
-		rmm_evict_forward(0, rh->evict_buffer + offset, num_page * (8 + PAGE_SIZE) + 
-				sizeof(struct rpc_header) + sizeof(int), &done);
-
-		DEBUG_LOG(PFX "replicate done\n");
+	for (i = 0; c_infos[i].nid >= 0; i++) {
+		if (c_infos[i].c_type == SYNC) {
+			wait_for_replication = true;
+			DEBUG_LOG(PFX "replicate to backup server\n");
+			rmm_evict_forward(c_infos[i].nid, rh->evict_buffer + offset, num_page * (8 + PAGE_SIZE) + 
+					sizeof(struct rpc_header) + sizeof(int), &done);
+			DEBUG_LOG(PFX "replicate done\n");
+		}
 	}
+
 
 	page_pointer = evict_buffer + 4;
 	DEBUG_LOG(PFX "num_page %d, from %s\n", num_page, __func__);
@@ -913,7 +903,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 
 	}
 
-	if (cr_on) {
+	if (wait_for_replication) {
 		while(!(ret = done))
 			cpu_relax();
 	}

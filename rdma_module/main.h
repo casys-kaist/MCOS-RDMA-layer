@@ -1,8 +1,6 @@
 #ifndef __RMM_H__
 #define __RMM_H__
 
-
-
 #define RDMA_PORT 11453
 #define RDMA_ADDR_RESOLVE_TIMEOUT_MS 5000
 
@@ -24,8 +22,8 @@
 #define POLL_CPU_ID 14 
 #define WORKER_CPU_ID 15 
 
-#define CONNECTION_FETCH	0
-#define CONNECTION_EVICT	1
+#define QP_FETCH	0
+#define QP_EVICT	1
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
@@ -56,6 +54,16 @@
 #define RPAGE_FREE_FAILED       0x00000200
 #define RPAGE_FETCHED           0x00000400
 
+enum connection_type {
+	PRIMARY,
+	SYNC,
+	ASYNC,
+};
+
+struct connection_info {
+	int nid;
+	enum connection_type c_type;
+};
 
 enum wr_type {
 	WORK_TYPE_REG,
@@ -137,6 +145,14 @@ struct evict_info {
 	struct list_head next;
 };
 
+#pragma pack(push, 1)
+struct conn_private_data {
+	unsigned int qp_type : 1;
+	unsigned int c_type : 3;
+	unsigned int nid : 28;
+};
+#pragma pack(pop)
+
 struct rdma_handle {
 	int nid;
 	enum {
@@ -152,8 +168,8 @@ struct rdma_handle {
 	struct completion init_done;
 	struct recv_work *recv_works;
 
-	int connection_type;
-	int backup;
+	int qp_type;
+	enum connection_type c_type;
 
 	/* local */
 	void *recv_buffer;

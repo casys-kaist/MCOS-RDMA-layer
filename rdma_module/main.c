@@ -21,14 +21,17 @@
 #include "rpc.h"
 
 #define NUM_QPS (MAX_NUM_NODES * 2)
-#define NUM_BACKUP_QPS (NUM_BACKUPS * 2)
 
 int debug = 0;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 
 static int server = 0;
-int cr_on = 0;
+
+const struct connection_info c_infos[] = {
+	{2, SYNC},
+	{-1, -1}, /* end */
+};
 
 static struct completion done_worker[NR_WORKER_THREAD];
 static struct worker_thread w_threads[NR_WORKER_THREAD];
@@ -41,11 +44,6 @@ static struct pool_info *rpc_pools[NUM_QPS] = { NULL };
 static struct pool_info *sink_pools[NUM_QPS] = { NULL };
 
 static u64 vaddr_start_arr[MAX_NUM_NODES] = { 0 };
-
-/* RDMA handle for back-up */
-struct rdma_handle *backup_rh[NUM_BACKUP_QPS];
-static struct pool_info *backup_rpc_pools[NUM_BACKUP_QPS] = { NULL };
-static struct pool_info *backup_sink_pools[NUM_BACKUP_QPS] = { NULL };
 
 /* Global protection domain (pd) and memory region (mr) */
 static struct ib_pd *rdma_pd = NULL;
@@ -341,7 +339,7 @@ static int __handle_rpc(struct ib_wc *wc)
 
 	//	DEBUG_LOG(PFX "%08X\n", imm_data);
 
-	if (rh->connection_type == CONNECTION_EVICT) {
+	if (rh->qp_type == QP_EVICT) {
 		header = *(int *) (rh->evict_buffer + (imm_data + sizeof(struct rpc_header) + 4));
 		DEBUG_LOG(PFX "header %d in %s\n", header, __func__);
 		if (header == -1) {
@@ -350,7 +348,7 @@ static int __handle_rpc(struct ib_wc *wc)
 		}
 	}
 
-	if (rh->connection_type == CONNECTION_FETCH) {
+	if (rh->qp_type == QP_FETCH) {
 		op = rhp->op;
 		header =  *(int *) (rh->rpc_buffer + (imm_data + sizeof(struct rpc_header)));
 		if ((op == RPC_OP_ALLOC || op == RPC_OP_FREE) && header == -1) {
@@ -387,18 +385,10 @@ static int __handle_recv(struct ib_wc *wc)
 		case WORK_TYPE_RPC_ADDR:
 			ib_dma_unmap_single(rh->device, rw->dma_addr, 
 					sizeof(struct pool_info), DMA_FROM_DEVICE);
-			if (!rh->backup) {
-				if (rh->connection_type == CONNECTION_FETCH)
-					rp = rpc_pools[rh->nid*2];
-				else 
-					rp = rpc_pools[(rh->nid*2)+1];
-			}
-			else {
-				if (rh->connection_type == CONNECTION_FETCH)
-					rp = backup_rpc_pools[rh->nid*2];
-				else 
-					rp = backup_rpc_pools[(rh->nid*2)+1];
-			}
+			if (rh->qp_type == QP_FETCH)
+				rp = rpc_pools[rh->nid*2];
+			else 
+				rp = rpc_pools[(rh->nid*2)+1];
 			rh->remote_rpc_dma_addr = rp->addr;
 			rh->remote_dma_addr = rp->addr;
 			rh->remote_rpc_size = rp->size;
@@ -463,7 +453,7 @@ static int polling_cq(void * args)
 
 	int ret = 0;
 	int num_poll = 1;
-//	u64 start = get_jiffies_64();
+	//	u64 start = get_jiffies_64();
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
 	wc = kmalloc(sizeof(struct ib_wc) * num_poll, GFP_KERNEL);
@@ -500,7 +490,7 @@ static int polling_cq(void * args)
 						/*
 						   rw = (struct rdma_work *) wc[i].wr_id;
 						   put_work(&wc[i]);
-						 */
+						   */
 					}
 					else {
 						DEBUG_LOG(PFX "rdma write completion\n");
@@ -634,7 +624,7 @@ static int __setup_pd_cq_qp(struct rdma_handle *rh)
 		/*
 		   ret = ib_req_notify_cq(rh->cq, IB_CQ_NEXT_COMP);
 		   if (ret < 0) goto out_err;
-		 */
+		   */
 
 		DEBUG_LOG(PFX "create polling thread\n");
 		polling_k = kthread_create(polling_cq, rdma_cq, "polling_cq");
@@ -715,15 +705,11 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 
 	step = "alloc dma buffer";
 	rh_id = nid_to_rh(rh->nid);
-	if (rh->connection_type == CONNECTION_EVICT)
+	if (rh->qp_type == QP_EVICT)
 		rh_id++;
 	DEBUG_LOG(PFX "%s with rh id: %d\n", step, rh_id);
 	if (!rh->dma_buffer) {
-		if (!rh->backup)
-			paddr = (resource_size_t) (((uint8_t *) DMA_BUFFER_START) + (rh_id * buffer_size));
-		else 
-			paddr = (resource_size_t) (((uint8_t *) DMA_BUFFER_START) + (NUM_QPS * buffer_size) +
-					(rh_id * buffer_size));
+		paddr = (resource_size_t) (((uint8_t *) DMA_BUFFER_START) + (rh_id * buffer_size));
 
 		if (!(rh->dma_buffer = memremap(paddr, buffer_size, MEMREMAP_WB))) {
 			printk(KERN_ERR PFX "memremap error in %s\n", __func__);
@@ -784,13 +770,13 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	rh->rb = ring_buffer_create(rh->rpc_buffer, rh->rpc_dma_addr, DMA_BUFFER_SIZE,"dma buffer"); 
 
 	/*
-	   if (!rh->rb && rh->connection_type == CONNECTION_FETCH) {
+	   if (!rh->rb && rh->qp_type == QP_FETCH) {
 	   rh->rb = ring_buffer_create(rh->rpc_buffer, rh->rpc_dma_addr, RPC_BUFFER_SIZE,"rpc buffer"); 
 	   rh->rb_sink = ring_buffer_create(rh->rpc_buffer, rh->rpc_dma_addr, SINK_BUFFER_SIZE,"rpc buffer"); 
 	   }
-	   else if (!rh->rb && rh->connection_type == CONNECTION_EVICT)
+	   else if (!rh->rb && rh->qp_type == QP_EVICT)
 	   rh->rb = ring_buffer_create(rh->evict_buffer, rh->evict_dma_addr, DMA_BUFFER_SIZE,"eivct buffer"); 
-	 */
+	   */
 
 	return 0;
 out_dereg:
@@ -814,32 +800,16 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 	int index = (rh->nid) * 2;
 
 	if (work_type == WORK_TYPE_RPC_ADDR) {
-		if (!rh->backup) {
-			if (rh->connection_type == CONNECTION_FETCH)
-				pp = rpc_pools[index];
-			else 
-				pp = rpc_pools[index+1];
-		}
-		else {
-			if (rh->connection_type == CONNECTION_FETCH)
-				pp = backup_rpc_pools[index];
-			else 
-				pp = backup_rpc_pools[index+1];
-		}
+		if (rh->qp_type == QP_FETCH)
+			pp = rpc_pools[index];
+		else 
+			pp = rpc_pools[index+1];
 	}
 	else {
-		if (!rh->backup) {
-			if (rh->connection_type == CONNECTION_FETCH)
-				pp = sink_pools[index];
-			else 
-				pp = sink_pools[index+1];
-		}
-		else {
-			if (rh->connection_type == CONNECTION_FETCH)
-				pp = backup_sink_pools[index];
-			else 
-				pp = backup_sink_pools[index+1];
-		}
+		if (rh->qp_type == QP_FETCH)
+			pp = sink_pools[index];
+		else 
+			pp = sink_pools[index+1];
 	}
 
 	rw = kmalloc(sizeof(struct recv_work_addr), GFP_KERNEL);
@@ -1091,9 +1061,9 @@ int cm_client_event_handler(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_e
 	return 0;
 }
 
-static int __connect_to_server(int nid, int connection_type)
+static int __connect_to_server(int nid, int qp_type, enum connection_type c_type)
 {
-	int private_data;
+	struct conn_private_data private_data;
 	const char *step;
 	struct rdma_handle *rh;
 
@@ -1101,15 +1071,14 @@ static int __connect_to_server(int nid, int connection_type)
 	int index;
 
 	index = nid_to_rh(nid);
-	if (connection_type == CONNECTION_EVICT)
+	if (qp_type == QP_EVICT)
 		index++;
 
 	rh = rdma_handles[index];
-	if (cr_on)
-		rh = backup_rh[index];
 
 	rh->nid = nid;
-	rh->connection_type = connection_type;
+	rh->qp_type = qp_type;
+	rh->c_type = c_type;
 
 	DEBUG_LOG(PFX "nid: %d\n", nid);
 
@@ -1129,11 +1098,6 @@ static int __connect_to_server(int nid, int connection_type)
 			.sin_addr.s_addr = ip_table[nid],
 		};
 
-		if (rh->backup) {
-			addr.sin_addr.s_addr = backup_ip_table[nid];
-			DEBUG_LOG(PFX "resolve addr(backup): %pI4\n", &backup_ip_table[nid]);
-
-		}
 
 		ret = rdma_resolve_addr(rh->cm_id, NULL,
 				(struct sockaddr *)&addr, RDMA_ADDR_RESOLVE_TIMEOUT_MS);
@@ -1173,9 +1137,10 @@ static int __connect_to_server(int nid, int connection_type)
 	if (ret == 0)
 		goto out_err;
 
-	/*TODO: change nid to MACRO */
 	step = "connect";
-	private_data = (connection_type << 31) | (rh->backup << 30) | NID;
+	private_data.qp_type = qp_type;
+	private_data.c_type = c_type;
+	private_data.nid = nid;
 	DEBUG_LOG(PFX "%s\n", step);
 	{
 		struct rdma_conn_param conn_param = {
@@ -1266,7 +1231,8 @@ static int __accept_client(struct rdma_handle *rh)
 
 	step = "allocate memory for cpu server";
 	DEBUG_LOG(PFX "%s\n", step);
-	rh->vaddr_start = vaddr_start_arr[rh->nid];
+	if (rh->c_type == PRIMARY)
+		rh->vaddr_start = vaddr_start_arr[rh->nid];
 	if (rh->vaddr_start < 0) goto out_err;
 
 	step = "setup dma buffer";
@@ -1306,36 +1272,33 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 	int index;
 	struct rdma_handle *rh;
 	struct task_struct *accept_k = NULL;
-	unsigned private = *(int *)cm_event->param.conn.private_data;
+	struct conn_private_data private = 
+		*(struct conn_private_data *) cm_event->param.conn.private_data;
 
-	unsigned nid = private & 0x3FFFFFFF;
-	unsigned connection_type = (private & 0x80000000) >> 31; 
-	unsigned backup = (private & 0x40000000) >> 30;
+	unsigned nid = private.nid;
+	unsigned qp_type = private.qp_type;
+	unsigned c_type = private.c_type;
 
-	DEBUG_LOG(PFX "nid: %d, connection type %d, %s\n", nid, connection_type, __func__);
+	DEBUG_LOG(PFX "nid: %d, connection type %d, %s\n", nid, qp_type, __func__);
 	if (nid == MAX_NUM_NODES)
 		return 0;
 
 	index = nid_to_rh(nid);
-	if (connection_type == CONNECTION_EVICT)
+	if (qp_type == QP_EVICT)
 		index++;
 
-	if (!backup)
-		rh = rdma_handles[index];
-	else
-		rh = backup_rh[index];
-
+	rh = rdma_handles[index];
 	rh->nid = nid;
 	cm_id->context = rh;
 	rh->cm_id = cm_id;
 	rh->device = cm_id->device;
-	rh->connection_type = connection_type;
-	rh->backup = backup;
+	rh->qp_type = qp_type;
+	rh->c_type = c_type;
 	rh->state = RDMA_ROUTE_RESOLVED;
 
 	complete(&rh->cm_done);
 
-	if (connection_type == CONNECTION_FETCH)
+	if (qp_type == QP_FETCH)
 		basic_memory_init(nid);
 
 	accept_k = kthread_create(accept_client, rh, "accept thread");
@@ -1417,18 +1380,17 @@ static int __listen_to_connection(void)
 	return 0;
 }
 
-int connect_to_backups(void)
+int connect_to_servers(void)
 {
 	int i, ret;
 
-	for (i = 0; i < ARRAY_SIZE(backup_ip_addresses); i++) { 
-		DEBUG_LOG(PFX "connect to backups\n");
-		if ((ret = __connect_to_server(i, CONNECTION_FETCH))) 
+	for (i = 0; i < ARRAY_SIZE(c_infos); i++) { 
+		DEBUG_LOG(PFX "connect to server\n");
+		if ((ret = __connect_to_server(c_infos[i].nid, QP_FETCH, c_infos[i].c_type))) 
 			return ret;
-		if ((ret = __connect_to_server(i, CONNECTION_EVICT))) 
+		if ((ret = __connect_to_server(c_infos[i].nid, QP_EVICT, c_infos[i].c_type))) 
 			return ret;
 	}
-	printk(PFX "Connections to backups are established.\n");
 
 	return 0;
 }
@@ -1438,9 +1400,7 @@ static int __establish_connections(void)
 	int ret;
 
 	DEBUG_LOG(PFX "establish connection\n");
-	if (cr_on)
-		connect_to_backups();
-
+	connect_to_servers();
 	ret = __listen_to_connection();
 	if (ret) 
 		return ret;
@@ -1454,13 +1414,7 @@ static int __establish_connections(void)
 {
 	int i, ret;
 
-	for (i = 0; i < ARRAY_SIZE(ip_addresses); i++) { 
-		DEBUG_LOG(PFX "connect to server\n");
-		if ((ret = __connect_to_server(i, CONNECTION_FETCH))) 
-			return ret;
-		if ((ret = __connect_to_server(i, CONNECTION_EVICT))) 
-			return ret;
-	}
+	connect_to_servers();
 	printk(PFX "Connections are established.\n");
 
 
@@ -1505,7 +1459,7 @@ void __exit exit_rmm_rdma(void)
 		   ib_dma_unmap_single(rh->device, rh->dma_addr, 
 		   DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
 		   }
-		 */
+		   */
 
 		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
 		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
@@ -1517,32 +1471,6 @@ void __exit exit_rmm_rdma(void)
 		kfree(sink_pools[i]);
 	}
 
-	for (i = 0; i < NUM_BACKUPS; i++) {
-		struct rdma_handle *rh = backup_rh[i];
-		if (!rh) continue;
-
-		if (rh->recv_buffer) {
-			ib_dma_unmap_single(rh->device, rh->recv_buffer_dma_addr,
-					PAGE_SIZE, DMA_FROM_DEVICE);
-			kfree(rh->recv_buffer);
-		}
-
-		/*
-		   if (rh->dma_buffer) {
-		   ib_dma_unmap_single(rh->device, rh->dma_addr, 
-		   DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
-		   }
-		 */
-
-		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
-		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
-		if (rh->mr && !IS_ERR(rh->mr))
-			ib_dereg_mr(rh->mr);
-
-		kfree(rdma_handles[i]);
-		kfree(backup_rpc_pools[i]);
-		kfree(backup_sink_pools[i]);
-	}
 	if (rdma_cq && !IS_ERR(rdma_cq)) ib_destroy_cq(rdma_cq);
 
 	/* MR is set correctly iff rdma buffer and pd are correctly allocated */
@@ -1964,19 +1892,19 @@ void init_for_test(void)
 	}
 
 	/*
-	if (!server) {
-		printk(PFX "remote memory alloc\n");
-		for (i = 0; i < 1; i++) {
-			mcos_rmm_alloc(0, FAKE_PA_START + i * 4096);
-		}
-	}
-	else {
-		for (i = 0; i < 1024; i++) {
-			sprintf(my_data[0] + (i * PAGE_SIZE), "Data in server: %d", i);
-			printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
-		}
-	}
-	*/
+	   if (!server) {
+	   printk(PFX "remote memory alloc\n");
+	   for (i = 0; i < 1; i++) {
+	   mcos_rmm_alloc(0, FAKE_PA_START + i * 4096);
+	   }
+	   }
+	   else {
+	   for (i = 0; i < 1024; i++) {
+	   sprintf(my_data[0] + (i * PAGE_SIZE), "Data in server: %d", i);
+	   printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
+	   }
+	   }
+	   */
 }
 #else
 void init_for_test(void)
@@ -2001,12 +1929,6 @@ int __init init_rmm_rdma(void)
 	/* allocate memory for cpu servers */
 	for (i = 0; i < MAX_NUM_NODES; i++)
 		vaddr_start_arr[i] = rm_machine_init();
-
-	if (ARRAY_SIZE(backup_ip_addresses) > 0) {
-		printk(PFX "CR is on\n");
-		cr_on = 1;
-	}
-
 #endif /*end for CONFIG_RM */
 
 
@@ -2032,26 +1954,7 @@ int __init init_rmm_rdma(void)
 		if (!(rpc_pools[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
 			goto out_free;
 
-		rh->nid = i;
 		rh->state = RDMA_INIT;
-
-		spin_lock_init(&rh->rdma_work_head_lock);
-
-		init_completion(&rh->cm_done);
-		init_completion(&rh->init_done);
-	}
-
-	for (i = 0; i < NUM_BACKUP_QPS; i++) {
-		struct rdma_handle *rh;
-		rh = backup_rh[i] = kzalloc(sizeof(struct rdma_handle), GFP_KERNEL);
-		if (!rh) 
-			goto out_free;
-		if (!(backup_rpc_pools[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
-			goto out_free;
-
-		rh->nid = i;
-		rh->state = RDMA_INIT;
-		rh->backup = 1;
 		rh->vaddr_start = 0;
 
 		spin_lock_init(&rh->rdma_work_head_lock);
@@ -2074,7 +1977,7 @@ int __init init_rmm_rdma(void)
 	   remote_fetch_async = mcos_rmm_fetch_async;
 	   remote_alloc_async = mcos_rmm_alloc_async;
 	   remote_free_async = mcos_rmm_free_async;
-	 */
+	   */
 #endif
 
 	create_worker_thread();
