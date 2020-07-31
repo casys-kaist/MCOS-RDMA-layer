@@ -73,6 +73,7 @@ unsigned long accum = 0, accum_delay = 0;
 static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size);
 static int __setup_recv_works(struct rdma_handle *rh);
 static int start_connection(void);
+void clean_rdma_handle(struct rdma_handle *rh);
 
 #ifdef CONFIG_MCOS
 extern int (*remote_alloc)(int, u64);
@@ -448,9 +449,16 @@ static int __handle_send(struct ib_wc *wc)
 
 static void handle_error(struct ib_wc *wc)
 {
+	struct rdma_handle *rh;
+	struct rdma_work *rw;
 	printk(KERN_ALERT PFX "cq completion failed with "
 			"wr_id %Lx status %d opcode %d vendor_err %x\n",
 			wc->wr_id, wc->status, wc->opcode, wc->vendor_err);
+	if (wc->opcode == IB_WC_RDMA_WRITE) {
+		rw = (struct rdma_work *) wc->wr_id;
+		rh = rw->rh;
+		clean_rdma_handle(rh);
+	}
 }
 
 static int polling_cq(void * args)
@@ -1313,6 +1321,8 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 	unsigned backup = (private & 0x40000000) >> 30;
 
 	DEBUG_LOG(PFX "nid: %d, connection type %d, %s\n", nid, connection_type, __func__);
+	if (cm_id == server_rh.cm_id)
+		printk(PFX "cm id is same\n");
 	if (nid == MAX_NUM_NODES)
 		return 0;
 
@@ -1468,6 +1478,34 @@ static int __establish_connections(void)
 }
 #endif
 
+void clean_rdma_handle(struct rdma_handle *rh)
+{
+		if (!rh) 
+			return;
+
+		rdma_disconnect(rh->cm_id);
+
+		if (rh->recv_buffer) {
+			ib_dma_unmap_single(rh->device, rh->recv_buffer_dma_addr,
+					PAGE_SIZE, DMA_FROM_DEVICE);
+			kfree(rh->recv_buffer);
+		}
+
+
+		if (rh->qp && !IS_ERR(rh->qp)) {
+			rdma_destroy_qp(rh->cm_id);
+			rh->qp = NULL;
+		}
+		if (rh->cm_id && !IS_ERR(rh->cm_id)) {
+			rdma_destroy_id(rh->cm_id);
+			rh->cm_id = NULL;
+		}
+		if (rh->mr && !IS_ERR(rh->mr)) {
+			ib_dereg_mr(rh->mr);
+			rh->mr = NULL;
+		}
+}
+
 void __exit exit_rmm_rdma(void)
 {
 	int i;
@@ -1492,25 +1530,7 @@ void __exit exit_rmm_rdma(void)
 #endif
 	for (i = 0; i < NUM_QPS; i++) {
 		struct rdma_handle *rh = rdma_handles[i];
-		if (!rh) continue;
-
-		if (rh->recv_buffer) {
-			ib_dma_unmap_single(rh->device, rh->recv_buffer_dma_addr,
-					PAGE_SIZE, DMA_FROM_DEVICE);
-			kfree(rh->recv_buffer);
-		}
-
-		/*
-		   if (rh->dma_buffer) {
-		   ib_dma_unmap_single(rh->device, rh->dma_addr, 
-		   DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
-		   }
-		 */
-
-		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
-		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
-		if (rh->mr && !IS_ERR(rh->mr))
-			ib_dereg_mr(rh->mr);
+		clean_rdma_handle(rh);
 
 		kfree(rdma_handles[i]);
 		kfree(rpc_pools[i]);
@@ -1519,25 +1539,8 @@ void __exit exit_rmm_rdma(void)
 
 	for (i = 0; i < NUM_BACKUPS; i++) {
 		struct rdma_handle *rh = backup_rh[i];
-		if (!rh) continue;
 
-		if (rh->recv_buffer) {
-			ib_dma_unmap_single(rh->device, rh->recv_buffer_dma_addr,
-					PAGE_SIZE, DMA_FROM_DEVICE);
-			kfree(rh->recv_buffer);
-		}
-
-		/*
-		   if (rh->dma_buffer) {
-		   ib_dma_unmap_single(rh->device, rh->dma_addr, 
-		   DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
-		   }
-		 */
-
-		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
-		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
-		if (rh->mr && !IS_ERR(rh->mr))
-			ib_dereg_mr(rh->mr);
+		clean_rdma_handle(rh);
 
 		kfree(rdma_handles[i]);
 		kfree(backup_rpc_pools[i]);
@@ -1964,19 +1967,19 @@ void init_for_test(void)
 	}
 
 	/*
-	if (!server) {
-		printk(PFX "remote memory alloc\n");
-		for (i = 0; i < 1; i++) {
-			mcos_rmm_alloc(0, FAKE_PA_START + i * 4096);
-		}
-	}
-	else {
-		for (i = 0; i < 1024; i++) {
-			sprintf(my_data[0] + (i * PAGE_SIZE), "Data in server: %d", i);
-			printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
-		}
-	}
-	*/
+	   if (!server) {
+	   printk(PFX "remote memory alloc\n");
+	   for (i = 0; i < 1; i++) {
+	   mcos_rmm_alloc(0, FAKE_PA_START + i * 4096);
+	   }
+	   }
+	   else {
+	   for (i = 0; i < 1024; i++) {
+	   sprintf(my_data[0] + (i * PAGE_SIZE), "Data in server: %d", i);
+	   printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
+	   }
+	   }
+	   */
 }
 #else
 void init_for_test(void)
@@ -2074,7 +2077,7 @@ int __init init_rmm_rdma(void)
 	   remote_fetch_async = mcos_rmm_fetch_async;
 	   remote_alloc_async = mcos_rmm_alloc_async;
 	   remote_free_async = mcos_rmm_free_async;
-	 */
+	   */
 #endif
 
 	create_worker_thread();

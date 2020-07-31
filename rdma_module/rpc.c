@@ -123,6 +123,37 @@ static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *r
 #endif
 }
 
+/*
+void *get_buffer(struct rdma_handle *rh, size_t size, dma_addr_t *dma_addr)
+{
+	void *addr;
+
+	dma_addr_t = d_addr;
+	addr =  ring_buffer_get_mapped(rh->rb, size + , &d_addr);
+	*dma_addr = d_addr + sizeof(struct rpc_header);
+
+	return addr + sizeof(struct rpc_header);
+}
+*/
+
+
+
+int wait_for_ack_timeout(int *done, u64 ticks)
+{
+	int ret;
+	u64 start = get_jiffies_64();
+	u64 cur = get_jiffies_64();
+
+	while(!(ret = *done)) {
+		cur = get_jiffies_64();
+		if (cur - start > ticks)
+			return -ETIME;
+		cpu_relax();
+	}
+
+	return 0;
+}
+
 int rmm_alloc(int nid, u64 vaddr)
 {
 	int offset, ret = 0;
@@ -135,10 +166,10 @@ int rmm_alloc(int nid, u64 vaddr)
 	int *done;
 
 	/*
-	------------------------------------------
-	|rpc_header| vaddr(8bytes) | done(4bytes)|
-	------------------------------------------
-	*/
+	   ------------------------------------------
+	   |rpc_header| vaddr(8bytes) | done(4bytes)|
+	   ------------------------------------------
+	   */
 	int buffer_size = sizeof(struct rpc_header) + 12;
 	int payload_size = sizeof(struct rpc_header) + 8;
 	int index = nid_to_rh(nid);
@@ -189,14 +220,11 @@ int rmm_alloc(int nid, u64 vaddr)
 		goto put_buffer;
 	}
 
-//	DEBUG_LOG(PFX "wait %p\n", rw);
+	ret = wait_for_ack_timeout(done, 10000);
+	if (!ret)
+		ret = *((int *) (args + 4));
 
-	while(!(ret = *done))
-		cpu_relax();
-
-	ret = *((int *) (args + 4));
-
-//	DEBUG_LOG(PFX "alloc done %d\n", ret);
+	//	DEBUG_LOG(PFX "alloc done %d\n", ret);
 
 put_buffer:
 	memset(dma_buffer, 0, buffer_size);
@@ -204,6 +232,7 @@ put_buffer:
 
 	return ret;
 }
+
 
 int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 {
@@ -216,10 +245,10 @@ int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	const struct ib_send_wr *bad_wr = NULL;
 
 	/*
-	-------------------------------------------------
-	|rpc_header| vaddr(8bytes) | rpage_flags(8bytes)|
-	-------------------------------------------------
-	*/
+	   -------------------------------------------------
+	   |rpc_header| vaddr(8bytes) | rpage_flags(8bytes)|
+	   -------------------------------------------------
+	   */
 	int buffer_size = sizeof(struct rpc_header) + 16;
 	int payload_size = sizeof(struct rpc_header) + 8;
 	int index = nid_to_rh(nid);
@@ -287,10 +316,10 @@ int rmm_free(int nid, u64 vaddr)
 	int *done;
 
 	/*
-	------------------------------------------
-	|rpc_header| vaddr(8bytes) | done(4bytes)|
-	------------------------------------------
-	*/
+	   ------------------------------------------
+	   |rpc_header| vaddr(8bytes) | done(4bytes)|
+	   ------------------------------------------
+	   */
 	int buffer_size = sizeof(struct rpc_header) + 12; 
 	int payload_size = sizeof(struct rpc_header) + 8;
 	int index = nid_to_rh(nid);
@@ -340,13 +369,13 @@ int rmm_free(int nid, u64 vaddr)
 		goto put_buffer;
 	}
 
-//	DEBUG_LOG(PFX "wait %p\n", rw);
+	//	DEBUG_LOG(PFX "wait %p\n", rw);
 
-	while(!(ret = *done))
-		cpu_relax();
+	wait_for_ack_timeout(done, 10000);
 
-	ret = *((int *) (args + 4));
-//	DEBUG_LOG(PFX "free done %d\n", ret);
+	if (!ret)
+		ret = *((int *) (args + 4));
+	//	DEBUG_LOG(PFX "free done %d\n", ret);
 
 put_buffer:
 	memset(dma_buffer, 0, buffer_size);
@@ -437,13 +466,13 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	const struct ib_send_wr *bad_wr = NULL;
 
 	/*
-	----------------------------------------------------------------------------------------
-	|rpc_header| r_vaddr(8bytes) | order(4bytes)| struct fetch_aux |reserved area for pages|
-	---------------------------------------------------------------------------------------
-	*/
+	   ----------------------------------------------------------------------------------------
+	   |rpc_header| r_vaddr(8bytes) | order(4bytes)| struct fetch_aux |reserved area for pages|
+	   ---------------------------------------------------------------------------------------
+	   */
 	int nr_pages = 1 << order;
 	int buffer_size = sizeof(struct rpc_header) + sizeof(struct fetch_args) +
-			sizeof (struct fetch_aux) + (nr_pages * PAGE_SIZE);
+		sizeof (struct fetch_aux) + (nr_pages * PAGE_SIZE);
 	int payload_size = sizeof(struct rpc_header) + sizeof(struct fetch_args);
 	int index = nid_to_rh(nid);
 
@@ -484,10 +513,10 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	aux->async.done = 0;
 
 	/*
-	getnstimeofday(&end_tv);
-	elapsed_fetch += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-		*/
+	   getnstimeofday(&end_tv);
+	   elapsed_fetch += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+	   (end_tv.tv_nsec - start_tv.tv_nsec);
+	   */
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	__put_rdma_work_nonsleep(rh, rw);
@@ -499,9 +528,7 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	}
 
 
-	while(!(ret = aux->async.done))
-		cpu_relax();
-
+	ret = wait_for_ack_timeout(&(aux->async.done), 30000);
 
 put_buffer:
 	memset(dma_buffer, 0, buffer_size);
@@ -529,7 +556,7 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 	   ----------------------------------------------------------------------------------------
 	   |rpc_header| r_vaddr(8bytes) | order(4bytes)| struct fetch_aux |reserved area for pages|
 	   ---------------------------------------------------------------------------------------
-	 */
+	   */
 	int nr_pages = 1 << order;
 	int buffer_size = sizeof(struct rpc_header) + sizeof(struct fetch_args) +
 		sizeof (struct fetch_aux) + (nr_pages * PAGE_SIZE);
@@ -575,7 +602,7 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 	   getnstimeofday(&end_tv);
 	   elapsed_fetch += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 	   (end_tv.tv_nsec - start_tv.tv_nsec);
-	 */
+	   */
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	__put_rdma_work_nonsleep(rh, rw);
@@ -614,7 +641,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	   ----------------------------------------------------------------
 	   |rpc_header| num_page(4byte) | (r_vaddr, page)...| done(4bytes)|
 	   ----------------------------------------------------------------
-	 */
+	   */
 	int buffer_size = sizeof(struct rpc_header) + 8 + ((8 + PAGE_SIZE) * num_page);
 	int payload_size = sizeof(struct rpc_header) + 4 + ((8 + PAGE_SIZE) * num_page);
 	const struct ib_send_wr *bad_wr = NULL;
@@ -677,6 +704,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 		goto put;
 	}
 
+	ret = wait_for_ack_timeout(done, 100000);
 	while(!(ret = *done))
 		cpu_relax();
 
@@ -702,7 +730,7 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 	   ------------------------------------------------------------------------
 	   |rpc_header| num_page(4byte) | (r_vaddr, page)...| done_pointer(8bytes)|
 	   ------------------------------------------------------------------------
-	 */
+	   */
 	int buffer_size = payload_size + 8;
 	const struct ib_send_wr *bad_wr = NULL;
 	int index = nid_to_rh(nid) + 1;
@@ -774,7 +802,7 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 	fap = (struct fetch_args *) rpc_buffer;
 	src = (void *) (fap->r_vaddr + rh->vaddr_start);
 
-//	src = my_data[0] + (u64) fap->r_vaddr;
+	//	src = my_data[0] + (u64) fap->r_vaddr;
 
 	order = fap->order;
 	payload_size = (1 << order) * PAGE_SIZE;
@@ -997,9 +1025,9 @@ void regist_handler(Rpc_handler rpc_table[])
 void regist_handler(Rpc_handler rpc_table[])
 {
 	rpc_table[RPC_OP_FETCH] = rpc_handle_fetch_cpu;
-	rpc_table[RPC_OP_EVICT] = rpc_handle_evict_done;
-	rpc_table[RPC_OP_ALLOC] = rpc_handle_alloc_free_done;
-	rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_done;
+//	rpc_table[RPC_OP_EVICT] = rpc_handle_evict_done;
+//	rpc_table[RPC_OP_ALLOC] = rpc_handle_alloc_free_done;
+//	rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_done;
 }
 
 #endif

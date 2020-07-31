@@ -23,6 +23,11 @@ struct rpc_header {
 	bool async;
 };
 
+union rpc_tail {
+	u64 rpage_flags;
+	int done;
+};
+
 struct fetch_args {
 	u64 r_vaddr;
 	u32 order;
