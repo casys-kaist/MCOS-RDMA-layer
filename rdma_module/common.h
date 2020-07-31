@@ -15,12 +15,8 @@
 #include "config.h"
 
 #define MAX_NUM_NODES		(16)
-#define NUM_BACKUPS		(1)	
-#define NUM_RNICS		2
 
 static uint32_t ip_table[MAX_NUM_NODES] = { 0 };
-static uint32_t backup_ip_table[NUM_BACKUPS] = { 0 };
-static uint32_t rnic_ip_table[NUM_RNICS] = { 0 };
 
 static uint32_t __init __get_host_ip(void)
 {
@@ -31,8 +27,8 @@ static uint32_t __init __get_host_ip(void)
 		for (ifaddr = d->ip_ptr->ifa_list; ifaddr; ifaddr = ifaddr->ifa_next) {
 			int i;
 			uint32_t addr = ifaddr->ifa_local;
-			for (i = 0; i < NUM_RNICS; i++) {
-				if (addr == rnic_ip_table[i]) {
+			for (i = 0; i < MAX_NUM_NODES; i++) {
+				if (addr == ip_table[i]) {
 					return addr;
 				}
 			}
@@ -44,6 +40,7 @@ static uint32_t __init __get_host_ip(void)
 bool __init identify_myself(uint32_t *my_ip)
 {
 	int i;
+	int my_nid;
 
 	printk("rmm: Loading node configuration...");
 
@@ -51,17 +48,8 @@ bool __init identify_myself(uint32_t *my_ip)
 		ip_table[i] = in_aton(ip_addresses[i]);
 	}
 
-#ifdef CONFIG_RM
-	for (i = 0; i < NUM_BACKUPS && i < ARRAY_SIZE(backup_ip_addresses); i++) {
-		backup_ip_table[i] = in_aton(backup_ip_addresses[i]);
-	}
-	for (i = 0; i < NUM_BACKUPS && i < ARRAY_SIZE(rnic_ip_addresses); i++) {
-		rnic_ip_table[i] = in_aton(rnic_ip_addresses[i]);
-	}
-#endif
-
 	*my_ip = __get_host_ip();
-	/*
+
 	for (i = 0; i < MAX_NUM_NODES; i++) {
 		char *me = " ";
 		if (my_ip == ip_table[i]) {
@@ -75,7 +63,6 @@ bool __init identify_myself(uint32_t *my_ip)
 		printk(KERN_ERR "RMM: My IP is not listed in the node configuration\n");
 		return false;
 	}
-	*/
 
 	return true;
 }
