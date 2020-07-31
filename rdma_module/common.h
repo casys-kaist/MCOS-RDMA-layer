@@ -50,9 +50,9 @@ bool __init identify_myself(uint32_t *my_ip)
 
 	*my_ip = __get_host_ip();
 
-	for (i = 0; i < MAX_NUM_NODES; i++) {
+	for (i = 0; i < MAX_NUM_NODES && i < ARRAY_SIZE(ip_addresses); i++) {
 		char *me = " ";
-		if (my_ip == ip_table[i]) {
+		if (*my_ip == ip_table[i]) {
 			my_nid = i;
 			me = "*";
 		}

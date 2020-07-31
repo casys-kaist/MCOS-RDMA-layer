@@ -911,6 +911,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 			page_pointer += (8 + PAGE_SIZE);
 		}
 	}
+
 	for (i = 0; c_infos[i].nid >= 0; i++) {
 		if (c_infos[i].c_type == SYNC) {
 			wait_for_replication = true;
@@ -920,7 +921,6 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 			DEBUG_LOG(PFX "replicate done\n");
 		}
 	}
-
 
 	page_pointer = evict_buffer + 4;
 	DEBUG_LOG(PFX "num_page %d, from %s\n", num_page, __func__);
