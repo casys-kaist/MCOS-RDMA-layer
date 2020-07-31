@@ -28,7 +28,7 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 
 static int server = 0;
 
-const struct connection_info c_infos[] = {
+const struct connection_info c_infos[MAX_NUM_NODES] = {
 	{2, SYNC},
 	{-1, -1}, /* end */
 };
@@ -1140,7 +1140,7 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 	step = "connect";
 	private_data.qp_type = qp_type;
 	private_data.c_type = c_type;
-	private_data.nid = nid;
+	private_data.nid = NID;
 	DEBUG_LOG(PFX "%s\n", step);
 	{
 		struct rdma_conn_param conn_param = {
@@ -1385,6 +1385,8 @@ int connect_to_servers(void)
 	int i, ret;
 
 	for (i = 0; i < ARRAY_SIZE(c_infos); i++) { 
+		if (c_infos[i].nid < 0)
+			break;
 		DEBUG_LOG(PFX "connect to server\n");
 		if ((ret = __connect_to_server(c_infos[i].nid, QP_FETCH, c_infos[i].c_type))) 
 			return ret;
@@ -1440,10 +1442,8 @@ void __exit exit_rmm_rdma(void)
 		if (rdma_handles[i]->cm_id)
 			rdma_disconnect(rdma_handles[i]->cm_id);
 	}
-
-#ifdef RMM_TEST
 	remove_proc_entry("rmm", NULL);
-#endif
+
 	for (i = 0; i < NUM_QPS; i++) {
 		struct rdma_handle *rh = rdma_handles[i];
 		if (!rh) continue;
