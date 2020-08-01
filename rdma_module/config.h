@@ -7,19 +7,18 @@
 
 /*IP order has to follow NID */
 const char *ip_addresses[] = {
-	"10.0.0.40",
-	"10.0.0.41",
-	"10.0.0.29",
+	"10.0.0.34",
 	"10.0.0.36",
+	"10.0.0.21",
+	"10.0.0.29",
 };
 
-#define NID 1
+#define NID 0
 
 /* SANGJIN START */
 // True if asynchronous replication
-#define CONFIG_RECOVERY 1
+// #define CONFIG_RECOVERY 0
 /* SANGJIN END */
-
 #endif
 
 

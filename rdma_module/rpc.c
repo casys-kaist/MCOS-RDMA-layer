@@ -972,7 +972,6 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 		}
 	}
 
-<<<<<<< HEAD
 	for (i = 0; c_infos[i].nid >= 0; i++) {
 		if (c_infos[i].c_type == SYNC) {
 			wait_for_replication = true;
@@ -981,22 +980,6 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 					sizeof(struct rpc_header) + sizeof(int), &done);
 			DEBUG_LOG(PFX "replicate done\n");
 		}
-=======
-	if (cr_on) {
-		DEBUG_LOG(PFX "replicate to backup server\n");
-/* SANGJIN START */
-#ifdef CONFIG_RECOVERY
-		atomic_fetch_add(1, &req_cnt);	
-		rmm_evict_forward(0, rh->evict_buffer + offset, num_page * (8 + PAGE_SIZE) + 
-				sizeof(struct rpc_header) + sizeof(int), &ack_cnt);
-#else
-		rmm_evict_forward(0, rh->evict_buffer + offset, num_page * (8 + PAGE_SIZE) + 
-				sizeof(struct rpc_header) + sizeof(int), &done);
-#endif
-/* SANGJIN END */
-
-		DEBUG_LOG(PFX "replicate done\n");
->>>>>>> 290e3b88d40bfa4f4f7b354df4c38a5e93abf858
 	}
 
 	page_pointer = evict_buffer + 4;
@@ -1009,17 +992,10 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	}
 
 /* SANGJIN START */
-#ifndef CONFIG_RECOVERY
-<<<<<<< HEAD
 	if (wait_for_replication) {
 		while(!(ret = done))
-=======
-	if (cr_on) {
-		while(!(atomic_read(&done)))
->>>>>>> 290e3b88d40bfa4f4f7b354df4c38a5e93abf858
 			cpu_relax();
 	}
-#endif
 /* SANGJIN END */
 
 	/* set buffer to -1 to send ack to caller */
