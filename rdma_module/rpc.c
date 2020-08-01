@@ -673,7 +673,7 @@ put:
 	return ret;
 }
 
-int rmm_evict_forward(int nid, void *src_buffer, int payload_size, atomic_t *done)
+int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 {
 	int offset;
 	uint8_t *evict_buffer = NULL;
@@ -718,7 +718,7 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, atomic_t *don
 	memcpy(evict_buffer, src_buffer, payload_size);
 	rhp = (struct rpc_header *) evict_buffer;
 	rhp->async = true;
-	*((atomic_t **) (evict_buffer + payload_size)) = done;
+	*((int **) (evict_buffer + payload_size)) = done;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	__put_rdma_work_nonsleep(rh, rw);
@@ -821,6 +821,7 @@ put_buffer:
         return ret;
 }
 /* SANGJIN END */
+
 static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 {
 	int ret = 0;
@@ -950,7 +951,8 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 {
 	int i, num_page, ret;
-	atomic_t done = ATOMIC_INIT(0);
+	//atomic_t done = ATOMIC_INIT(0);
+	int done = 0; 
 	u64 dest;
 	struct rdma_work *rw;
 	uint8_t *evict_buffer, *page_pointer;
