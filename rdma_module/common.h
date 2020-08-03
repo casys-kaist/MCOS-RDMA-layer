@@ -40,7 +40,6 @@ static uint32_t __init __get_host_ip(void)
 bool __init identify_myself(uint32_t *my_ip)
 {
 	int i;
-	int my_nid;
 
 	printk("rmm: Loading node configuration...");
 
