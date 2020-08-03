@@ -23,13 +23,14 @@
 #define NUM_QPS (MAX_NUM_NODES * 2)
 
 int debug = 0;
+int my_nid = 0;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 
 static int server = 0;
 
 const struct connection_info c_infos[MAX_NUM_NODES] = {
-	{2, SYNC},
+//	{2, SYNC},
 	{-1, -1}, /* end */
 };
 
@@ -1148,7 +1149,7 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 	step = "connect";
 	private_data.qp_type = qp_type;
 	private_data.c_type = c_type;
-	private_data.nid = NID;
+	private_data.nid = my_nid;
 	DEBUG_LOG(PFX "%s\n", step);
 	{
 		struct rdma_conn_param conn_param = {
