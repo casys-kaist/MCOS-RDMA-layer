@@ -29,8 +29,8 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw);
 
 /* SANGJIN START */
-static atomic_t req_cnt = ATOMIC_INIT(0);
-static atomic_t ack_cnt = ATOMIC_INIT(0); 
+static int req_cnt = 0;
+static int ack_cnt = 0; 
 /* SANGJIN END */
 
 
@@ -786,7 +786,7 @@ int rmm_recovery(int nid)
         rhp->op = RPC_OP_RECOVERY;
         rhp->async = false;
 
-        /*copy done buffer */
+        /* copy done buffer */
         args = dma_buffer + sizeof(struct rpc_header);
         done = (int *) args;
         *done = 0;
@@ -974,13 +974,29 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 		}
 	}
 
+	/* async */
+	if (rh->async) 
+		req_cnt++;
+
 	for (i = 0; c_infos[i].nid >= 0; i++) {
 		if (c_infos[i].c_type == SYNC) {
 			wait_for_replication = true;
-			DEBUG_LOG(PFX "replicate to backup server\n");
-			rmm_evict_forward(c_infos[i].nid, rh->evict_buffer + offset, num_page * (8 + PAGE_SIZE) + 
+			DEBUG_LOG(PFX "replicate to backup server SYNC\n");
+			if (!rh->async)
+				rmm_evict_forward(c_infos[i].nid, rh->evict_buffer + offset, num_page * (8 + PAGE_SIZE) + 
 					sizeof(struct rpc_header) + sizeof(int), &done);
+			else
+				rmm_evict_forward(c_infos[i].nid, rh->evict_buffer + offset, num_page * (8 + PAGE_SIZE) + 
+					sizeof(struct rpc_header) + sizeof(int), &ack_cnt);
+
 			DEBUG_LOG(PFX "replicate done\n");
+		}
+		else if (c_infos[i].c_type == ASYNC) {
+			DEBUG_LOG(PFX "replicate to backup server ASYNC\n");
+			rmm_evict_forward(c_infos[i].nid, rh->evict_buffer + offset, num_page * (8 + PAGE_SIZE) + 
+					sizeof(struct rpc_header) + sizeof(int), &ack_cnt);
+			DEBUG_LOG(PFX "replicate done\n");
+			
 		}
 	}
 
@@ -1097,8 +1113,12 @@ static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
 	DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
 
 	// busy wait until full consistentcy with r1 and r2
-	while (!(atomic_read(&req_cnt) == atomic_read(&ack_cnt)))
+	while (!(req_cnt == ack_cnt))
 		cpu_relax();
+
+	// initialize
+	req_cnt = 0;
+	ack_cnt = 0;
 
 	*((int *) (rpc_buffer + 4)) = ret;
 	DEBUG_LOG(PFX "ret in %s, %d\n", __func__, ret);

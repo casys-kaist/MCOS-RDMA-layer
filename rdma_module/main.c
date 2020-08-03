@@ -330,13 +330,14 @@ int rpc_handle_evict_done(struct rdma_handle *rh, uint32_t offset)
 	rhp = (struct rpc_header *) buffer;
 	if (!rhp->async) {
 		done = (int *) (buffer + sizeof(struct rpc_header) + 4 + (nr_pages * (PAGE_SIZE + 8)));
+		*done = 1;
 	}
 	else {
 		done_p = (int **) (buffer + sizeof(struct rpc_header) + 4 + (nr_pages * (PAGE_SIZE + 8)));
 		done = *done_p;
+		*done += 1;
 		ring_buffer_put(rh->rb, buffer);
 	}
-	*done = 1;
 
 	return 0;
 }
@@ -1208,6 +1209,24 @@ out_err:
 	return ret;
 }
 
+int connect_to_servers(void)
+{
+	int i, ret;
+
+	for (i = 0; i < ARRAY_SIZE(c_infos); i++) { 
+		if (c_infos[i].nid < 0)
+			break;
+		DEBUG_LOG(PFX "connect to server\n");
+		if ((ret = __connect_to_server(c_infos[i].nid, QP_FETCH, c_infos[i].c_type))) 
+			return ret;
+		if ((ret = __connect_to_server(c_infos[i].nid, QP_EVICT, c_infos[i].c_type))) 
+			return ret;
+	}
+
+	return 0;
+}
+
+
 /****************************************************************************
  * Server-side connection handling
  */
@@ -1396,23 +1415,6 @@ static int __listen_to_connection(void)
 	if (ret) {
 		printk(KERN_ERR PFX "Cannot listen to incoming requests, %d\n", ret);
 		return ret;
-	}
-
-	return 0;
-}
-
-int connect_to_servers(void)
-{
-	int i, ret;
-
-	for (i = 0; i < ARRAY_SIZE(c_infos); i++) { 
-		if (c_infos[i].nid < 0)
-			break;
-		DEBUG_LOG(PFX "connect to server\n");
-		if ((ret = __connect_to_server(c_infos[i].nid, QP_FETCH, c_infos[i].c_type))) 
-			return ret;
-		if ((ret = __connect_to_server(c_infos[i].nid, QP_EVICT, c_infos[i].c_type))) 
-			return ret;
 	}
 
 	return 0;

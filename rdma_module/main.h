@@ -138,13 +138,6 @@ struct pool_info {
 	size_t size;
 };
 
-struct evict_info {
-	u64 l_vaddr;
-	u64 r_vaddr;
-
-	struct list_head next;
-};
-
 #pragma pack(push, 1)
 struct conn_private_data {
 	unsigned int qp_type : 1;

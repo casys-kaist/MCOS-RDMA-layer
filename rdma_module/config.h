@@ -13,7 +13,7 @@ const char *ip_addresses[] = {
 	"10.0.0.29",
 };
 
-#define NID 3
+#define NID 0 
 
 /* SANGJIN START */
 // True if asynchronous replication
