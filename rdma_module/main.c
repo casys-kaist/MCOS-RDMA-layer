@@ -29,7 +29,9 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
 const struct connection_info c_infos[MAX_NUM_NODES] = {
-	{2, SYNC},
+	{1, PRIMARY},
+	{2, PRIMARY},
+	{3, PRIMARY},
 	{-1, -1}, /* end */
 };
 
