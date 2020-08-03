@@ -37,7 +37,7 @@ static uint32_t __init __get_host_ip(void)
 	return -1;
 }
 
-bool __init identify_myself(uint32_t *my_ip)
+bool __init identify_myself(uint32_t *my_ip, int *my_nid)
 {
 	int i;
 
@@ -52,13 +52,13 @@ bool __init identify_myself(uint32_t *my_ip)
 	for (i = 0; i < MAX_NUM_NODES && i < ARRAY_SIZE(ip_addresses); i++) {
 		char *me = " ";
 		if (*my_ip == ip_table[i]) {
-			my_nid = i;
+			*my_nid = i;
 			me = "*";
 		}
 		printk("RMM: " "%s %d: %pI4\n", me, i, ip_table + i);
 	}
 
-	if (my_nid < 0) {
+	if (*my_nid < 0) {
 		printk(KERN_ERR "RMM: My IP is not listed in the node configuration\n");
 		return false;
 	}

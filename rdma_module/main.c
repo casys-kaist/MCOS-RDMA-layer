@@ -30,7 +30,7 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
 const struct connection_info c_infos[MAX_NUM_NODES] = {
-//	{2, SYNC},
+	{4, SYNC},
 	{-1, -1}, /* end */
 };
 
@@ -1978,7 +1978,7 @@ int __init init_rmm_rdma(void)
 
 	printk(PFX "init rmm rdma\n");
 
-	if (!identify_myself(&my_ip)) 
+	if (!identify_myself(&my_ip, &my_nid)) 
 		return -EINVAL;
 
 	regist_handler(rpc_table);

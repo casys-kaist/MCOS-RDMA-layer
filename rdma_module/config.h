@@ -5,7 +5,7 @@
  * XXX DO NOT commit your local config file!!! XXX
  */
 
-/*IP order has to follow NID */
+/*IP order is equal to  NID */
 const char *ip_addresses[] = {
 	"10.0.0.40",
 	"10.0.0.41",
