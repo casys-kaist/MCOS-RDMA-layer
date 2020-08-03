@@ -975,14 +975,14 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	}
 
 	/* async */
-	if (rh->async) 
+	if (rhp->async) 
 		req_cnt++;
 
 	for (i = 0; c_infos[i].nid >= 0; i++) {
 		if (c_infos[i].c_type == SYNC) {
 			wait_for_replication = true;
 			DEBUG_LOG(PFX "replicate to backup server SYNC\n");
-			if (!rh->async)
+			if (!rhp->async)
 				rmm_evict_forward(c_infos[i].nid, rh->evict_buffer + offset, num_page * (8 + PAGE_SIZE) + 
 					sizeof(struct rpc_header) + sizeof(int), &done);
 			else
