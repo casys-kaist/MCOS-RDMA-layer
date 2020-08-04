@@ -21,7 +21,6 @@
 
 extern int debug;
 extern struct rdma_handle *rdma_handles[];
-extern struct connection_info c_infos[];
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
 static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
@@ -830,6 +829,7 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 	struct rpc_header *rhp;
 	const struct ib_send_wr *bad_wr = NULL;
 	char *rpc_buffer;
+	struct node_info *infos;
 
 	rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
 
@@ -851,22 +851,21 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 
 	DEBUG_LOG(PFX "nid: %d, offset: %d, vaddr: %llX op: %d\n", nid, offset, vaddr, op);
 
+	infos = get_node_infos(MEM_GID, BACKUP_SYNC);
 	if (op == RPC_OP_ALLOC)  {
 		/* rm_alloc and free return true when they success */
 		ret = rm_alloc(vaddr);
 		if (ret) {
-			for (i = 0; c_infos[i].nid >= 0; i++) {
-				if (c_infos[i].c_type == SYNC)
-					rmm_alloc(c_infos[i].nid, vaddr);
+			for (i = 0; infos->size; i++) {
+				rmm_alloc(infos->nids[i], vaddr);
 			}
 		}
 	}
 	else if (op == RPC_OP_FREE) {
 		ret = rm_free(vaddr);
 		if (ret) {
-			for (i = 0; c_infos[i].nid >= 0; i++) {
-				if (c_infos[i].c_type == SYNC)
-					rmm_alloc(c_infos[i].nid, vaddr);
+			for (i = 0; infos->size; i++) {
+				rmm_free(infos->nids[i], vaddr);
 			}
 		}
 	}
@@ -898,6 +897,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	bool wait_for_replication = false;
 
 	struct rpc_header *rhp;
+	struct node_info *infos;
 
 	rhp = (struct rpc_header *) (rh->evict_buffer + offset);
 	evict_buffer = rh->evict_buffer + (offset) + sizeof(struct rpc_header);
@@ -912,14 +912,14 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 		}
 	}
 
-	for (i = 0; c_infos[i].nid >= 0; i++) {
-		if (c_infos[i].c_type == SYNC) {
-			wait_for_replication = true;
-			DEBUG_LOG(PFX "replicate to backup server\n");
-			rmm_evict_forward(c_infos[i].nid, rh->evict_buffer + offset, num_page * (8 + PAGE_SIZE) + 
-					sizeof(struct rpc_header) + sizeof(int), &done);
-			DEBUG_LOG(PFX "replicate done\n");
-		}
+	infos = get_node_infos(MEM_GID, BACKUP_SYNC);
+	for (i = 0; i < infos->size; i++) {
+		wait_for_replication = true;
+		DEBUG_LOG(PFX "replicate to backup server\n");
+		rmm_evict_forward(infos->nids[i], rh->evict_buffer + offset, 
+				num_page * (8 + PAGE_SIZE) + 
+				sizeof(struct rpc_header) + sizeof(int), &done);
+		DEBUG_LOG(PFX "replicate done\n");
 	}
 
 	page_pointer = evict_buffer + 4;
@@ -1015,9 +1015,9 @@ void regist_handler(Rpc_handler rpc_table[])
 void regist_handler(Rpc_handler rpc_table[])
 {
 	rpc_table[RPC_OP_FETCH] = rpc_handle_fetch_cpu;
-//	rpc_table[RPC_OP_EVICT] = rpc_handle_evict_done;
-//	rpc_table[RPC_OP_ALLOC] = rpc_handle_alloc_free_done;
-//	rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_done;
+	//	rpc_table[RPC_OP_EVICT] = rpc_handle_evict_done;
+	//	rpc_table[RPC_OP_ALLOC] = rpc_handle_alloc_free_done;
+	//	rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_done;
 }
 
 #endif

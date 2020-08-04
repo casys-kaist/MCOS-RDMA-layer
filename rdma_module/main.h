@@ -5,14 +5,11 @@
 #define RDMA_ADDR_RESOLVE_TIMEOUT_MS 5000
 
 #define IMM_DATA_SIZE 4 /* bytes */
-#define RPC_ARGS_SIZE 16 /* bytes */
 
 #define DMA_BUFFER_SIZE		(PAGE_SIZE * 8192)
 
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
-//#define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
 #define NR_RDMA_SLOTS	(5000)
-//#define NR_SINK_SLOTS	(SINK_BUFFER_SIZE / PAGE_SIZE)
 #define MAX_RECV_DEPTH	(NR_RDMA_SLOTS + 5)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 5)
 
@@ -21,6 +18,9 @@
 #define ACC_CPU_ID 13
 #define POLL_CPU_ID 14 
 #define WORKER_CPU_ID 15 
+
+#define MEM_GID 0 /* memory server only has a single group */
+#define MAX_GROUP_SIZE 5
 
 #define QP_FETCH	0
 #define QP_EVICT	1
@@ -54,16 +54,31 @@
 #define RPAGE_FREE_FAILED       0x00000200
 #define RPAGE_FETCHED           0x00000400
 
+
 enum connection_type {
-	PRIMARY,
-	SYNC,
-	ASYNC,
+	PRIMARY, /* accept all types of RPCs */
+	SECONDARY, /* only accept fetch */
+	BACKUP_SYNC,
+	BACKUP_ASYNC,
+	NUM_CTYPE,
 };
 
-struct connection_info {
-	int nid;
-	enum connection_type c_type;
+struct node_info {
+	int nids[MAX_GROUP_SIZE];
+	int size;
 };
+
+struct connection_config {
+	int nid;
+	int gid;
+	enum connection_type ctype;
+}; 
+
+struct connection_info {
+	struct node_info infos[NUM_CTYPE];
+};
+
+extern struct connection_info c_infos[];
 
 enum wr_type {
 	WORK_TYPE_REG,
@@ -204,7 +219,6 @@ struct rdma_handle {
 	/*************/
 
 	struct ring_buffer *rb;
-	struct ring_buffer *rb_sink;
 
 	struct rdma_cm_id *cm_id;
 	struct ib_device *device;
@@ -218,7 +232,40 @@ static inline int nid_to_rh(int nid)
 	return nid * 2;
 }
 
+static inline struct node_info *get_node_infos(int gid, enum connection_type ctype)
+{
+	if (ctype >= NUM_CTYPE)
+		return NULL;
+	return &c_infos[gid].infos[ctype];
+}
 
+static inline int add_node_to_group(int gid, int nid, enum connection_type ctype)
+{
+	struct node_info *infos = get_node_infos(gid, ctype);
+	if (infos->size == MAX_GROUP_SIZE)
+		return -ENOMEM;
+	infos->nids[infos->size] = nid;
+	infos->size++;
+	
+	return 0;
+}
+
+static inline int remove_node_from_group(int gid, int nid, enum connection_type ctype)
+{
+	int i;
+	struct node_info *infos = get_node_infos(gid, ctype);
+
+	for (i = 0; i < infos->size; i++) {
+		if (infos->nids[i] == nid) {
+			memcpy(&infos->nids[i], &infos->nids[i+1], 
+					sizeof(infos->nids[0] * (MAX_GROUP_SIZE - 1 - i)));
+		}
+
+	}
+	infos->size--;
+
+	return 0;
+}
 
 /* prototype of symbol */
 /*
@@ -250,6 +297,6 @@ static inline int nid_to_rh(int nid)
    {
    return ib_dealloc_pd_user(pd);
    }
- */
+   */
 
 #endif
