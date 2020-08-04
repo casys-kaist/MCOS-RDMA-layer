@@ -18,6 +18,7 @@
 #include "common.h"
 #include "ring_buffer.h"
 #include "main.h"
+#include "mcos.h"
 #include "rpc.h"
 
 #define NUM_QPS (MAX_NUM_NODES * 2)
@@ -29,10 +30,13 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 
 static int server = 0;
 
-const struct connection_info c_infos[MAX_NUM_NODES] = {
-	{4, SYNC},
-	{-1, -1}, /* end */
+const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
+	{4, MEM_GID, BACKUP_SYNC},
+	{-1, -1, -1}, /* end */
 };
+
+struct connection_info c_infos[MAX_NUM_GROUPS];
+static int num_groups = 0;
 
 static struct completion done_worker[NR_WORKER_THREAD];
 static struct worker_thread w_threads[NR_WORKER_THREAD];
@@ -73,16 +77,6 @@ static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)
 static int __setup_recv_works(struct rdma_handle *rh);
 static int start_connection(void);
 
-#ifdef CONFIG_MCOS
-extern int (*remote_alloc)(int, u64);
-extern int (*remote_free)(int, u64);
-extern int (*remote_fetch)(int, void *, void *, unsigned int);
-extern int (*remote_evict)(int, struct list_head *, int);
-
-extern int (*remote_alloc_async)(int, u64, unsigned long *);
-extern int (*remote_free_async)(int, u64, unsigned long *);
-extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned long *);
-#endif
 
 
 static inline unsigned long long get_ns(void)
@@ -96,105 +90,6 @@ static inline void rmm_yield_cpu(void)
 {
 	cond_resched();
 }
-
-
-int mcos_rmm_alloc(int nid, u64 vaddr)
-{
-	return rmm_alloc(nid, vaddr - FAKE_PA_START);
-}
-
-int mcos_rmm_free(int nid, u64 vaddr)
-{
-	return rmm_free(nid, vaddr - FAKE_PA_START);
-}
-
-int mcos_rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
-{
-	return rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
-}
-
-int mcos_rmm_evict(int nid, struct list_head *evict_list, int num_page)
-{
-	struct list_head *l;
-
-	list_for_each(l, evict_list) {
-		struct evict_info *e = list_entry(l, struct evict_info, next);
-		e->r_vaddr -= FAKE_PA_START;
-	}
-	return rmm_evict(nid, evict_list, num_page);
-}
-
-int mcos_rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
-{
-	return rmm_alloc_async(nid, vaddr - FAKE_PA_START, rpage_flags);
-}
-
-int mcos_rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
-{
-	return rmm_free_async(nid, vaddr - FAKE_PA_START, rpage_flags);
-}
-
-int mcos_rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, unsigned long *rpage_flags)
-{
-	return rmm_fetch_async(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, rpage_flags);
-}
-
-/*
-   static inline int __get_rpc_buffer(struct rdma_handle *rh) 
-   {
-   int i;
-
-   do {
-   spin_lock(&rh->rpc_slots_lock);
-   i = find_first_zero_bit(rh->rpc_slots, NR_RPC_SLOTS);
-   if (i < NR_RPC_SLOTS) break;
-   spin_unlock(&rh->rpc_slots_lock);
-//	WARN_ON_ONCE("recv buffer is full");
-} while (i >= NR_RPC_SLOTS);
-set_bit(i, rh->rpc_slots);
-spin_unlock(&rh->rpc_slots_lock);
-
-return i;
-}
-
-static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot) 
-{
-spin_lock(&rh->rpc_slots_lock);
-BUG_ON(!test_bit(slot, rh->rpc_slots));
-clear_bit(slot, rh->rpc_slots);
-spin_unlock(&rh->rpc_slots_lock);
-}
- */
-
-/*
-   static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order) 
-   {
-   int i;
-   unsigned int num_pages = 1 << order;
-
-   do {
-   spin_lock(&rh->sink_slots_lock);
-   i = bitmap_find_next_zero_area(rh->sink_slots, NR_SINK_SLOTS, 0, num_pages, 0);
-   if (i < NR_SINK_SLOTS) break;
-   spin_unlock(&rh->sink_slots_lock);
-   WARN_ON_ONCE("recv buffer is full");
-   } while (i >= NR_SINK_SLOTS);
-   bitmap_set(rh->sink_slots, i, num_pages);
-   spin_unlock(&rh->sink_slots_lock);
-
-   return i;
-   }
-
-   static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned int order) 
-   {
-   unsigned int num_pages = 1 << order;
-
-   spin_lock(&rh->sink_slots_lock);
-   bitmap_clear(rh->sink_slots, slot, num_pages);
-   spin_unlock(&rh->sink_slots_lock);
-   }
-
- */
 
 static inline struct worker_thread *get_worker_thread(void)
 {
@@ -770,15 +665,6 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 
 	rh->rb = ring_buffer_create(rh->rpc_buffer, rh->rpc_dma_addr, DMA_BUFFER_SIZE,"dma buffer"); 
 
-	/*
-	   if (!rh->rb && rh->qp_type == QP_FETCH) {
-	   rh->rb = ring_buffer_create(rh->rpc_buffer, rh->rpc_dma_addr, RPC_BUFFER_SIZE,"rpc buffer"); 
-	   rh->rb_sink = ring_buffer_create(rh->rpc_buffer, rh->rpc_dma_addr, SINK_BUFFER_SIZE,"rpc buffer"); 
-	   }
-	   else if (!rh->rb && rh->qp_type == QP_EVICT)
-	   rh->rb = ring_buffer_create(rh->evict_buffer, rh->evict_dma_addr, DMA_BUFFER_SIZE,"eivct buffer"); 
-	   */
-
 	return 0;
 out_dereg:
 	ib_dereg_mr(mr);
@@ -1188,6 +1074,30 @@ out_err:
 	return ret;
 }
 
+int connect_to_servers(void)
+{
+	int i, j, k, ret, nid;
+	enum connection_type ctype;
+	struct node_info infos;
+
+	for (i = 0; i < num_groups; i++) { 
+		for (j = 0; j < NUM_CTYPE; j++) {
+			infos = c_infos[i].infos[j];
+			ctype = j;
+			for (k = 0; k < infos.size; k++) {
+				nid = infos.nids[k];
+				DEBUG_LOG(PFX "connect to server\n");
+				if ((ret = __connect_to_server(nid, QP_FETCH, ctype))) 
+					return ret;
+				if ((ret = __connect_to_server(nid, QP_EVICT, ctype))) 
+					return ret;
+			}
+		}
+	}
+
+	return 0;
+}
+
 /****************************************************************************
  * Server-side connection handling
  */
@@ -1381,22 +1291,6 @@ static int __listen_to_connection(void)
 	return 0;
 }
 
-int connect_to_servers(void)
-{
-	int i, ret;
-
-	for (i = 0; i < ARRAY_SIZE(c_infos); i++) { 
-		if (c_infos[i].nid < 0)
-			break;
-		DEBUG_LOG(PFX "connect to server\n");
-		if ((ret = __connect_to_server(c_infos[i].nid, QP_FETCH, c_infos[i].c_type))) 
-			return ret;
-		if ((ret = __connect_to_server(c_infos[i].nid, QP_EVICT, c_infos[i].c_type))) 
-			return ret;
-	}
-
-	return 0;
-}
 
 static int __establish_connections(void)
 {
@@ -1662,7 +1556,7 @@ static void test_fetch(int order)
 	DEBUG_LOG(PFX "fetch start\n");
 	getnstimeofday(&start_tv);
 	for (i = 0; i < 512; i++) {
-		mcos_rmm_fetch(0, my_data[0] + (i * size), ((void *) FAKE_PA_START) + (i * size), order);
+		rmm_fetch(0, my_data[0] + (i * size), (void *) (i * size), order);
 		DEBUG_LOG(PFX "fetched data %s\n", my_data[0] + (i * size));
 	}
 	getnstimeofday(&end_tv);
@@ -1715,13 +1609,13 @@ static int test_evict(void)
 			index %= 1024;
 
 			ei->l_vaddr = (uint64_t) (my_data[0] + index * (PAGE_SIZE));
-			ei->r_vaddr = (uint64_t) (((void *) FAKE_PA_START) + index * (PAGE_SIZE));
+			ei->r_vaddr = (uint64_t) (index * PAGE_SIZE);
 			INIT_LIST_HEAD(&ei->next);
 			list_add(&ei->next, &addr_list);
 		}
 
 		getnstimeofday(&start_tv);
-		mcos_rmm_evict(0, &addr_list, 64);
+		rmm_evict(0, &addr_list, 64);
 		getnstimeofday(&end_tv);
 		elapsed += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 			(end_tv.tv_nsec - start_tv.tv_nsec);
@@ -1919,6 +1813,18 @@ static int start_connection(void)
 	return 0;
 }
 
+static void init_connection_infos(void)
+{
+	int i;
+	struct node_info *infos;
+
+	for (i = 0; c_config[i].nid >= 0; i++) {
+		infos = get_node_infos(c_config[i].gid, c_config[i].ctype);
+		infos->nids[infos->size] = c_config[i].nid;
+		infos->size++;
+	}
+}
+
 
 int __init init_rmm_rdma(void)
 {
@@ -1965,21 +1871,10 @@ int __init init_rmm_rdma(void)
 	}
 
 	server_rh.state = RDMA_INIT;
+
 	init_completion(&server_rh.cm_done);
-
-#ifdef CONFIG_MCOS
-	remote_fetch = mcos_rmm_fetch;
-	remote_evict = mcos_rmm_evict;
-	remote_alloc = mcos_rmm_alloc;
-	remote_free = mcos_rmm_free;
-	remote_fetch_async = mcos_rmm_fetch_async;
-
-	/*
-	   remote_fetch_async = mcos_rmm_fetch_async;
-	   remote_alloc_async = mcos_rmm_alloc_async;
-	   remote_free_async = mcos_rmm_free_async;
-	   */
-#endif
+	init_connection_infos();
+	init_mcos();
 
 	create_worker_thread();
 

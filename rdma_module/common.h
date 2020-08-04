@@ -15,6 +15,7 @@
 #include "config.h"
 
 #define MAX_NUM_NODES		(16)
+#define MAX_NUM_GROUPS		(4)
 
 static uint32_t ip_table[MAX_NUM_NODES] = { 0 };
 
