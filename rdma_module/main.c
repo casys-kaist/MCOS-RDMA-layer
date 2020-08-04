@@ -31,12 +31,12 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
-	{4, MEM_GID, BACKUP_SYNC},
+	{2, MEM_GID, BACKUP_SYNC},
 	{-1, -1, -1}, /* end */
 };
 
 struct connection_info c_infos[MAX_NUM_GROUPS];
-static int num_groups = 0;
+//static int num_groups = 0;
 
 static struct completion done_worker[NR_WORKER_THREAD];
 static struct worker_thread w_threads[NR_WORKER_THREAD];
@@ -1088,7 +1088,7 @@ int connect_to_servers(void)
 	enum connection_type ctype;
 	struct node_info infos;
 
-	for (i = 0; i < num_groups; i++) { 
+	for (i = 0; i < MAX_NUM_GROUPS; i++) { 
 		for (j = 0; j < NUM_CTYPE; j++) {
 			infos = c_infos[i].infos[j];
 			ctype = j;
@@ -1150,7 +1150,7 @@ static int __accept_client(struct rdma_handle *rh)
 
 	step = "allocate memory for cpu server";
 	DEBUG_LOG(PFX "%s\n", step);
-	if (rh->c_type == PRIMARY)
+	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY)
 		rh->vaddr_start = vaddr_start_arr[rh->nid];
 	if (rh->vaddr_start < 0) goto out_err;
 
@@ -1318,11 +1318,8 @@ static int __establish_connections(void)
 #else
 static int __establish_connections(void)
 {
-	int i, ret;
-
 	connect_to_servers();
 	printk(PFX "Connections are established.\n");
-
 
 	return 0;
 }
@@ -1855,6 +1852,7 @@ static void init_connection_infos(void)
 	int i;
 	struct node_info *infos;
 
+	memset(c_infos, 0, sizeof(c_infos));
 	for (i = 0; c_config[i].nid >= 0; i++) {
 		infos = get_node_infos(c_config[i].gid, c_config[i].ctype);
 		infos->nids[infos->size] = c_config[i].nid;
