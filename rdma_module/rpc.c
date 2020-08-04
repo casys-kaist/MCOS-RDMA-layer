@@ -754,7 +754,6 @@ static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 	fap = (struct fetch_args *) rpc_buffer;
 	src = (void *) (fap->r_vaddr + rh->vaddr_start);
 
-//	src = my_data[0] + (u64) fap->r_vaddr;
 
 	order = fap->order;
 	payload_size = (1 << order) * PAGE_SIZE;
