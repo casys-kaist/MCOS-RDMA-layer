@@ -34,7 +34,21 @@ extern spinlock_t cinfos_lock;
 
 static inline int select_fetch_node(int gid)
 {
-	return get_node_infos(gid, PRIMARY)->nids[0];
+	static int i = 0;
+	int size, nid;
+	struct node_info *p_info, *s_info;
+
+	p_info = get_node_infos(gid, PRIMARY);
+	s_info = get_node_infos(gid, SECONDARY);
+	size = p_info->size + s_info->size;
+	if (i % size == 0)
+		nid  = p_info->nids[0];
+	else
+		nid = s_info->nids[i%size - 1]; 
+
+	i++;
+	return nid;
+
 }
 
 int mcos_rmm_alloc(int gid, u64 vaddr)
@@ -43,7 +57,7 @@ int mcos_rmm_alloc(int gid, u64 vaddr)
 	int ret;
 
 retry:
-        infos = get_node_infos(gid, PRIMARY);
+	infos = get_node_infos(gid, PRIMARY);
 
 	ret =  rmm_alloc(infos->nids[0], vaddr - FAKE_PA_START);
 	if (ret == -ETIME)

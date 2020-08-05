@@ -1865,9 +1865,7 @@ static void init_connection_infos(void)
 
 	memset(c_infos, 0, sizeof(c_infos));
 	for (i = 0; c_config[i].nid >= 0; i++) {
-		infos = get_node_infos(c_config[i].gid, c_config[i].ctype);
-		infos->nids[infos->size] = c_config[i].nid;
-		infos->size++;
+		add_node_to_group(c_config[i].gid, c_config[i].nid, c_config[i].ctype);
 	}
 }
 
