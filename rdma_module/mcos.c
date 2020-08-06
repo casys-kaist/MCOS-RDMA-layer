@@ -37,32 +37,65 @@ static inline int select_fetch_node(int gid)
 
 int mcos_rmm_alloc(int gid, u64 vaddr)
 {
-	struct node_info *infos = get_node_infos(gid, PRIMARY);
-	return rmm_alloc(infos->nids[0], vaddr - FAKE_PA_START);
+	struct node_info *infos;
+	int ret;
+
+retry:
+        infos = get_node_infos(gid, PRIMARY);
+	ret =  rmm_alloc(infos->nids[0], vaddr - FAKE_PA_START);
+	if (ret == -ETIME)
+		goto retry;
+
+	return ret;
 }
 
 int mcos_rmm_free(int gid, u64 vaddr)
 {
-	struct node_info *infos = get_node_infos(gid, PRIMARY);
-	return rmm_free(infos->nids[0], vaddr - FAKE_PA_START);
+	struct node_info *infos;
+	int ret;
+
+retry:	
+	infos = get_node_infos(gid, PRIMARY);
+	ret = rmm_free(infos->nids[0], vaddr - FAKE_PA_START);
+	if (ret == -ETIME)
+		goto retry;
+
+	return ret;
 }
 
 int mcos_rmm_fetch(int gid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
-	int nid = select_fetch_node(gid);
-	return rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
+	int nid, ret;
+
+retry:
+	nid = select_fetch_node(gid);
+
+	ret = rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
+	if (ret == -ETIME)
+		goto retry;
+
+	return ret;
 }
 
 int mcos_rmm_evict(int gid, struct list_head *evict_list, int num_page)
 {
 	struct list_head *l;
-	struct node_info *infos = get_node_infos(gid, PRIMARY);
+	struct node_info *infos;
+	int ret;
+
+retry:
+	infos = get_node_infos(gid, PRIMARY);
 
 	list_for_each(l, evict_list) {
 		struct evict_info *e = list_entry(l, struct evict_info, next);
 		e->r_vaddr -= FAKE_PA_START;
 	}
-	return rmm_evict(infos->nids[0], evict_list, num_page);
+
+	ret = rmm_evict(infos->nids[0], evict_list, num_page);
+	if (ret == -ETIME) 
+		goto retry;	
+
+	return ret;
 }
 
 int mcos_rmm_alloc_async(int gid, u64 vaddr, unsigned long *rpage_flags)

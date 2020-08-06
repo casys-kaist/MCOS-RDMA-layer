@@ -622,7 +622,6 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	struct rpc_header *rhp;
 	struct list_head *l;
 	int *done;
-
 	int ret = 0;
 
 	printk("evict\n");
@@ -836,11 +835,6 @@ int rmm_recovery(int nid)
         ret = *((int *) (args + 4));
 
         DEBUG_LOG(PFX "recovery done %d\n", ret);
-
-	add_node_to_group(MEM_GID, 2, PRIMARY);
-	remove_node_from_group(MEM_GID, 1, PRIMARY);
-	add_node_to_group(MEM_GID, 1, SECONDARY);
-	remove_node_from_group(MEM_GID, 2, SECONDARY);
         printk(KERN_ALERT PFX "recovery done\n");
 
 put_buffer:
@@ -1102,6 +1096,24 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 }
 
 /* SANGJIN START */
+static int rpc_handle_recovery_cpu(struct rdma_handle *rh, uint32_t offset)
+{
+	struct rpc_header *rhp;
+	uint8_t *buffer = rh->dma_buffer + offset;
+	int *done;
+	
+	add_node_to_group(MEM_GID, 2, PRIMARY);
+	remove_node_from_group(MEM_GID, 1, PRIMARY);
+	add_node_to_group(MEM_GID, 1, SECONDARY);
+	remove_node_from_group(MEM_GID, 2, SECONDARY);
+
+	rhp = (struct rpc_header *)buffer;
+	done = (int *)(buffer + sizeof(struct rpc_header) + 4);
+	*done = 1;
+
+	return 0;
+}
+
 /* rpc handle functions for backup server */
 static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
 {
@@ -1123,7 +1135,7 @@ static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
         nid = rhp->nid;
         op = rhp->op;
 
-        rw = __get_rdma_work(rh, rpc_dma_addr, 8, remote_rpc_dma_addr, rh->rpc_rkey);
+        rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
         if (!rw)
                 return -ENOMEM;
         rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
@@ -1140,11 +1152,6 @@ static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
         req_cnt = 0;
         ack_cnt = 0;
 
-        *((int *) (rpc_buffer + 4)) = ret;
-        DEBUG_LOG(PFX "ret in %s, %d\n", __func__, ret);
-
-        /* -1 means this packet is ack */
-        *((int *) rpc_buffer) = -1;
         ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
         __put_rdma_work_nonsleep(rh, rw);
         if (ret || bad_wr) {
@@ -1158,9 +1165,9 @@ static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
 
         return ret;
 }
+
+
 /* SANGJIN END */
-
-
 #ifdef CONFIG_RM 
 void regist_handler(Rpc_handler rpc_table[])
 {
@@ -1176,9 +1183,8 @@ void regist_handler(Rpc_handler rpc_table[])
 void regist_handler(Rpc_handler rpc_table[])
 {
 	rpc_table[RPC_OP_FETCH] = rpc_handle_fetch_cpu;
-	//	rpc_table[RPC_OP_EVICT] = rpc_handle_evict_done;
-	//	rpc_table[RPC_OP_ALLOC] = rpc_handle_alloc_free_done;
-	//	rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_done;
+/* SANGJIN START */
+	rpc_table[RPC_OP_RECOVERY] = rpc_handle_recovery_cpu;
+/* SANGJIN END */
 }
-
 #endif
