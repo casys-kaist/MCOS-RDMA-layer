@@ -27,6 +27,10 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 //static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw);
 
+/* SANGJIN START */
+static int req_cnt = 0;
+static int ack_cnt = 0;
+/* SANGJIN END */
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, 
 		size_t size, dma_addr_t rdma_addr, u32 rdma_key)
@@ -732,6 +736,90 @@ put:
 	return ret;
 }
 
+/* SANGJIN START */
+int rmm_recovery(int nid)
+{
+        int offset, ret = 0;
+        uint8_t *dma_buffer, *args;
+        struct rpc_header *rhp;
+        dma_addr_t dma_addr, remote_dma_addr;
+        struct rdma_handle *rh;
+        struct rdma_work *rw;
+        const struct ib_send_wr *bad_wr = NULL;
+        int *done;
+
+        /*
+        --------------------------
+        |rpc_header| done(4bytes)|
+        --------------------------
+        */
+        int buffer_size = sizeof(struct rpc_header) + 4;
+        int payload_size = sizeof(struct rpc_header);
+        int index = nid_to_rh(nid);
+
+        rh = rdma_handles[index];
+
+        dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size, &dma_addr);
+        if (!dma_buffer) {
+                printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
+                return -ENOMEM;
+        }
+        offset = dma_buffer - (uint8_t *) rh->dma_buffer;
+        remote_dma_addr = rh->remote_dma_addr + offset;
+
+        /* We need to pass virtual address since using INLINE flag */
+        rw = __get_rdma_work_nonsleep(rh, (dma_addr_t) dma_buffer, payload_size, remote_dma_addr, rh->rpc_rkey);
+        if (!rw) {
+                printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
+                ret = -ENOMEM;
+                goto put_buffer;
+        }
+        rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+        rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
+
+        rw->rh = rh;
+
+        rhp = (struct rpc_header *) dma_buffer;
+        rhp->nid = nid;
+        rhp->op = RPC_OP_RECOVERY;
+        rhp->async = false;
+
+        /* copy done buffer */
+        args = dma_buffer + sizeof(struct rpc_header);
+        done = (int *) args;
+        *done = 0;
+
+        ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+        __put_rdma_work_nonsleep(rh, rw);
+        if (ret || bad_wr) {
+                printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+                if (bad_wr)
+                        ret = -EINVAL;
+                goto put_buffer;
+        }
+
+        printk("recovery wait %p\n", rw);
+
+        while(!(ret = *done))
+                cpu_relax();
+
+        ret = *((int *) (args + 4));
+
+        DEBUG_LOG(PFX "recovery done %d\n", ret);
+
+        /* TODO
+         * change m -> r1
+         */
+        printk(KERN_ALERT PFX "recovery done\n");
+
+put_buffer:
+        memset(dma_buffer, 0, buffer_size);
+        ring_buffer_put(rh->rb, dma_buffer);
+
+        return ret;
+}
+/* SANGJIN END */
+
 static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 {
 	int ret = 0;
@@ -886,10 +974,21 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	infos = get_node_infos(MEM_GID, BACKUP_SYNC);
 	for (i = 0; i < infos->size; i++) {
 		wait_for_replication = true;
-		DEBUG_LOG(PFX "replicate to backup server\n");
+		DEBUG_LOG(PFX "replicate to backup server SYNC\n");
 		rmm_evict_forward(infos->nids[i], rh->evict_buffer + offset, 
 				num_page * (8 + PAGE_SIZE) + 
 				sizeof(struct rpc_header) + sizeof(int), &done);
+		DEBUG_LOG(PFX "replicate done\n");
+	}
+
+	infos = get_node_infos(MEM_GID, BACKUP_ASYNC);
+	for (i = 0; i < infos->size; i++) {
+		wait_for_replication = false;
+		req_cnt++;
+		DEBUG_LOG(PFX "replicate to backup server ASYNC\n");
+		rmm_evict_forward(infos->nids[i], rh->evict_buffer + offset, 
+				num_page * (8 + PAGE_SIZE) + 
+				sizeof(struct rpc_header) + sizeof(int), &ack_cnt);
 		DEBUG_LOG(PFX "replicate done\n");
 	}
 
@@ -972,6 +1071,61 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 	return 0;
 }
 
+/* SANGJIN START */
+/* rpc handle functions for backup server */
+static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
+{
+        int ret = 0;
+        uint16_t nid = 0;
+        uint16_t op = 0;
+        dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+        struct rdma_work *rw;
+        struct rpc_header *rhp;
+        const struct ib_send_wr *bad_wr = NULL;
+        char *rpc_buffer;
+
+        rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
+
+        rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
+        rpc_dma_addr = rh->rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
+        remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
+
+        nid = rhp->nid;
+        op = rhp->op;
+
+        rw = __get_rdma_work(rh, rpc_dma_addr, 8, remote_rpc_dma_addr, rh->rpc_rkey);
+        if (!rw)
+                return -ENOMEM;
+        rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+        rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+        rw->rh = rh;
+
+        DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
+
+        // busy wait until full consistentcy with r1 and r2
+        while (!(req_cnt == ack_cnt))
+                cpu_relax();
+
+        // initialize
+        req_cnt = 0;
+        ack_cnt = 0;
+
+        *((int *) (rpc_buffer + 4)) = ret;
+        DEBUG_LOG(PFX "ret in %s, %d\n", __func__, ret);
+
+        /* -1 means this packet is ack */
+        *((int *) rpc_buffer) = -1;
+        ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+        __put_rdma_work_nonsleep(rh, rw);
+        if (ret || bad_wr) {
+                printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+                if (bad_wr)
+                        ret = -EINVAL;
+        }
+
+        return ret;
+}
+/* SANGJIN END */
 
 
 #ifdef CONFIG_RM 
@@ -981,6 +1135,9 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_EVICT] = rpc_handle_evict_mem;
 	rpc_table[RPC_OP_ALLOC] = rpc_handle_alloc_free_mem;
 	rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_mem;
+/* SANGJIN START */
+	rpc_table[RPC_OP_RECOVERY] = rpc_handle_recovery_backup;
+/* SANGJIN END */
 }
 #else
 void regist_handler(Rpc_handler rpc_table[])

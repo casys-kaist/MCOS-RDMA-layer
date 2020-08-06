@@ -30,25 +30,9 @@ extern int (*remote_free_async)(int, u64, unsigned long *);
 extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned long *);
 #endif
 
-#ifdef CONFIG_MCOS
-void init_mcos(void)
-{
-	remote_fetch = mcos_rmm_fetch;
-	remote_evict = mcos_rmm_evict;
-	remote_alloc = mcos_rmm_alloc;
-	remote_free = mcos_rmm_free;
-	remote_fetch_async = mcos_rmm_fetch_async;
-}
-#else
-void init_mcos(void)
-{
-	return;
-}
-#endif
-
 static inline int select_fetch_node(int gid)
 {
-	return get_node_infos(gid, SECONDARY)->nids[0];
+	return get_node_infos(gid, PRIMARY)->nids[0];
 }
 
 int mcos_rmm_alloc(int gid, u64 vaddr)
@@ -98,3 +82,20 @@ int mcos_rmm_fetch_async(int gid, void *l_vaddr, void * r_vaddr, unsigned int or
 	int nid = select_fetch_node(gid);
 	return rmm_fetch_async(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, rpage_flags);
 }
+
+#ifdef CONFIG_MCOS
+void init_mcos(void)
+{
+	remote_fetch = mcos_rmm_fetch;
+	remote_evict = mcos_rmm_evict;
+	remote_alloc = mcos_rmm_alloc;
+	remote_free = mcos_rmm_free;
+	remote_fetch_async = mcos_rmm_fetch_async;
+}
+#else
+void init_mcos(void)
+{
+	return;
+}
+#endif
+
