@@ -834,7 +834,8 @@ int rmm_recovery(int nid)
 
         ret = *((int *) (args + 4));
 
-        DEBUG_LOG(PFX "recovery done %d\n", ret);
+        //DEBUG_LOG(PFX "recovery done %d\n", ret);
+
         printk(KERN_ALERT PFX "recovery done\n");
 
 put_buffer:
