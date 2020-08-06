@@ -625,6 +625,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 
 	int ret = 0;
 
+	printk("evict\n");
 	/*
 	   ----------------------------------------------------------------
 	   |rpc_header| num_page(4byte) | (r_vaddr, page)...| done(4bytes)|
@@ -719,6 +720,7 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 	const struct ib_send_wr *bad_wr = NULL;
 	int index = nid_to_rh(nid) + 1;
 
+	printk("evict forward\n");
 	buffer_size += 4;
 	rh = rdma_handles[index];
 
@@ -835,9 +837,10 @@ int rmm_recovery(int nid)
 
         DEBUG_LOG(PFX "recovery done %d\n", ret);
 
-        /* TODO
-         * change m -> r1
-         */
+	add_node_to_group(MEM_GID, 2, PRIMARY);
+	remove_node_from_group(MEM_GID, 1, PRIMARY);
+	add_node_to_group(MEM_GID, 1, SECONDARY);
+	remove_node_from_group(MEM_GID, 2, SECONDARY);
         printk(KERN_ALERT PFX "recovery done\n");
 
 put_buffer:
@@ -1149,6 +1152,9 @@ static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
                 if (bad_wr)
                         ret = -EINVAL;
         }
+
+	add_node_to_group(MEM_GID, 3, BACKUP_SYNC);
+	remove_node_from_group(MEM_GID, 3, BACKUP_ASYNC);
 
         return ret;
 }
