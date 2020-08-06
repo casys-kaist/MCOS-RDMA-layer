@@ -153,12 +153,14 @@ struct pool_info {
 	size_t size;
 };
 
+#ifdef CONFIG_RM
 struct evict_info {
 	u64 l_vaddr;
 	u64 r_vaddr;
 
 	struct list_head next;
 };
+#endif
 
 #pragma pack(push, 1)
 struct conn_private_data {

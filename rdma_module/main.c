@@ -206,13 +206,14 @@ static int rpc_handle_evict_done(struct rdma_handle *rh, uint32_t offset)
 	rhp = (struct rpc_header *) buffer;
 	if (!rhp->async) {
 		done = (int *) (buffer + sizeof(struct rpc_header) + 4 + (nr_pages * (PAGE_SIZE + 8)));
+		*done = 1;
 	}
 	else {
 		done_p = (int **) (buffer + sizeof(struct rpc_header) + 4 + (nr_pages * (PAGE_SIZE + 8)));
 		done = *done_p;
+		*done += 1;
 		ring_buffer_put(rh->rb, buffer);
 	}
-	*done = 1;
 
 	return 0;
 }
@@ -1715,6 +1716,11 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 			kthread_stop(t_arr[i]);
 		}
 		head = 0;
+	}
+/* SANGJIN START */
+	else if (strcmp("recovery", cmd) == 0) {
+		printk("recovery rpc start\n");
+		rmm_recovery(2);
 	}
 
 	return count;
