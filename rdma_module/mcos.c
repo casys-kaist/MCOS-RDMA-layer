@@ -30,6 +30,8 @@ extern int (*remote_free_async)(int, u64, unsigned long *);
 extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned long *);
 #endif
 
+extern spinlock_t cinfos_lock;
+
 static inline int select_fetch_node(int gid)
 {
 	return get_node_infos(gid, PRIMARY)->nids[0];
@@ -41,7 +43,10 @@ int mcos_rmm_alloc(int gid, u64 vaddr)
 	int ret;
 
 retry:
+	spin_lock(&cinfos_lock);
         infos = get_node_infos(gid, PRIMARY);
+	spin_unlock(&cinfos_lock);
+
 	ret =  rmm_alloc(infos->nids[0], vaddr - FAKE_PA_START);
 	if (ret == -ETIME)
 		goto retry;
@@ -55,7 +60,10 @@ int mcos_rmm_free(int gid, u64 vaddr)
 	int ret;
 
 retry:	
+	spin_lock(&cinfos_lock);
 	infos = get_node_infos(gid, PRIMARY);
+	spin_unlock(&cinfos_lock);
+
 	ret = rmm_free(infos->nids[0], vaddr - FAKE_PA_START);
 	if (ret == -ETIME)
 		goto retry;
@@ -68,7 +76,9 @@ int mcos_rmm_fetch(int gid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	int nid, ret;
 
 retry:
+	spin_lock(&cinfos_lock);
 	nid = select_fetch_node(gid);
+	spin_unlock(&cinfos_lock);
 
 	ret = rmm_fetch(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
 	if (ret == -ETIME)
@@ -84,7 +94,9 @@ int mcos_rmm_evict(int gid, struct list_head *evict_list, int num_page)
 	int ret;
 
 retry:
+	spin_lock(&cinfos_lock);
 	infos = get_node_infos(gid, PRIMARY);
+	spin_unlock(&cinfos_lock);
 
 	list_for_each(l, evict_list) {
 		struct evict_info *e = list_entry(l, struct evict_info, next);
@@ -100,19 +112,34 @@ retry:
 
 int mcos_rmm_alloc_async(int gid, u64 vaddr, unsigned long *rpage_flags)
 {
-	struct node_info *infos = get_node_infos(gid, PRIMARY);
+	struct node_info *infos; 
+
+	spin_lock(&cinfos_lock);
+	infos = get_node_infos(gid, PRIMARY);
+	spin_unlock(&cinfos_lock);
+
 	return rmm_alloc_async(infos->nids[0], vaddr - FAKE_PA_START, rpage_flags);
 }
 
 int mcos_rmm_free_async(int gid, u64 vaddr, unsigned long *rpage_flags)
 {
-	struct node_info *infos = get_node_infos(gid, PRIMARY);
+	struct node_info *infos;
+
+	spin_lock(&cinfos_lock);
+	infos = get_node_infos(gid, PRIMARY);
+	spin_unlock(&cinfos_lock);
+
 	return rmm_free_async(infos->nids[0], vaddr - FAKE_PA_START, rpage_flags);
 }
 
 int mcos_rmm_fetch_async(int gid, void *l_vaddr, void * r_vaddr, unsigned int order, unsigned long *rpage_flags)
 {
-	int nid = select_fetch_node(gid);
+	int nid; 
+
+	spin_lock(&cinfos_lock);
+	nid = select_fetch_node(gid);
+	spin_unlock(&cinfos_lock);
+
 	return rmm_fetch_async(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, rpage_flags);
 }
 

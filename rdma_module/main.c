@@ -32,13 +32,16 @@ static int server = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
 	{1, MEM_GID, PRIMARY},
-	{2, MEM_GID, SECONDARY},
-	{3, MEM_GID, SECONDARY},
+	{2, MEM_GID, PRIMARY},
+	{3, MEM_GID, PRIMARY},
 	{-1, -1, -1}, /* end */
 };
 
 struct connection_info c_infos[MAX_NUM_GROUPS];
 //static int num_groups = 0;
+
+// SANGJIN
+spinlock_t cinfos_lock; 
 
 static struct completion done_worker[NR_WORKER_THREAD];
 static struct worker_thread w_threads[NR_WORKER_THREAD];
@@ -1912,6 +1915,9 @@ int __init init_rmm_rdma(void)
 		init_completion(&rh->cm_done);
 		init_completion(&rh->init_done);
 	}
+
+	// SANGJIN
+	spin_lock_init(&cinfos_lock);
 
 	server_rh.state = RDMA_INIT;
 
