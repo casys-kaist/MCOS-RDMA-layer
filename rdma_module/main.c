@@ -31,9 +31,7 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
-	{1, MEM_GID, PRIMARY},
-	{2, MEM_GID, SECONDARY},
-	{3, MEM_GID, SECONDARY},
+//	{2, MEM_GID, BACKUP_SYNC},
 	{-1, -1, -1}, /* end */
 };
 
@@ -1821,7 +1819,7 @@ static int create_worker_thread(void)
 }
 
 #ifdef RMM_TEST
-void init_for_test(void)
+int init_for_test(void)
 {
 	int i;
 
@@ -1845,10 +1843,12 @@ void init_for_test(void)
 	   }
 	   }
 	   */
+	return 0;
 }
 #else
-void init_for_test(void)
+int init_for_test(void)
 {
+	return 0;
 }
 #endif
 
@@ -1861,7 +1861,6 @@ static int start_connection(void)
 static void init_connection_infos(void)
 {
 	int i;
-	struct node_info *infos;
 
 	memset(c_infos, 0, sizeof(c_infos));
 	for (i = 0; c_config[i].nid >= 0; i++) {
