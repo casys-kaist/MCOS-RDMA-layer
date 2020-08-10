@@ -236,18 +236,29 @@ static inline int nid_to_rh(int nid)
 
 static inline struct node_info *get_node_infos(int gid, enum connection_type ctype)
 {
+	struct node_info *ret_nid;
+	extern spinlock_t cinfos_lock;
+	
+	spin_lock(&cinfos_lock);
 	if (ctype >= NUM_CTYPE)
 		return NULL;
-	return &c_infos[gid].infos[ctype];
+	ret_nid = &c_infos[gid].infos[ctype];
+	spin_unlock(&cinfos_lock);
+		
+	return ret_nid;
 }
 
 static inline int add_node_to_group(int gid, int nid, enum connection_type ctype)
 {
 	struct node_info *infos = get_node_infos(gid, ctype);
+	extern spinlock_t cinfos_lock;
+
+	spin_lock(&cinfos_lock);
 	if (infos->size == MAX_GROUP_SIZE)
 		return -ENOMEM;
 	infos->nids[infos->size] = nid;
 	infos->size++;
+	spin_unlock(&cinfos_lock);
 	
 	return 0;
 }
@@ -256,7 +267,9 @@ static inline int remove_node_from_group(int gid, int nid, enum connection_type 
 {
 	int i;
 	struct node_info *infos = get_node_infos(gid, ctype);
+	extern spinlock_t cinfos_lock;
 
+	spin_lock(&cinfos_lock);
 	for (i = 0; i < infos->size; i++) {
 		if (infos->nids[i] == nid) {
 			memcpy(&infos->nids[i], &infos->nids[i+1], 
@@ -265,6 +278,7 @@ static inline int remove_node_from_group(int gid, int nid, enum connection_type 
 
 	}
 	infos->size--;
+	spin_unlock(&cinfos_lock);
 
 	return 0;
 }

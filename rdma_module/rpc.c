@@ -30,6 +30,8 @@ static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *r
 /* SANGJIN START */
 static int req_cnt = 0;
 static int ack_cnt = 0;
+
+extern spinlock_t cinfos_lock;
 /* SANGJIN END */
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, 
@@ -150,8 +152,10 @@ int wait_for_ack_timeout(int *done, u64 ticks)
 
 	while(!(ret = *done)) {
 		cur = get_jiffies_64();
-		if (cur - start > ticks)
+		if (cur - start > ticks) {
+			printk("timeout\n");
 			return -ETIME;
+		}
 		cpu_relax();
 	}
 
@@ -624,7 +628,6 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	int *done;
 	int ret = 0;
 
-	printk("evict\n");
 	/*
 	   ----------------------------------------------------------------
 	   |rpc_header| num_page(4byte) | (r_vaddr, page)...| done(4bytes)|
@@ -719,7 +722,6 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 	const struct ib_send_wr *bad_wr = NULL;
 	int index = nid_to_rh(nid) + 1;
 
-	printk("evict forward\n");
 	buffer_size += 4;
 	rh = rdma_handles[index];
 
@@ -1109,7 +1111,7 @@ static int rpc_handle_recovery_cpu(struct rdma_handle *rh, uint32_t offset)
 	remove_node_from_group(MEM_GID, 2, SECONDARY);
 
 	rhp = (struct rpc_header *)buffer;
-	done = (int *)(buffer + sizeof(struct rpc_header) + 4);
+	done = (int *)(buffer + sizeof(struct rpc_header));
 	*done = 1;
 
 	return 0;
@@ -1161,8 +1163,10 @@ static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
                         ret = -EINVAL;
         }
 
+	spin_lock(&cinfos_lock);
 	add_node_to_group(MEM_GID, 3, BACKUP_SYNC);
 	remove_node_from_group(MEM_GID, 3, BACKUP_ASYNC);
+	spin_unlock(&cinfos_lock);
 
         return ret;
 }

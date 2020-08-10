@@ -38,6 +38,9 @@ const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
 struct connection_info c_infos[MAX_NUM_GROUPS];
 //static int num_groups = 0;
 
+// SANGJIN
+spinlock_t cinfos_lock; 
+
 static struct completion done_worker[NR_WORKER_THREAD];
 static struct worker_thread w_threads[NR_WORKER_THREAD];
 static atomic_t HEAD = ATOMIC_INIT(0); 
@@ -1910,6 +1913,9 @@ int __init init_rmm_rdma(void)
 		init_completion(&rh->cm_done);
 		init_completion(&rh->init_done);
 	}
+
+	// SANGJIN
+	spin_lock_init(&cinfos_lock);
 
 	server_rh.state = RDMA_INIT;
 
