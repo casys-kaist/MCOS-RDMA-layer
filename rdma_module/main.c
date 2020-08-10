@@ -31,7 +31,9 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
-	{2, MEM_GID, BACKUP_SYNC},
+	{1, MEM_GID, PRIMARY},
+	{2, MEM_GID, SECONDARY},
+	{3, MEM_GID, SECONDARY},
 	{-1, -1, -1}, /* end */
 };
 

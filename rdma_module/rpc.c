@@ -1163,10 +1163,8 @@ static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
                         ret = -EINVAL;
         }
 
-	spin_lock(&cinfos_lock);
 	add_node_to_group(MEM_GID, 3, BACKUP_SYNC);
 	remove_node_from_group(MEM_GID, 3, BACKUP_ASYNC);
-	spin_unlock(&cinfos_lock);
 
         return ret;
 }
