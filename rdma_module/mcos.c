@@ -32,6 +32,7 @@ extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned lon
 
 extern spinlock_t cinfos_lock;
 
+#ifdef LOAD_BAL
 static inline int select_fetch_node(int gid)
 {
 	static int i = 0;
@@ -50,6 +51,12 @@ static inline int select_fetch_node(int gid)
 	i++;
 	return nid;
 }
+#else
+static inline int select_fetch_node(int gid)
+{
+	return get_node_infos(gid,PRIMARY)->nids[0];
+}
+#endif
 
 int mcos_rmm_alloc(int gid, u64 vaddr)
 {
@@ -113,6 +120,42 @@ retry:
 	if (ret == -ETIME) 
 		goto retry;	
 
+	return ret;
+}
+
+int mcos_rmm_evict_fanout(int gid, struct list_head *evict_list, int num_page)
+{
+	struct list_head *l;
+	struct node_info *infos;
+	int ret = 0;
+	int i;
+	int *done;
+
+	infos = get_node_infos(gid, PRIMARY);
+	done = kmalloc(infos->size * sizeof(int), GFP_ATOMIC);
+	if (!done)
+		return -ENOMEM;
+	memset(done, 0, infos->size * sizeof(int));
+
+	list_for_each(l, evict_list) {
+		struct evict_info *e = list_entry(l, struct evict_info, next);
+		e->r_vaddr -= FAKE_PA_START;
+	}
+
+	for (i = 0; i < infos->size; i++)  {
+		ret = rmm_evict_async(infos->nids[0], evict_list, num_page, &done[i]);
+		if (ret < 0)
+			goto err;
+	}
+
+	for (i = 0; i < infos->size; i++)  {
+		ret = wait_for_ack_timeout(&done[i], 20000);
+		if (ret < 0)
+			goto err;
+	}
+
+err:
+	kfree(done);
 	return ret;
 }
 

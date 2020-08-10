@@ -144,24 +144,6 @@ void *get_buffer(struct rdma_handle *rh, size_t size, dma_addr_t *dma_addr)
 
 
 
-int wait_for_ack_timeout(int *done, u64 ticks)
-{
-	int ret;
-	u64 start = get_jiffies_64();
-	u64 cur = get_jiffies_64();
-
-	while(!(ret = *done)) {
-		cur = get_jiffies_64();
-		if (cur - start > ticks) {
-			printk("timeout\n");
-			return -ETIME;
-		}
-		cpu_relax();
-	}
-
-	return 0;
-}
-
 int rmm_alloc(int nid, u64 vaddr)
 {
 	int offset, ret = 0;
@@ -692,9 +674,91 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	}
 
 	ret = wait_for_ack_timeout(done, 100000);
-	while(!(ret = *done))
+	while (!(ret = *done))
 		cpu_relax();
 
+put:
+	memset(evict_buffer, 0, buffer_size);
+	ring_buffer_put(rh->rb, evict_buffer);
+
+	return ret;
+}
+
+int rmm_evict_async(int nid, struct list_head *evict_list, int num_page, int *done)
+{
+	int offset;
+	uint8_t *evict_buffer = NULL, *temp = NULL, *args;
+	dma_addr_t evict_dma_addr, remote_evict_dma_addr;
+	struct rdma_work *rw;
+	struct rdma_handle *rh;	
+	struct rpc_header *rhp;
+	struct list_head *l;
+	int ret = 0;
+
+	/*
+	   ------------------------------------------------------------------------
+	   |rpc_header| num_page(4byte) | (r_vaddr, page)...| done_pointer(8bytes)|
+	   ------------------------------------------------------------------------
+	  */
+
+	int buffer_size = sizeof(struct rpc_header) + 8 + ((8 + PAGE_SIZE) * num_page);
+	int payload_size = sizeof(struct rpc_header) + 4 + ((8 + PAGE_SIZE) * num_page);
+	const struct ib_send_wr *bad_wr = NULL;
+	int index = nid_to_rh(nid) + 1;
+
+	rh = rdma_handles[index];
+	evict_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &evict_dma_addr);
+	if (!evict_buffer) {
+		printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
+		return -ENOMEM;
+	}
+	offset = evict_buffer - (uint8_t *) rh->evict_buffer;
+	remote_evict_dma_addr = rh->remote_rpc_dma_addr + offset;
+
+	rw = __get_rdma_work_nonsleep(rh, evict_dma_addr, payload_size, remote_evict_dma_addr, rh->rpc_rkey);
+	if (!rw) {
+		printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
+		ret = -ENOMEM;
+		goto put;
+	}
+	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+
+	rw->rh = rh;
+
+	rhp = (struct rpc_header *) evict_buffer;
+	rhp->nid = nid;
+	rhp->op = RPC_OP_EVICT;
+	rhp->async = true;
+
+	/*copy rpc args to buffer */
+	DEBUG_LOG(PFX "copy args, %s, %p\n", __func__, evict_buffer);
+	args = evict_buffer + sizeof(struct rpc_header);
+	DEBUG_LOG(PFX "args: %p\n", args);
+
+	*((int32_t *) args) = num_page;
+	temp = args + 4;
+
+	list_for_each(l, evict_list) {
+		struct evict_info *e = list_entry(l, struct evict_info, next);
+		DEBUG_LOG(PFX "iterate list r_vaddr: %llx l_vaddr: %llx\n",  e->r_vaddr, e->l_vaddr);
+		*((uint64_t *) (temp)) = (uint64_t) e->r_vaddr;
+		memcpy(temp + 8, (void *) e->l_vaddr, PAGE_SIZE);
+		temp += (8 + PAGE_SIZE);
+	}
+	*done = 0;
+	*((int **) (temp)) = done;
+
+	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	__put_rdma_work_nonsleep(rh, rw);
+	if (ret || bad_wr) {
+		printk(KERN_ALERT PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		if (bad_wr)
+			ret = -EINVAL;
+		goto put;
+	}
+
+	return ret;
 put:
 	memset(evict_buffer, 0, buffer_size);
 	ring_buffer_put(rh->rb, evict_buffer);
@@ -717,7 +781,7 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 	   ------------------------------------------------------------------------
 	   |rpc_header| num_page(4byte) | (r_vaddr, page)...| done_pointer(8bytes)|
 	   ------------------------------------------------------------------------
-	   */
+	  */
 	int buffer_size = payload_size + 8;
 	const struct ib_send_wr *bad_wr = NULL;
 	int index = nid_to_rh(nid) + 1;
@@ -990,7 +1054,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	num_page = (*(int32_t *) evict_buffer);
 	page_pointer = evict_buffer + 4;
 
-	if (rh->c_type == PRIMARY | rh->c_type == SECONDARY) {
+	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY) {
 		for (i = 0; i < num_page; i++) {
 			*((uint64_t *) (page_pointer)) = 
 				(*((uint64_t *) (page_pointer))) + (rh->vaddr_start);

@@ -189,7 +189,6 @@ struct rdma_handle {
 	enum connection_type c_type;
 
 	/* local */
-	void *recv_buffer;
 	void *dma_buffer;
 	u64 vaddr_start;
 
@@ -279,6 +278,24 @@ static inline int remove_node_from_group(int gid, int nid, enum connection_type 
 	}
 	infos->size--;
 	spin_unlock(&cinfos_lock);
+
+	return 0;
+}
+
+static inline int wait_for_ack_timeout(int *done, u64 ticks)
+{
+	int ret;
+	u64 start = get_jiffies_64();
+	u64 cur = get_jiffies_64();
+
+	while(!(ret = *done)) {
+		cur = get_jiffies_64();
+		if (cur - start > ticks) {
+			printk("timeout\n");
+			return -ETIME;
+		}
+		cpu_relax();
+	}
 
 	return 0;
 }

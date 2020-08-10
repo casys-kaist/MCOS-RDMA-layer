@@ -355,13 +355,11 @@ static int polling_cq(void * args)
 {
 	struct ib_cq *cq = (struct ib_cq *) args;
 	struct ib_wc *wc;
-	//	struct rdma_work *rw;
 	struct rdma_handle *rh;
 	int i;
 
 	int ret = 0;
 	int num_poll = 1;
-	//	u64 start = get_jiffies_64();
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
 	wc = kmalloc(sizeof(struct ib_wc) * num_poll, GFP_KERNEL);
@@ -395,10 +393,6 @@ static int polling_cq(void * args)
 				case IB_WC_RDMA_WRITE:
 					if (wc[i].wc_flags == IB_WC_WITH_IMM) {
 						DEBUG_LOG(PFX "rdma write-imm completion\n");
-						/*
-						   rw = (struct rdma_work *) wc[i].wr_id;
-						   put_work(&wc[i]);
-						   */
 					}
 					else {
 						DEBUG_LOG(PFX "rdma write completion\n");
@@ -434,10 +428,6 @@ static int polling_cq(void * args)
 			}
 		}
 
-		/*if (get_jiffies_64() - start >= MAX_TICKS) {
-		  rmm_yield_cpu();
-		  start = get_jiffies_64();
-		  }*/
 		rmm_yield_cpu();
 
 	}
@@ -458,22 +448,17 @@ void cq_comp_handler(struct ib_cq *cq, void *context)
 retry:
 	while ((ret = ib_poll_cq(cq, 1, &wc)) > 0) {
 		if (wc.opcode < 0 || wc.status) {
-			//__process_faulty_work(&wc);
 			continue;
 		}
 		switch(wc.opcode) {
 			case IB_WC_SEND:
-				//__process_sent(&wc);
 				break;
 			case IB_WC_RECV:
-				//__process_recv(&wc);
 				break;
 			case IB_WC_RDMA_WRITE:
 			case IB_WC_RDMA_READ:
-				//__process_rdma_completion(&wc);
 				break;
 			case IB_WC_REG_MR:
-				//__process_comp_wakeup(&wc, "mr registered\n");
 				break;
 			default:
 				printk("Unknown completion op %d\n", wc.opcode);
@@ -1336,13 +1321,6 @@ void clean_rdma_handle(struct rdma_handle *rh)
 
 		rdma_disconnect(rh->cm_id);
 
-		if (rh->recv_buffer) {
-			ib_dma_unmap_single(rh->device, rh->recv_buffer_dma_addr,
-					PAGE_SIZE, DMA_FROM_DEVICE);
-			kfree(rh->recv_buffer);
-		}
-
-
 		if (rh->qp && !IS_ERR(rh->qp)) {
 			rdma_destroy_qp(rh->cm_id);
 			rh->qp = NULL;
@@ -1361,9 +1339,6 @@ void __exit exit_rmm_rdma(void)
 {
 	int i;
 
-	printk(PFX "statistics\n avg: %lu avg_delay: %lu\n", 
-			accum, accum_delay);
-
 	if (polling_k)
 		kthread_stop(polling_k);
 
@@ -1371,34 +1346,12 @@ void __exit exit_rmm_rdma(void)
 		kthread_stop(w_threads[i].task);
 
 	/* Detach from upper layer to prevent race condition during exit */
-	for (i = 0; i < NUM_QPS; i++) {
-		if (rdma_handles[i]->cm_id)
-			rdma_disconnect(rdma_handles[i]->cm_id);
-	}
 	remove_proc_entry("rmm", NULL);
 
 	for (i = 0; i < NUM_QPS; i++) {
 		struct rdma_handle *rh = rdma_handles[i];
-		if (!rh) continue;
 
-		if (rh->recv_buffer) {
-			ib_dma_unmap_single(rh->device, rh->recv_buffer_dma_addr,
-					PAGE_SIZE, DMA_FROM_DEVICE);
-			kfree(rh->recv_buffer);
-		}
-
-		/*
-		   if (rh->dma_buffer) {
-		   ib_dma_unmap_single(rh->device, rh->dma_addr, 
-		   DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
-		   }
-		   */
-
-		if (rh->qp && !IS_ERR(rh->qp)) rdma_destroy_qp(rh->cm_id);
-		if (rh->cm_id && !IS_ERR(rh->cm_id)) rdma_destroy_id(rh->cm_id);
-		if (rh->mr && !IS_ERR(rh->mr))
-			ib_dereg_mr(rh->mr);
-
+		clean_rdma_handle(rh);
 		kfree(rdma_handles[i]);
 		kfree(rpc_pools[i]);
 		kfree(sink_pools[i]);
@@ -1720,7 +1673,6 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		}
 		head = 0;
 	}
-/* SANGJIN START */
 	else if (strcmp("recovery", cmd) == 0) {
 		printk("recovery rpc start\n");
 		rmm_recovery(2);
@@ -1747,8 +1699,6 @@ static int handle_message(void *args)
 	struct rpc_header *rhp;
 	struct worker_thread *wt = (struct worker_thread *) args;
 
-	//	u64 start = get_jiffies_64();
-
 	wt->cpu = smp_processor_id();
 	printk(PFX "woker thread created cpu id: %d\n", wt->cpu);
 	complete(&done_thread);
@@ -1760,10 +1710,6 @@ static int handle_message(void *args)
 		while (!wt->num_queued) {
 			if (kthread_should_stop())
 				return 0;
-			/*if (get_jiffies_64() - start >= MAX_TICKS) {
-			  rmm_yield_cpu();
-			  start = get_jiffies_64();
-			  }*/
 			rmm_yield_cpu();
 			cpu_relax();
 		}
