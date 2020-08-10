@@ -990,7 +990,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	num_page = (*(int32_t *) evict_buffer);
 	page_pointer = evict_buffer + 4;
 
-	if (rh->c_type == PRIMARY) {
+	if (rh->c_type == PRIMARY | rh->c_type == SECONDARY) {
 		for (i = 0; i < num_page; i++) {
 			*((uint64_t *) (page_pointer)) = 
 				(*((uint64_t *) (page_pointer))) + (rh->vaddr_start);
