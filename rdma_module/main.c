@@ -31,6 +31,9 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
+	{1, MEM_GID, PRIMARY},
+	{2, MEM_GID, SECONDARY},
+	{3, MEM_GID, SECONDARY},
 	{-1, -1, -1}, /* end */
 };
 
@@ -1690,6 +1693,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		ctype = PRIMARY;
 		__connect_to_server(dest_nid, QP_FETCH, ctype);
 		__connect_to_server(dest_nid, QP_EVICT, ctype);
+		add_node_to_group(MEM_GID, dest_nid, PRIMARY);
 		printk("connected to %d node PRIMARY\n", dest_nid);
 	}
 	else if (strncmp("secondary:", cmd, 10) == 0) {
@@ -1697,6 +1701,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		ctype = SECONDARY;
 		__connect_to_server(dest_nid, QP_FETCH, ctype);
 		__connect_to_server(dest_nid, QP_EVICT, ctype);
+		add_node_to_group(MEM_GID, dest_nid, SECONDARY);
 		printk("connected to %d node SECONDARY\n", dest_nid);
 	}
 	else if (strncmp("async:", cmd, 6) == 0) {
@@ -1704,6 +1709,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		ctype = BACKUP_ASYNC;
 		__connect_to_server(dest_nid, QP_FETCH, ctype);
 		__connect_to_server(dest_nid, QP_EVICT, ctype);
+		add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
 		printk("connected to %d node BACKUP_ASYNC\n", dest_nid);
 	}
 	else if (strncmp("sync:", cmd, 5) == 0) {
@@ -1711,6 +1717,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		ctype = BACKUP_SYNC;
 		__connect_to_server(dest_nid, QP_FETCH, ctype);
 		__connect_to_server(dest_nid, QP_EVICT, ctype);
+		add_node_to_group(MEM_GID, dest_nid, BACKUP_SYNC);
 		printk("connected to %d node BACKUP_SYNC\n", dest_nid);
 	}
 
