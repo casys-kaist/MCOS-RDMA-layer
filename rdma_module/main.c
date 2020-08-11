@@ -1691,7 +1691,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		__connect_to_server(dest_nid, QP_FETCH, ctype);
 		__connect_to_server(dest_nid, QP_EVICT, ctype);
 		add_node_to_group(MEM_GID, dest_nid, PRIMARY);
-		printk("connected to %d node PRIMARY\n", dest_nid);
+		printk("connected to node %d as PRIMARY\n", dest_nid);
 	}
 	else if (strncmp("secondary:", cmd, 10) == 0) {
 		kstrtoint(&cmd[10], 10, &dest_nid);
@@ -1699,7 +1699,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		__connect_to_server(dest_nid, QP_FETCH, ctype);
 		__connect_to_server(dest_nid, QP_EVICT, ctype);
 		add_node_to_group(MEM_GID, dest_nid, SECONDARY);
-		printk("connected to %d node SECONDARY\n", dest_nid);
+		printk("connected to node %d as SECONDARY\n", dest_nid);
 	}
 	else if (strncmp("async:", cmd, 6) == 0) {
 		kstrtoint(&cmd[6], 10, &dest_nid);
@@ -1707,7 +1707,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		__connect_to_server(dest_nid, QP_FETCH, ctype);
 		__connect_to_server(dest_nid, QP_EVICT, ctype);
 		add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
-		printk("connected to %d node BACKUP_ASYNC\n", dest_nid);
+		printk("connected to node %d as BACKUP_ASYNC\n", dest_nid);
 	}
 	else if (strncmp("sync:", cmd, 5) == 0) {
 		kstrtoint(&cmd[5], 10, &dest_nid);
@@ -1715,7 +1715,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		__connect_to_server(dest_nid, QP_FETCH, ctype);
 		__connect_to_server(dest_nid, QP_EVICT, ctype);
 		add_node_to_group(MEM_GID, dest_nid, BACKUP_SYNC);
-		printk("connected to %d node BACKUP_SYNC\n", dest_nid);
+		printk("connected to node %d as BACKUP_SYNC\n", dest_nid);
 	}
 
 	return count;
