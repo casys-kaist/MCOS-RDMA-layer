@@ -64,6 +64,7 @@ enum connection_type {
 	SECONDARY, /* only accept fetch */
 	BACKUP_SYNC,
 	BACKUP_ASYNC,
+	DUMMY,
 	NUM_CTYPE,
 };
 
