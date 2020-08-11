@@ -1744,12 +1744,33 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		printk("alive rpc start\n");
 		rmm_replicate(3, 1);
 	}
-	else if (strncmp("connect:", cmd, 8) == 0) {
+	else if (strncmp("primary:", cmd, 8) == 0) {
 		kstrtoint(&cmd[8], 10, &dest_nid);
+		ctype = PRIMARY;
+		__connect_to_server(dest_nid, QP_FETCH, ctype);
+		__connect_to_server(dest_nid, QP_EVICT, ctype);
+		printk("connected to %d node PRIMARY\n", dest_nid);
+	}
+	else if (strncmp("secondary:", cmd, 10) == 0) {
+		kstrtoint(&cmd[10], 10, &dest_nid);
+		ctype = SECONDARY;
+		__connect_to_server(dest_nid, QP_FETCH, ctype);
+		__connect_to_server(dest_nid, QP_EVICT, ctype);
+		printk("connected to %d node SECONDARY\n", dest_nid);
+	}
+	else if (strncmp("async:", cmd, 6) == 0) {
+		kstrtoint(&cmd[6], 10, &dest_nid);
 		ctype = BACKUP_ASYNC;
 		__connect_to_server(dest_nid, QP_FETCH, ctype);
 		__connect_to_server(dest_nid, QP_EVICT, ctype);
-		printk("connected to %d node\n", dest_nid);
+		printk("connected to %d node BACKUP_ASYNC\n", dest_nid);
+	}
+	else if (strncmp("sync:", cmd, 5) == 0) {
+		kstrtoint(&cmd[5], 10, &dest_nid);
+		ctype = BACKUP_SYNC;
+		__connect_to_server(dest_nid, QP_FETCH, ctype);
+		__connect_to_server(dest_nid, QP_EVICT, ctype);
+		printk("connected to %d node BACKUP_SYNC\n", dest_nid);
 	}
 
 	return count;
