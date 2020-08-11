@@ -31,7 +31,9 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
-	{2, MEM_GID, BACKUP_ASYNC},
+	{1, MEM_GID, PRIMARY},
+	{2, MEM_GID, SECONDARY},
+	{3, MEM_GID, SECONDARY},
 	{-1, -1, -1}, /* end */
 };
 
@@ -1232,9 +1234,10 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 
 	complete(&rh->cm_done);
 
+	/*
 	if (qp_type == QP_FETCH)
 		basic_memory_init(nid);
-
+	*/
 	accept_k = kthread_create(accept_client, rh, "accept thread");
 	if (!accept_k)
 		return -ENOMEM;
@@ -1894,6 +1897,9 @@ int __init init_rmm_rdma(void)
 	/* allocate memory for cpu servers */
 	for (i = 0; i < MAX_NUM_NODES; i++)
 		vaddr_start_arr[i] = rm_machine_init();
+	
+	/* basic memory initialization */	
+	basic_memory_init(0);
 #endif /*end for CONFIG_RM */
 
 
