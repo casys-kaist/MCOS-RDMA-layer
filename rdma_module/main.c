@@ -1691,6 +1691,8 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	static int head = 0;
 	static int order = 0;
 	static struct task_struct *t_arr[20];
+	int dest_nid;
+	enum connection_type ctype;
 
 	cmd = kmalloc(count, GFP_KERNEL);
 	if (cmd == NULL) {
@@ -1741,6 +1743,13 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	else if (strcmp("alive", cmd) == 0) {
 		printk("alive rpc start\n");
 		rmm_replicate(3, 1);
+	}
+	else if (strncmp("connect:", cmd, 8) == 0) {
+		kstrtoint(&cmd[8], 10, &dest_nid);
+		ctype = BACKUP_ASYNC;
+		__connect_to_server(dest_nid, QP_FETCH, ctype);
+		__connect_to_server(dest_nid, QP_EVICT, ctype);
+		printk("connected to %d node\n", dest_nid);
 	}
 
 	return count;
