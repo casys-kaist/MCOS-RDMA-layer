@@ -694,8 +694,6 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	}
 
 	ret = wait_for_ack_timeout(done, 100000);
-	while(!(ret = *done))
-		cpu_relax();
 
 put:
 	memset(evict_buffer, 0, buffer_size);
