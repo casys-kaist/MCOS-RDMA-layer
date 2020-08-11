@@ -11,6 +11,7 @@
 #include <linux/kernel.h>
 #include <linux/sched_clock.h>
 #include <linux/jiffies.h>
+#include <linux/io.h>
 
 #include <rdma/rdma_cm.h>
 #include <rdma/ib_verbs.h>
@@ -399,6 +400,7 @@ int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &dma_addr);
 	if (!dma_buffer)
 		return -ENOMEM;
+
 	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
 	remote_dma_addr = rh->remote_dma_addr + offset;
 
@@ -846,6 +848,72 @@ put_buffer:
 
         return ret;
 }
+
+int rmm_replicate(int src_nid, int dest_nid)
+{
+        int offset, ret = 0;
+        uint8_t *dma_buffer, *args;
+        struct rpc_header *rhp;
+        dma_addr_t dma_addr, remote_dma_addr;
+        struct rdma_handle *rh;
+        struct rdma_work *rw;
+        const struct ib_send_wr *bad_wr = NULL;
+        int *done;
+        /*
+        ---------------------------------
+        | rpc_header | dest_nid(2bytes) |
+        ---------------------------------
+        */
+        int buffer_size = sizeof(struct rpc_header) + 4;
+        int payload_size = sizeof(struct rpc_header);
+        int index = nid_to_rh(src_nid);
+
+        rh = rdma_handles[index];
+
+        dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size, &dma_addr);
+        if (!dma_buffer) 
+                return -ENOMEM;
+        
+        offset = dma_buffer - (uint8_t *) rh->dma_buffer;
+        remote_dma_addr = rh->remote_dma_addr + offset;
+
+        /* We need to pass virtual address since using INLINE flag */
+        rw = __get_rdma_work_nonsleep(rh, (dma_addr_t) dma_buffer, payload_size, remote_dma_addr, rh->rpc_rkey);
+        if (!rw) {
+                ret = -ENOMEM;
+                goto put_buffer;
+        }
+        rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+        rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
+
+        rw->rh = rh;
+
+        rhp = (struct rpc_header *) dma_buffer;
+        rhp->nid = src_nid;
+        rhp->op = RPC_OP_REPLICATE;
+        rhp->async = true;
+
+        /* copy rpc args to buffer */
+        args = dma_buffer + sizeof(struct rpc_header);
+	*((uint16_t *) args) = dest_nid;
+
+        ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+        __put_rdma_work_nonsleep(rh, rw);
+        if (ret || bad_wr) {
+                printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+                if (bad_wr)
+                        ret = -EINVAL;
+                goto put_buffer;
+        }
+
+	return ret;
+
+put_buffer:
+        memset(dma_buffer, 0, buffer_size);
+        ring_buffer_put(rh->rb, dma_buffer);
+
+        return ret;
+}
 /* SANGJIN END */
 
 static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
@@ -990,7 +1058,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	num_page = (*(int32_t *) evict_buffer);
 	page_pointer = evict_buffer + 4;
 
-	if (rh->c_type == PRIMARY | rh->c_type == SECONDARY) {
+	if ((rh->c_type == PRIMARY) || (rh->c_type == SECONDARY)) {
 		for (i = 0; i < num_page; i++) {
 			*((uint64_t *) (page_pointer)) = 
 				(*((uint64_t *) (page_pointer))) + (rh->vaddr_start);
@@ -1169,6 +1237,79 @@ static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
         return ret;
 }
 
+static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
+{
+	int ret = 0;
+        uint16_t nid = 0;
+	uint16_t dest_nid;
+        uint16_t op = 0;
+        dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+        struct rdma_work *rw;
+        struct rpc_header *rhp;
+        const struct ib_send_wr *bad_wr = NULL;
+        char *rpc_buffer;
+	int i, j, nr_pages;
+	struct evict_info *ei;
+	struct list_head *pos, *n;
+	LIST_HEAD(addr_list);
+
+        rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
+
+        rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
+        rpc_dma_addr = rh->rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
+        remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
+
+        nid = rhp->nid;
+        op = rhp->op;
+	dest_nid = *(uint16_t *) (rpc_buffer);
+
+        rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
+        if (!rw)
+                return -ENOMEM;
+        rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+        rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+        rw->rh = rh;
+
+        DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
+	
+	nr_pages = 128;
+	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
+		INIT_LIST_HEAD(&addr_list);
+
+		for (j = 0; j < nr_pages; j++) {
+			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
+			if (!ei) {
+				printk("error in %s\n", __func__);
+				return -ENOMEM;
+			}
+
+			ei->l_vaddr = RM_VADDR_START + (nr_pages * i + j) * PAGE_SIZE; 
+			ei->r_vaddr = ei->l_vaddr;
+			INIT_LIST_HEAD(&ei->next);
+			list_add(&ei->next, &addr_list);
+		}
+
+		rmm_evict(dest_nid, &addr_list, nr_pages);
+
+		list_for_each_safe(pos, n, &addr_list) {
+			ei = list_entry(pos, struct evict_info, next);
+			kfree(ei);
+		}
+	}
+
+        ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+        __put_rdma_work_nonsleep(rh, rw);
+        if (ret || bad_wr) {
+                printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+                if (bad_wr)
+                        ret = -EINVAL;
+        }
+
+	add_node_to_group(MEM_GID, 1, BACKUP_ASYNC);
+
+        return ret;
+}
+
 
 /* SANGJIN END */
 #ifdef CONFIG_RM 
@@ -1180,6 +1321,7 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_mem;
 /* SANGJIN START */
 	rpc_table[RPC_OP_RECOVERY] = rpc_handle_recovery_backup;
+	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_backup;
 /* SANGJIN END */
 }
 #else

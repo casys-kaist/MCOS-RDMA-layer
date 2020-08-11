@@ -54,6 +54,10 @@
 #define RPAGE_FREE_FAILED       0x00000200
 #define RPAGE_FETCHED           0x00000400
 
+#define RM_VADDR_START 	        0xffffd90000000000
+#define MCOS_BASIC_MEMORY_SIZE  16
+#define RM_PAGE_SHIFT 		30 // 1GB
+#define RM_PAGE_SIZE 		(_AC(1,UL) << RM_PAGE_SHIFT)
 
 enum connection_type {
 	PRIMARY, /* accept all types of RPCs */

@@ -12,6 +12,7 @@ enum rpc_opcode {
 	RPC_OP_ALLOC,
 	RPC_OP_FREE,
 	RPC_OP_RECOVERY,
+	RPC_OP_REPLICATE,
 	NUM_RPC,
 };
 
@@ -64,5 +65,6 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 int rmm_evict(int nid, struct list_head *evict_list, int num_page);
 int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done);
 int rmm_recovery(int nid);
+int rmm_replicate(int src_nid, int dest_nid);
 
 #endif
