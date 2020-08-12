@@ -1208,9 +1208,10 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 
 	complete(&rh->cm_done);
 
+	/*
 	if (qp_type == QP_FETCH)
 		basic_memory_init(nid);
-
+	*/
 	accept_k = kthread_create(accept_client, rh, "accept thread");
 	if (!accept_k)
 		return -ENOMEM;
@@ -1830,6 +1831,9 @@ int __init init_rmm_rdma(void)
 	/* allocate memory for cpu servers */
 	for (i = 0; i < MAX_NUM_NODES; i++)
 		vaddr_start_arr[i] = rm_machine_init();
+	
+	/* basic memory initialization */	
+	basic_memory_init(0);
 #endif /*end for CONFIG_RM */
 
 
