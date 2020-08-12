@@ -75,7 +75,7 @@ enum remote_page_flags {
 #endif
 
 #define RM_VADDR_START 	        0xffffd90000000000
-#define MCOS_BASIC_MEMORY_SIZE  64
+#define MCOS_BASIC_MEMORY_SIZE  16
 #define RM_PAGE_SHIFT 		30 // 1GB
 #define RM_PAGE_SIZE 		(_AC(1,UL) << RM_PAGE_SHIFT)
 
@@ -317,6 +317,7 @@ static inline int remove_node_from_group(int gid, int nid, enum connection_type 
 	return 0;
 }
 
+<<<<<<< HEAD
 static inline int wait_for_ack_timeout(int *done, u64 ticks)
 {
 	int ret;
@@ -336,6 +337,8 @@ static inline int wait_for_ack_timeout(int *done, u64 ticks)
 
 }
 
+=======
+>>>>>>> 4ec304950cee0db20db35a3ffaad72da91e3757f
 static inline int cleanup_all_nodes_from_group(int gid, enum connection_type ctype)
 {
 	int i;

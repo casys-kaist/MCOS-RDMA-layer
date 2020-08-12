@@ -250,8 +250,7 @@ static int __handle_rpc(struct ib_wc *wc)
 		rpc_handle_evict_done(rh, imm_data);
 		processed = 1;
 	}
-
-	if ((op == RPC_OP_ALLOC || op == RPC_OP_FREE) && !rhp->req) {
+	else if ((op == RPC_OP_ALLOC || op == RPC_OP_FREE) && !rhp->req) {
 		rpc_handle_alloc_free_done(rh, imm_data);
 		processed = 1;
 	}
