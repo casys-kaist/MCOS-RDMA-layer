@@ -1048,7 +1048,7 @@ int rmm_replicate(int src_nid, int dest_nid)
         ---------------------------------
         */
         int buffer_size = sizeof(struct rpc_header) + 4;
-        int payload_size = sizeof(struct rpc_header);
+        int payload_size = sizeof(struct rpc_header) + 4;
         int index = nid_to_rh(src_nid);
 
         rh = rdma_handles[index];
