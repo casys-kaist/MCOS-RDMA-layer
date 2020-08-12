@@ -287,11 +287,13 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint32_t offset)
 		}
 		else {
 			if (op == RPC_OP_ALLOC) {
-				DEBUG_LOG(PFX "asycn alloc is failed %s \n", __func__);
+				//DEBUG_LOG(PFX "asycn alloc is failed %s \n", __func__);
+				printk(KERN_ALERT "asycn alloc is failed %s \n", __func__);
 				*rpage_flags |= RPAGE_ALLOC_FAILED;
 			}
 			else {
-				DEBUG_LOG(PFX "asycn free is failed %s \n", __func__);
+				//DEBUG_LOG(PFX "asycn free is failed %s \n", __func__);
+				printk(KERN_ALERT "asycn free is failed %s \n", __func__);
 				*rpage_flags |= RPAGE_FREE_FAILED;
 			}
 		}

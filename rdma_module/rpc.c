@@ -303,7 +303,8 @@ int rmm_free(int nid, u64 vaddr)
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &dma_addr);
 	if (!dma_buffer) {
-		printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
+		//printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
+		printk(KERN_ALERT "buffer overun in %s\n", __func__);
 		return -ENOMEM;
 	}
 	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
@@ -311,7 +312,8 @@ int rmm_free(int nid, u64 vaddr)
 
 	rw = __get_rdma_work_nonsleep(rh, (dma_addr_t) dma_buffer, payload_size, remote_dma_addr, rh->rpc_rkey);
 	if (!rw) {
-		printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
+		//printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
+		printk(KERN_ALERT "work pool overun in %s\n", __func__);
 		ret = -ENOMEM;
 		goto put_buffer;
 	}
@@ -334,7 +336,8 @@ int rmm_free(int nid, u64 vaddr)
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
-		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		//printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		printk(KERN_ERR "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
 		goto put_buffer;
@@ -451,7 +454,7 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size, &dma_addr);
 	if (!dma_buffer) {
-		printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
+		//printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
 		return -ENOMEM;
 	}
 	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
@@ -540,14 +543,17 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 	rh = rdma_handles[index];
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size, &dma_addr);
-	if (!dma_buffer)
+	if (!dma_buffer) {
+		//printk(KERN_ALERT "Cannot ring buffer get mapped, fetch\n");
 		return -ENOMEM;
+	}
 	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
 	remote_dma_addr = rh->remote_dma_addr + offset;
 
 	rw = __get_rdma_work_nonsleep(rh, (dma_addr_t) dma_buffer, payload_size, 
 			remote_dma_addr, rh->rpc_rkey);
 	if (!rw) {
+		printk(KERN_ALERT "Cannot get rdma work fetch\n");
 		ret = -ENOMEM;
 		goto put_buffer;
 	}
@@ -581,6 +587,7 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		printk(KERN_ALERT "Cannot post send wr fetch, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
 		goto put_buffer;
@@ -627,8 +634,10 @@ int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page)
 	rh = rdma_handles[index];
 
 	dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size, &dma_addr);
-	if (!dma_buffer)
+	if (!dma_buffer) {
+		//printk(KERN_ALERT "Cannot ring buffer get mapped\n");
 		return -ENOMEM;
+	}
 	offset = dma_buffer - (uint8_t *) rh->dma_buffer;
 	remote_dma_addr = rh->remote_dma_addr + offset;
 
@@ -637,6 +646,7 @@ int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page)
 	rw = __get_rdma_work_nonsleep(rh, dma_addr, payload_size, 
 			remote_dma_addr, rh->rpc_rkey);
 	if (!rw) {
+		printk(KERN_ALERT "Cannot get rdma work\n");
 		ret = -ENOMEM;
 		goto put_buffer;
 	}
@@ -678,6 +688,7 @@ int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page)
 	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		printk(KERN_ALERT "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
 		goto put_buffer;
@@ -724,7 +735,8 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 #endif
 	evict_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &evict_dma_addr);
 	if (!evict_buffer) {
-		printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
+		//printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
+		//printk(KERN_ALERT "buffer overun in %s\n", __func__);
 		return -ENOMEM;
 	}
 	offset = evict_buffer - (uint8_t *) rh->evict_buffer;
@@ -732,7 +744,8 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 
 	rw = __get_rdma_work_nonsleep(rh, evict_dma_addr, payload_size, remote_evict_dma_addr, rh->rpc_rkey);
 	if (!rw) {
-		printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
+		//printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
+		printk(KERN_ALERT "work pool overun in %s\n", __func__);
 		ret = -ENOMEM;
 		goto put;
 	}
@@ -768,7 +781,8 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
-		printk(KERN_ALERT PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		//printk(KERN_ALERT PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		printk(KERN_ALERT "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
 		goto put;
