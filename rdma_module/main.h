@@ -74,6 +74,11 @@ enum remote_page_flags {
 };
 #endif
 
+#define RM_VADDR_START 	        0xffffd90000000000
+#define MCOS_BASIC_MEMORY_SIZE  64
+#define RM_PAGE_SHIFT 		30 // 1GB
+#define RM_PAGE_SIZE 		(_AC(1,UL) << RM_PAGE_SHIFT)
+
 enum connection_type {
 	PRIMARY, /* accept all types of RPCs */
 	SECONDARY, /* only accept fetch */

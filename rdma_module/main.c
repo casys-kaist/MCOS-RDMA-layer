@@ -31,8 +31,6 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
-//	{2, MEM_GID, BACKUP_SYNC},
-	{1, 0, PRIMARY},
 	{-1, -1, -1}, /* end */
 };
 
@@ -147,9 +145,6 @@ static struct args_worker *dequeue_work(struct worker_thread *wt)
 }
 
 
-/*rpc handle function for mem server */
-
-
 static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint32_t offset)
 {
 	void *rpc_addr;
@@ -222,6 +217,15 @@ static int rpc_handle_evict_done(struct rdma_handle *rh, uint32_t offset)
 	return 0;
 }
 
+static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
+{
+	uint8_t *buffer = rh->dma_buffer + offset;
+
+	ring_buffer_put(rh->rb, buffer);
+
+	return 0;
+}
+
 static int __handle_rpc(struct ib_wc *wc)
 {
 	int ret = 0;
@@ -248,6 +252,10 @@ static int __handle_rpc(struct ib_wc *wc)
 
 	if ((op == RPC_OP_ALLOC || op == RPC_OP_FREE) && !rhp->req) {
 		rpc_handle_alloc_free_done(rh, imm_data);
+		processed = 1;
+	}
+	else if ((op == RPC_OP_REPLICATE) && !rhp->req) {
+		rpc_handle_replicate_done(rh, imm_data);
 		processed = 1;
 	}
 
@@ -1669,6 +1677,10 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	else if (strcmp("recovery", cmd) == 0) {
 		printk("recovery rpc start\n");
 		rmm_recovery(2);
+	}
+	else if (strcmp("alive", cmd) == 0) {
+		printk("alive rpc start\n");
+		rmm_replicate(3, 1);
 	}
 
 	return count;
