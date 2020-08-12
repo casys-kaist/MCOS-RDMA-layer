@@ -317,7 +317,22 @@ static inline int remove_node_from_group(int gid, int nid, enum connection_type 
 	return 0;
 }
 
-<<<<<<< HEAD
+static inline int cleanup_all_nodes_from_group(int gid, enum connection_type ctype)
+{
+	int i;
+	struct node_info *infos = get_node_infos(gid, ctype);
+	extern spinlock_t cinfos_lock;
+
+	spin_lock(&cinfos_lock);
+	for (i = 0; i < infos->size; i++) {
+		infos->nids[i] = -1;
+	}
+	infos->size = 0;
+	spin_unlock(&cinfos_lock);
+
+	return 0;
+}
+
 static inline int wait_for_ack_timeout(int *done, u64 ticks)
 {
 	int ret;
@@ -337,23 +352,7 @@ static inline int wait_for_ack_timeout(int *done, u64 ticks)
 
 }
 
-=======
->>>>>>> 4ec304950cee0db20db35a3ffaad72da91e3757f
-static inline int cleanup_all_nodes_from_group(int gid, enum connection_type ctype)
-{
-	int i;
-	struct node_info *infos = get_node_infos(gid, ctype);
-	extern spinlock_t cinfos_lock;
 
-	spin_lock(&cinfos_lock);
-	for (i = 0; i < infos->size; i++) {
-		infos->nids[i] = -1;
-	}
-	infos->size = 0;
-	spin_unlock(&cinfos_lock);
-
-	return 0;
-}
 
 /* prototype of symbol */
 /*
