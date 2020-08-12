@@ -6,17 +6,14 @@
  */
 
 const char *ip_addresses[] = {
-	"10.0.0.23",
+	"10.0.0.40",
+	"10.0.0.41",
+	"10.0.0.29",
+	"10.0.0.36",
+	"10.0.0.43",
+	"10.0.0.42",
+	"10.0.0.36",
+	"10.0.0.34",
 };
-
-const char *backup_ip_addresses[] = {
-	///* Node 0 */ "10.0.0.24",
-};
-
-const char *rnic_ip_addresses[] = {
-	/* Node 0 */ "10.0.0.27",
-};
-
-#define NID 0
 
 #endif

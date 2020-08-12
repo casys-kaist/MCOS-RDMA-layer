@@ -12,6 +12,7 @@ enum rpc_opcode {
 	RPC_OP_ALLOC,
 	RPC_OP_FREE,
 	RPC_OP_PREFETCH,
+	RPC_OP_RECOVERY,
 	NUM_RPC,
 };
 
@@ -22,6 +23,11 @@ struct rpc_header {
 	int nid;
 	enum rpc_opcode op;
 	bool async;
+};
+
+union rpc_tail {
+	u64 rpage_flags;
+	int done;
 };
 
 struct fetch_args {
@@ -57,7 +63,9 @@ int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags);
 int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order);
 int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, unsigned long *rpage_flags);
 int rmm_evict(int nid, struct list_head *evict_list, int num_page);
+int rmm_evict_async(int nid, struct list_head *evict_list, int num_page, int *done);
 int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done);
 int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page);
+int rmm_recovery(int nid);
 
 #endif
