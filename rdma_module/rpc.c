@@ -693,7 +693,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 		goto put;
 	}
 
-	ret = wait_for_ack_timeout(done, 1000);
+	ret = wait_for_ack_timeout(done, 10000);
 
 put:
 	memset(evict_buffer, 0, buffer_size);
