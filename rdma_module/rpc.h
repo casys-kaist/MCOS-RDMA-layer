@@ -23,6 +23,7 @@ struct rpc_header {
 	int nid;
 	enum rpc_opcode op;
 	bool async;
+	bool req;
 };
 
 union rpc_tail {

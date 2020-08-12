@@ -190,6 +190,7 @@ int rmm_alloc(int nid, u64 vaddr)
 	rhp->nid = nid;
 	rhp->op = RPC_OP_ALLOC;
 	rhp->async = false;
+	rhp->req = true;
 
 	/*copy rpc args to buffer */
 	args = dma_buffer + sizeof(struct rpc_header);
@@ -261,6 +262,7 @@ int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	rhp->nid = nid;
 	rhp->op = RPC_OP_ALLOC;
 	rhp->async = true;
+	rhp->req = true;
 
 	/*copy rpc args to buffer */
 	args = dma_buffer + sizeof(struct rpc_header);
@@ -333,6 +335,7 @@ int rmm_free(int nid, u64 vaddr)
 	rhp->nid = nid;
 	rhp->op = RPC_OP_FREE;
 	rhp->async = false;
+	rhp->req = true;
 
 	/*copy rpc args to buffer */
 	args = dma_buffer + sizeof(struct rpc_header);
@@ -401,6 +404,7 @@ int rmm_free_async(int nid, u64 vaddr, unsigned long *rpage_flags)
 	rhp->nid = nid;
 	rhp->op = RPC_OP_FREE;
 	rhp->async = true;
+	rhp->req = true;
 
 	/*copy rpc args to buffer */
 	args = dma_buffer + sizeof(struct rpc_header);
@@ -479,6 +483,7 @@ int rmm_fetch(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	rhp->nid = nid;
 	rhp->op = RPC_OP_FETCH;
 	rhp->async = false;
+	rhp->req = true;
 
 	/*copy rpc args to buffer */
 	fap = (struct fetch_args *) (rhp + 1);
@@ -568,6 +573,7 @@ int rmm_fetch_async(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 	rhp->nid = nid;
 	rhp->op = RPC_OP_FETCH;
 	rhp->async = true;
+	rhp->req = true;
 
 	/*copy rpc args to buffer */
 	fap = (struct fetch_args *) (rhp + 1);
@@ -754,6 +760,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	rhp->nid = nid;
 	rhp->op = RPC_OP_EVICT;
 	rhp->async = false;
+	rhp->req = true;
 
 	/*copy rpc args to buffer */
 	DEBUG_LOG(PFX "copy args, %s, %p\n", __func__, evict_buffer);
@@ -841,6 +848,7 @@ int rmm_evict_async(int nid, struct list_head *evict_list, int num_page, int *do
 	rhp->nid = nid;
 	rhp->op = RPC_OP_EVICT;
 	rhp->async = true;
+	rhp->req = true;
 
 	/*copy rpc args to buffer */
 	DEBUG_LOG(PFX "copy args, %s, %p\n", __func__, evict_buffer);
@@ -922,6 +930,7 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 	memcpy(evict_buffer, src_buffer, payload_size);
 	rhp = (struct rpc_header *) evict_buffer;
 	rhp->async = true;
+	rhp->req = true;
 	*((int **) (evict_buffer + payload_size)) = done;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -989,6 +998,7 @@ int rmm_recovery(int nid)
         rhp->nid = nid;
         rhp->op = RPC_OP_RECOVERY;
         rhp->async = false;
+	rhp->req = true;
 
         /* copy done buffer */
         args = dma_buffer + sizeof(struct rpc_header);
@@ -1144,7 +1154,6 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 	uint16_t nid = 0;
 	uint16_t op = 0;
 	uint64_t vaddr;
-	dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
 	struct rdma_work *rw;
 	struct rpc_header *rhp;
 	const struct ib_send_wr *bad_wr = NULL;
@@ -1154,15 +1163,14 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 	rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
 
 	rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
-	rpc_dma_addr = rh->rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
-	remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
 
 	nid = rhp->nid;
 	op = rhp->op; 
 	/*Add offset */
 	vaddr = (*(uint64_t *) (rpc_buffer)) + (rh->vaddr_start);
 
-	rw = __get_rdma_work(rh, rpc_dma_addr, 8, remote_rpc_dma_addr, rh->rpc_rkey);
+	rw = __get_rdma_work(rh, rh->rpc_dma_addr + offset, sizeof(struct rpc_header) + 4,
+			rh->remote_rpc_dma_addr + offset, rh->rpc_rkey);
 	if (!rw)
 		return -ENOMEM;
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
@@ -1190,11 +1198,9 @@ static int rpc_handle_alloc_free_mem(struct rdma_handle *rh, uint32_t offset)
 		}
 	}
 
-	*((int *) (rpc_buffer + 4)) = ret;
 	DEBUG_LOG(PFX "ret in %s, %d\n", __func__, ret);
-
-	/* -1 means this packet is ack */
-	*((int *) rpc_buffer) = -1;
+	*((int *) rpc_buffer) = ret;
+	rhp->req = false;
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
@@ -1268,11 +1274,10 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	}
 
 
-	/* set buffer to -1 to send ack to caller */
-	*((int *) (evict_buffer + 4)) = -1;
+	rhp->req = false;
 	/* FIXME: In current implementation, rpc_dma_addr == evict_dma_addr */
-	rw = __get_rdma_work(rh, rh->evict_dma_addr + offset + sizeof(struct rpc_header) + 4,
-			4, rh->remote_rpc_dma_addr + offset + sizeof(struct rpc_header) + 4, rh->rpc_rkey);
+	rw = __get_rdma_work(rh, rh->evict_dma_addr + offset,
+			sizeof(struct rpc_header), rh->remote_rpc_dma_addr + offset, rh->rpc_rkey);
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
 
