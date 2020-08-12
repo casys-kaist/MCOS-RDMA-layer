@@ -859,7 +859,7 @@ int rmm_replicate(int src_nid, int dest_nid)
         int *done;
         /*
         ---------------------------------
-        | rpc_header | dest_nid(2bytes) |
+        | rpc_header | dest_nid(4bytes) |
         ---------------------------------
         */
         int buffer_size = sizeof(struct rpc_header) + 4;
@@ -893,7 +893,7 @@ int rmm_replicate(int src_nid, int dest_nid)
 
         /* copy rpc args to buffer */
         args = dma_buffer + sizeof(struct rpc_header);
-	*((uint16_t *) args) = dest_nid;
+	*((uint32_t *) args) = dest_nid;
 
         ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
         __put_rdma_work_nonsleep(rh, rw);
@@ -1269,6 +1269,7 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
         rw->rh = rh;
 
         DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
+        DEBUG_LOG(PFX "dest nid: %d\n", dest_nid);
 	
 	nr_pages = 128;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
