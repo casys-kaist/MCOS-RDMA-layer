@@ -230,32 +230,24 @@ static int __handle_rpc(struct ib_wc *wc)
 	uint32_t imm_data;
 	int op;
 	const struct ib_recv_wr *bad_wr = NULL;
-	int header;
 	int processed = 0;
 
 	rw = (struct recv_work *) wc->wr_id;
 	rh = rw->rh;
 	imm_data = be32_to_cpu(wc->ex.imm_data);
 	rhp = rh->rpc_buffer + imm_data;
+	op = rhp->op;
 
 	//	DEBUG_LOG(PFX "%08X\n", imm_data);
 
-	if (rh->qp_type == QP_EVICT) {
-		header = *(int *) (rh->evict_buffer + (imm_data + sizeof(struct rpc_header) + 4));
-		DEBUG_LOG(PFX "header %d in %s\n", header, __func__);
-		if (header == -1) {
-			rpc_handle_evict_done(rh, imm_data);
-			processed = 1;
-		}
+	if (op == RPC_OP_EVICT && !rhp->req) {
+		rpc_handle_evict_done(rh, imm_data);
+		processed = 1;
 	}
 
-	if (rh->qp_type == QP_FETCH) {
-		op = rhp->op;
-		header =  *(int *) (rh->rpc_buffer + (imm_data + sizeof(struct rpc_header)));
-		if ((op == RPC_OP_ALLOC || op == RPC_OP_FREE) && header == -1) {
-			rpc_handle_alloc_free_done(rh, imm_data);
-			processed = 1;
-		}
+	if ((op == RPC_OP_ALLOC || op == RPC_OP_FREE) && !rhp->req) {
+		rpc_handle_alloc_free_done(rh, imm_data);
+		processed = 1;
 	}
 
 	if (!processed) {
@@ -1316,23 +1308,23 @@ static int __establish_connections(void)
 
 void clean_rdma_handle(struct rdma_handle *rh)
 {
-		if (!rh) 
-			return;
+	if (!rh) 
+		return;
 
-		rdma_disconnect(rh->cm_id);
+	rdma_disconnect(rh->cm_id);
 
-		if (rh->qp && !IS_ERR(rh->qp)) {
-			rdma_destroy_qp(rh->cm_id);
-			rh->qp = NULL;
-		}
-		if (rh->cm_id && !IS_ERR(rh->cm_id)) {
-			rdma_destroy_id(rh->cm_id);
-			rh->cm_id = NULL;
-		}
-		if (rh->mr && !IS_ERR(rh->mr)) {
-			ib_dereg_mr(rh->mr);
-			rh->mr = NULL;
-		}
+	if (rh->qp && !IS_ERR(rh->qp)) {
+		rdma_destroy_qp(rh->cm_id);
+		rh->qp = NULL;
+	}
+	if (rh->cm_id && !IS_ERR(rh->cm_id)) {
+		rdma_destroy_id(rh->cm_id);
+		rh->cm_id = NULL;
+	}
+	if (rh->mr && !IS_ERR(rh->mr)) {
+		ib_dereg_mr(rh->mr);
+		rh->mr = NULL;
+	}
 }
 
 void __exit exit_rmm_rdma(void)
