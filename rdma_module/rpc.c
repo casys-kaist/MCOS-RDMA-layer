@@ -1519,7 +1519,11 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
 	int i, j, nr_pages;
 	struct evict_info *ei;
 	struct list_head *pos, *n;
+	struct timespec start_tv, end_tv;
+	unsigned long elapsed;
 	LIST_HEAD(addr_list);
+	
+	getnstimeofday(&start_tv);
 
         rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
 
@@ -1540,7 +1544,7 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
 
         DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
         DEBUG_LOG(PFX "dest nid: %d\n", dest_nid);
-	
+
 	nr_pages = 128;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
@@ -1558,7 +1562,10 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
 			list_add(&ei->next, &addr_list);
 		}
 
-		rmm_evict(dest_nid, &addr_list, nr_pages);
+retry:
+		ret = rmm_evict(dest_nid, &addr_list, nr_pages);
+		if (ret == -ETIME)
+			goto retry;
 
 		list_for_each_safe(pos, n, &addr_list) {
 			ei = list_entry(pos, struct evict_info, next);
@@ -1574,7 +1581,11 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
                         ret = -EINVAL;
         }
 
-	add_node_to_group(MEM_GID, 1, BACKUP_ASYNC);
+	getnstimeofday(&end_tv);
+	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+		(end_tv.tv_nsec - start_tv.tv_nsec);
+
+	printk(KERN_INFO PFX "total elapsed time %lu (ns)\n", elapsed);
 
         return ret;
 }
