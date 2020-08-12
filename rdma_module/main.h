@@ -300,6 +300,8 @@ static inline int cleanup_all_nodes_from_group(int gid, enum connection_type cty
 	}
 	infos->size = 0;
 	spin_unlock(&cinfos_lock);
+
+	return 0;
 }
 
 /* prototype of symbol */
