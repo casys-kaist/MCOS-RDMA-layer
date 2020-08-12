@@ -221,6 +221,7 @@ static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 {
 	uint8_t *buffer = rh->dma_buffer + offset;
 
+	printk("replicate done\n");
 	ring_buffer_put(rh->rb, buffer);
 
 	return 0;

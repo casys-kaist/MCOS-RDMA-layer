@@ -1303,6 +1303,8 @@ retry:
 		}
 	}
 
+	/* -1 means this packet is ack */
+	*((int *) rpc_buffer) = -1;
         ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
         __put_rdma_work_nonsleep(rh, rw);
         if (ret || bad_wr) {
