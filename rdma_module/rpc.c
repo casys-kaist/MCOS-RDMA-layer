@@ -1529,7 +1529,7 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
 
         nid = rhp->nid;
         op = rhp->op;
-	dest_nid = *(uint16_t *) (rpc_buffer);
+	dest_nid = *(uint32_t *) (rpc_buffer);
 
         rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
         if (!rw)
