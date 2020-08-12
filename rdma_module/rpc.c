@@ -644,6 +644,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	rhp->nid = nid;
 	rhp->op = RPC_OP_EVICT;
 	rhp->async = false;
+	rhp->req = true;
 
 	/*copy rpc args to buffer */
 	DEBUG_LOG(PFX "copy args, %s, %p\n", __func__, evict_buffer);
@@ -730,6 +731,7 @@ int rmm_evict_async(int nid, struct list_head *evict_list, int num_page, int *do
 	rhp->nid = nid;
 	rhp->op = RPC_OP_EVICT;
 	rhp->async = true;
+	rhp->req = true;
 
 	/*copy rpc args to buffer */
 	DEBUG_LOG(PFX "copy args, %s, %p\n", __func__, evict_buffer);
@@ -811,6 +813,7 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 	memcpy(evict_buffer, src_buffer, payload_size);
 	rhp = (struct rpc_header *) evict_buffer;
 	rhp->async = true;
+	rhp->req = true;
 	*((int **) (evict_buffer + payload_size)) = done;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -1098,11 +1101,10 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	}
 
 
-	/* set buffer to -1 to send ack to caller */
-	*((int *) (evict_buffer + 4)) = -1;
+	rhp->req = false;
 	/* FIXME: In current implementation, rpc_dma_addr == evict_dma_addr */
-	rw = __get_rdma_work(rh, rh->evict_dma_addr + offset + sizeof(struct rpc_header) + 4,
-			4, rh->remote_rpc_dma_addr + offset + sizeof(struct rpc_header) + 4, rh->rpc_rkey);
+	rw = __get_rdma_work(rh, rh->evict_dma_addr + offset,
+			sizeof(struct rpc_header), rh->remote_rpc_dma_addr + offset, rh->rpc_rkey);
 	rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
 	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
 

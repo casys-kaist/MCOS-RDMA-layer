@@ -240,13 +240,9 @@ static int __handle_rpc(struct ib_wc *wc)
 
 	//	DEBUG_LOG(PFX "%08X\n", imm_data);
 
-	if (rh->qp_type == QP_EVICT) {
-		header = *(int *) (rh->evict_buffer + (imm_data + sizeof(struct rpc_header) + 4));
-		DEBUG_LOG(PFX "header %d in %s\n", header, __func__);
-		if (header == -1) {
-			rpc_handle_evict_done(rh, imm_data);
-			processed = 1;
-		}
+	if (rhp->op == RPC_OP_EVICT && !rhp->req) {
+		rpc_handle_evict_done(rh, imm_data);
+		processed = 1;
 	}
 
 	if (rh->qp_type == QP_FETCH) {
@@ -1316,23 +1312,23 @@ static int __establish_connections(void)
 
 void clean_rdma_handle(struct rdma_handle *rh)
 {
-		if (!rh) 
-			return;
+	if (!rh) 
+		return;
 
-		rdma_disconnect(rh->cm_id);
+	rdma_disconnect(rh->cm_id);
 
-		if (rh->qp && !IS_ERR(rh->qp)) {
-			rdma_destroy_qp(rh->cm_id);
-			rh->qp = NULL;
-		}
-		if (rh->cm_id && !IS_ERR(rh->cm_id)) {
-			rdma_destroy_id(rh->cm_id);
-			rh->cm_id = NULL;
-		}
-		if (rh->mr && !IS_ERR(rh->mr)) {
-			ib_dereg_mr(rh->mr);
-			rh->mr = NULL;
-		}
+	if (rh->qp && !IS_ERR(rh->qp)) {
+		rdma_destroy_qp(rh->cm_id);
+		rh->qp = NULL;
+	}
+	if (rh->cm_id && !IS_ERR(rh->cm_id)) {
+		rdma_destroy_id(rh->cm_id);
+		rh->cm_id = NULL;
+	}
+	if (rh->mr && !IS_ERR(rh->mr)) {
+		ib_dereg_mr(rh->mr);
+		rh->mr = NULL;
+	}
 }
 
 void __exit exit_rmm_rdma(void)
