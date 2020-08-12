@@ -333,6 +333,23 @@ static inline int wait_for_ack_timeout(int *done, u64 ticks)
 	}
 
 	return 0;
+
+}
+
+static inline int cleanup_all_nodes_from_group(int gid, enum connection_type ctype)
+{
+	int i;
+	struct node_info *infos = get_node_infos(gid, ctype);
+	extern spinlock_t cinfos_lock;
+
+	spin_lock(&cinfos_lock);
+	for (i = 0; i < infos->size; i++) {
+		infos->nids[i] = -1;
+	}
+	infos->size = 0;
+	spin_unlock(&cinfos_lock);
+
+	return 0;
 }
 
 /* prototype of symbol */

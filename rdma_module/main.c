@@ -1677,12 +1677,13 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		}
 		head = 0;
 	}
-	else if (strcmp("recovery", cmd) == 0) {
+/* SANGJIN START */
+	else if (strcmp("dead", cmd) == 0) {
 		printk("recovery rpc start\n");
 		rmm_recovery(2);
 	}
 	else if (strcmp("alive", cmd) == 0) {
-		printk("alive rpc start\n");
+		printk("replicate rpc start\n");
 		rmm_replicate(3, 1);
 	}
 	else if (strncmp("primary:", cmd, 8) == 0) {
@@ -1709,6 +1710,10 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
 		printk("connected to node %d as BACKUP_ASYNC\n", dest_nid);
 	}
+	else if (strncmp("clean_async", cmd,  11) == 0) {
+		cleanup_all_nodes_from_group(MEM_GID, BACKUP_ASYNC);
+		printk("cleanup all nodes from group %d with BACKUP_ASYNC\n", MEM_GID);
+	}
 	else if (strncmp("sync:", cmd, 5) == 0) {
 		kstrtoint(&cmd[5], 10, &dest_nid);
 		ctype = BACKUP_SYNC;
@@ -1717,7 +1722,11 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		add_node_to_group(MEM_GID, dest_nid, BACKUP_SYNC);
 		printk("connected to node %d as BACKUP_SYNC\n", dest_nid);
 	}
-
+	else if (strncmp("clean_sync", cmd,  10) == 0) {
+		cleanup_all_nodes_from_group(MEM_GID, BACKUP_SYNC);
+		printk("cleanup all nodes from group %d with BACKUP_SYNC\n", MEM_GID);
+	}
+/* SANGJIN END */
 	return count;
 }
 
