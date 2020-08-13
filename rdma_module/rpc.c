@@ -1014,16 +1014,12 @@ int rmm_recovery(int nid)
                 goto put_buffer;
         }
 
-        printk("recovery wait %p\n", rw);
-
         while(!(ret = *done))
                 cpu_relax();
 
         ret = *((int *) (args + 4));
 
-        //DEBUG_LOG(PFX "recovery done %d\n", ret);
-
-        printk(KERN_ALERT PFX "recovery done\n");
+        DEBUG_LOG(PFX "recovery done %d\n", ret);
 
 put_buffer:
         memset(dma_buffer, 0, buffer_size);
@@ -1587,7 +1583,7 @@ retry:
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 
-	printk(KERN_INFO PFX "replicate total elapsed time %lu (ns)\n", elapsed);
+	printk(KERN_INFO PFX "replicate total elapsed time %lu (s)\n", elapsed * 1000 * 1000);
 
         return ret;
 }
@@ -1602,10 +1598,8 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_ALLOC] = rpc_handle_alloc_free_mem;
 	rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_mem;
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_mem;
-/* SANGJIN START */
 	rpc_table[RPC_OP_RECOVERY] = rpc_handle_recovery_backup;
 	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_backup;
-/* SANGJIN END */
 }
 #else
 void regist_handler(Rpc_handler rpc_table[])
@@ -1615,8 +1609,6 @@ void regist_handler(Rpc_handler rpc_table[])
 	//rpc_table[RPC_OP_ALLOC] = rpc_handle_alloc_free_done;
 	//rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_done;
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_cpu;
-/* SANGJIN START */
 	rpc_table[RPC_OP_RECOVERY] = rpc_handle_recovery_cpu;
-/* SANGJIN END */
 }
 #endif
