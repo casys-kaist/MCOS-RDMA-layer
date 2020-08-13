@@ -1519,6 +1519,9 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
 	unsigned long elapsed;
 	LIST_HEAD(addr_list);
 	
+	__connect_to_server(dest_nid, QP_FETCH, BACKUP_ASYNC);
+	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
+	
 	getnstimeofday(&start_tv);
 
         rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
@@ -1578,6 +1581,8 @@ retry:
                 if (bad_wr)
                         ret = -EINVAL;
         }
+
+	add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
 
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
