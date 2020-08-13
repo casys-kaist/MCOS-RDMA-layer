@@ -946,7 +946,7 @@ int cm_client_event_handler(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_e
 	return 0;
 }
 
-static int __connect_to_server(int nid, int qp_type, enum connection_type c_type)
+int __connect_to_server(int nid, int qp_type, enum connection_type c_type)
 {
 	struct conn_private_data private_data;
 	const char *step;

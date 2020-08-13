@@ -352,7 +352,7 @@ static inline int wait_for_ack_timeout(int *done, u64 ticks)
 
 }
 
-
+int __connect_to_server(int nid, int qp_type, enum connection_type c_type);
 
 /* prototype of symbol */
 /*
