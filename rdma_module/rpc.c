@@ -1520,9 +1520,6 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
 	unsigned long elapsed;
 	LIST_HEAD(addr_list);
 	
-	__connect_to_server(dest_nid, QP_FETCH, BACKUP_ASYNC);
-	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
-	
 	getnstimeofday(&start_tv);
 
         rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
@@ -1544,6 +1541,9 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
 
         DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
         DEBUG_LOG(PFX "dest nid: %d\n", dest_nid);
+
+	__connect_to_server(dest_nid, QP_FETCH, BACKUP_ASYNC);
+	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
 	nr_pages = 128;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
