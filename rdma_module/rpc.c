@@ -1590,7 +1590,7 @@ retry:
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 
-	printk(KERN_INFO PFX "replicate total elapsed time %lu (s)\n", elapsed * 1000 * 1000);
+	printk(KERN_INFO PFX "replicate total elapsed time %lu (s)\n", elapsed / (1000 * 1000));
 
         return ret;
 }
