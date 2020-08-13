@@ -1071,6 +1071,7 @@ int rmm_replicate(int src_nid, int dest_nid)
         rhp->nid = src_nid;
         rhp->op = RPC_OP_REPLICATE;
         rhp->async = true;
+        rhp->req = true;
 
         /* copy rpc args to buffer */
         args = dma_buffer + sizeof(struct rpc_header);
