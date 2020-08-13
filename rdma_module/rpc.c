@@ -1525,14 +1525,12 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
         rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
 
         rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
-        rpc_dma_addr = rh->rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
-        remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
 
         nid = rhp->nid;
         op = rhp->op;
 	dest_nid = *(uint32_t *) (rpc_buffer);
 
-        rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
+        rw = __get_rdma_work(rh, rh->rpc_dma_addr + offset, sizeof(struct rpc_header) + 4, rh->remote_dma_addr + offset, rh->rpc_rkey);
         if (!rw)
                 return -ENOMEM;
         rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
@@ -1595,6 +1593,16 @@ retry:
         return ret;
 }
 
+static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
+{
+	uint8_t *buffer = rh->dma_buffer + offset;
+
+	printk("replicate done\n");
+	ring_buffer_put(rh->rb, buffer);
+
+	return 0;
+}
+
 
 /* SANGJIN END */
 #ifdef CONFIG_RM 
@@ -1617,5 +1625,6 @@ void regist_handler(Rpc_handler rpc_table[])
 	//rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_done;
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_cpu;
 	rpc_table[RPC_OP_RECOVERY] = rpc_handle_recovery_cpu;
+	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_done;
 }
 #endif
