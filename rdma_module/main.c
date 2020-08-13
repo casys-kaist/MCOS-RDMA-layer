@@ -31,7 +31,6 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
-//	{2, MEM_GID, BACKUP_SYNC},
 	{-1, -1, -1}, /* end */
 };
 
@@ -1016,7 +1015,7 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 	step = "connect";
 	private_data.qp_type = qp_type;
 	private_data.c_type = c_type;
-	private_data.nid = my_nid;
+	private_data.nid = nid;
 	DEBUG_LOG(PFX "%s\n", step);
 	{
 		struct rdma_conn_param conn_param = {
@@ -1393,12 +1392,14 @@ static int dummy_thread(void *args)
 
 static int tt_worker(void *args)
 {
-	int i;
+	int i, j;
 	struct worker_info *wi;
 	int nid;
+	int window_size = 1000;
 	int num_op;
 	uint16_t *random_index1, *random_index2;
 	int num_page;
+	unsigned long *done;
 
 	wi = (struct worker_info *) args;
 	nid = wi->nid;
@@ -1407,10 +1408,14 @@ static int tt_worker(void *args)
 	random_index2 = wi->random_index2;
 	num_page = 1 << wi->order;
 
-	for (i = 0; i < num_op; i++) {
-		//rmm_fetch(nid, my_data[nid] + (random_index1[i] * (PAGE_SIZE * num_page)), (void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order);
-		rmm_fetch(nid % 4, my_data[nid] + (random_index1[i] * (PAGE_SIZE * num_page)), 
-				(void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order);
+	done = kmalloc(sizeof(unsigned long) * 1000, GFP_KERNEL);
+
+	for (i = 0; i < num_op; i += window_size) {
+		memset(done, 0, sizeof(unsigned long) * window_size);
+		for (j = 0; j < window_size; j++)
+			rmm_fetch_async(nid, my_data[nid] + (random_index1[i] * (PAGE_SIZE * num_page)), 
+					(void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order, &done[j]);
+		wait_for_ack_timeout((int *) &done[window_size-1], 100000);
 	}
 
 	if (atomic_inc_return(&num_done) == wi->test_size) {
@@ -1483,7 +1488,6 @@ static void test_throughput(int test_size, int order)
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 	elapsed_th[test_size-1] = elapsed;
 
-	//	printk(KERN_INFO PFX "num op: %d, test size: %d, elapsed(ns) %llu\n", (num_op * test_size), test_size, elapsed);
 	if (test_size == MAX_NUM_NODES)
 		for (i = 0; i < MAX_NUM_NODES; i++)
 			printk(KERN_INFO PFX "test size: %d, elapsed(ns) %llu\n", i + 1, elapsed_th[i]);
@@ -1653,7 +1657,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		test_evict();
 	else if (strcmp("tt", cmd) == 0) {
 		if (num <= MAX_NUM_NODES)
-			test_throughput(num++, order);
+			test_throughput(10, order);
 	}
 	else if (strcmp("start", cmd) == 0)
 		start_connection();
