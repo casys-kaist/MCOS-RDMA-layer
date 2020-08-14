@@ -1312,7 +1312,8 @@ void clean_rdma_handle(struct rdma_handle *rh)
 	if (!rh) 
 		return;
 
-	rdma_disconnect(rh->cm_id);
+	if (rh->cm_id)
+		rdma_disconnect(rh->cm_id);
 
 	if (rh->qp && !IS_ERR(rh->qp)) {
 		rdma_destroy_qp(rh->cm_id);
