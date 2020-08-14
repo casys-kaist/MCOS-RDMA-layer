@@ -1,6 +1,5 @@
 #include <linux/module.h>
 #include <linux/delay.h>
-#include <linux/bitmap.h>
 #include <linux/seq_file.h>
 #include <linux/atomic.h>
 #include <linux/proc_fs.h>
@@ -20,6 +19,7 @@
 #include "main.h"
 #include "mcos.h"
 #include "rpc.h"
+#include "test.h"
 
 #define NUM_QPS (MAX_NUM_NODES * 2)
 
@@ -64,14 +64,11 @@ static struct task_struct *polling_k = NULL;
 /*proc file for control */
 static struct proc_dir_entry *rmm_proc;
 
-/*Variables for server */
 static uint32_t my_ip;
 
 /* RPC hadnler table */
 Rpc_handler rpc_table[NUM_RPC];
 
-/*buffer for test */
-char *my_data[MAX_NUM_NODES] = { NULL };
 
 unsigned long delta[512], delta_delay[512];
 unsigned long accum = 0, accum_delay = 0;
@@ -89,10 +86,6 @@ static inline unsigned long long get_ns(void)
 	return sched_clock();
 }
 
-static inline void rmm_yield_cpu(void)
-{
-	cond_resched();
-}
 
 static inline struct worker_thread *get_worker_thread(void)
 {
@@ -1362,260 +1355,6 @@ void __exit exit_rmm_rdma(void)
 	return;
 }
 
-
-static atomic_t num_done = ATOMIC_INIT(0);
-
-struct worker_info {
-	int nid;
-	int test_size;
-	int order;
-	int num_op;
-	uint16_t *random_index1;
-	uint16_t *random_index2;
-	struct completion *done;
-};
-
-static int dummy_thread(void *args)
-{
-	int i;
-	int nid = (int) args;
-
-
-	i = 0;
-	while (1)  {
-		if (kthread_should_stop())
-			return 0;
-		rmm_fetch(nid, my_data[nid] + (i * (PAGE_SIZE)), (void *) (i * (PAGE_SIZE)), 0);
-		i = (i + 1) % 1024;
-		rmm_yield_cpu();
-	}
-
-	return 0;
-}
-
-static int tt_worker(void *args)
-{
-	int i;
-	struct worker_info *wi;
-	int nid;
-	int num_op;
-	uint16_t *random_index1, *random_index2;
-	int num_page;
-
-	wi = (struct worker_info *) args;
-	nid = wi->nid;
-	num_op = wi->num_op;
-	random_index1 = wi->random_index1;
-	random_index2 = wi->random_index2;
-	num_page = 1 << wi->order;
-
-	for (i = 0; i < num_op; i++) {
-		//rmm_fetch(nid, my_data[nid] + (random_index1[i] * (PAGE_SIZE * num_page)), (void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order);
-		rmm_fetch(nid % 4, my_data[nid] + (random_index1[i] * (PAGE_SIZE * num_page)), 
-				(void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order);
-	}
-
-	if (atomic_inc_return(&num_done) == wi->test_size) {
-		complete(wi->done);
-	}
-
-	return 0;
-}
-
-static uint64_t elapsed_th[MAX_NUM_NODES];
-
-
-static void test_throughput(int test_size, int order)
-{
-	int i, j;
-	int num_op = 1000000;
-	struct completion job_done;
-	struct task_struct *t_arr[16];
-	uint16_t index;
-	uint16_t *random_index1[16], *random_index2[16];
-	struct worker_info wi[16];
-	struct timespec start_tv, end_tv;
-	uint64_t elapsed;
-	int num_page;
-
-	printk(KERN_INFO PFX "tt start %d\n", test_size);
-
-	init_completion(&job_done);
-	atomic_set(&num_done, 0);
-	for (i = 0; i < test_size; i++) {
-		random_index1[i] = kmalloc(num_op * sizeof(uint16_t), GFP_KERNEL);
-		if (!random_index1[i])
-			goto out_free;
-
-		random_index2[i] = kmalloc(num_op * sizeof(uint16_t), GFP_KERNEL);
-		if (!random_index2[i])
-			goto out_free;
-	}
-
-	num_page = 1 << order;
-	if (order >= 9)
-		num_op = 5000;
-
-	for (i = 0; i < test_size; i++)
-		for (j = 0; j < num_op; j++) {
-			get_random_bytes(&index, sizeof(index));
-			random_index1[i][j] = index % (1024 / num_page);
-			random_index2[i][j] = index % ((1 << 18) / num_page);
-		}
-
-	for (i = 0; i < test_size; i++) {
-		wi[i].nid = i;
-		wi[i].random_index1 = random_index1[i];
-		wi[i].random_index2 = random_index2[i];
-		wi[i].order = order;
-		wi[i].num_op = num_op;
-		wi[i].done = &job_done;
-		wi[i].test_size = test_size;
-	}
-
-	getnstimeofday(&start_tv);
-	for (i = 0; i < test_size; i++) {
-		t_arr[i] = kthread_run(tt_worker, &wi[i], "woker: %d", i);
-	}
-
-	wait_for_completion_interruptible(&job_done);
-
-	getnstimeofday(&end_tv);
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-	elapsed_th[test_size-1] = elapsed;
-
-	//	printk(KERN_INFO PFX "num op: %d, test size: %d, elapsed(ns) %llu\n", (num_op * test_size), test_size, elapsed);
-	if (test_size == MAX_NUM_NODES)
-		for (i = 0; i < MAX_NUM_NODES; i++)
-			printk(KERN_INFO PFX "test size: %d, elapsed(ns) %llu\n", i + 1, elapsed_th[i]);
-
-
-out_free:
-	for (i = 0; i < test_size; i++) {
-		if (random_index1[i])
-			kfree(random_index1[i]);
-		if (random_index2[i])
-			kfree(random_index2[i]);
-	}
-}
-
-static void test_fetch(int order)
-{
-	int i;
-	int num_page, size;
-	struct timespec start_tv, end_tv;
-	unsigned long elapsed;
-	uint16_t index;
-	uint16_t *arr1, *arr2;
-	//unsigned long flags;
-
-	arr1 = kmalloc(512 * sizeof(uint16_t), GFP_KERNEL);
-	if (!arr1)
-		return;
-
-	arr2 = kmalloc(512 * sizeof(uint16_t), GFP_KERNEL);
-	if (!arr2) {
-		kfree(arr1);
-		return;
-	}
-
-	num_page = (1 << order);
-	size = PAGE_SIZE * num_page;
-	for (i = 0; i < 512; i++) {
-		get_random_bytes(&index, sizeof(index));
-		index %= (1024 / num_page);
-		arr1[i] = index;
-	}
-
-	for (i = 0; i < 512; i++) {
-		get_random_bytes(&index, sizeof(index));
-		index %= ((1 << 18) / num_page);
-		arr2[i] = index;
-	}
-
-	if (server)
-		return;
-
-	elapsed = 0;
-	DEBUG_LOG(PFX "fetch start\n");
-	getnstimeofday(&start_tv);
-	for (i = 0; i < 512; i++) {
-		rmm_fetch(0, my_data[0] + (i * size), (void *) (i * size), order);
-		DEBUG_LOG(PFX "fetched data %s\n", my_data[0] + (i * size));
-	}
-	getnstimeofday(&end_tv);
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-
-	printk(KERN_INFO PFX "total elapsed time %lu (ns)\n", elapsed);
-	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 512);
-	//	printk(KERN_INFO PFX "average elapsed time for preparing fetch %lu (ns)\n", 
-	//			elapsed_fetch / 512);
-
-	kfree(arr1);
-	kfree(arr2);
-}
-
-static int test_evict(void)
-{
-	int i, j, num;
-	uint16_t index;
-	struct timespec start_tv, end_tv;
-	unsigned long elapsed, total;
-	struct evict_info *ei;
-	struct list_head *pos, *n;
-	LIST_HEAD(addr_list);
-
-	if (server)
-		return 0;
-
-	elapsed = 0;
-	total = 0;
-	DEBUG_LOG(PFX "evict start\n");
-	for (i = 0; i < 1024; i++) {
-		sprintf(my_data[0] + (i * PAGE_SIZE), "This is %d", i);
-
-	}
-
-	num = 100;
-	for (i = 0; i < num; i++) {
-		INIT_LIST_HEAD(&addr_list);
-		printk(PFX "evict %d\n", i);
-
-		for (j = 0; j < 64; j++) {
-			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
-			if (!ei) {
-				printk("error in %s\n", __func__);
-				return -ENOMEM;
-			}
-
-			get_random_bytes(&index, sizeof(index));
-			index %= 1024;
-
-			ei->l_vaddr = (uint64_t) (my_data[0] + index * (PAGE_SIZE));
-			ei->r_vaddr = (uint64_t) (index * PAGE_SIZE);
-			INIT_LIST_HEAD(&ei->next);
-			list_add(&ei->next, &addr_list);
-		}
-
-		getnstimeofday(&start_tv);
-		rmm_evict(0, &addr_list, 64);
-		getnstimeofday(&end_tv);
-		elapsed += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-			(end_tv.tv_nsec - start_tv.tv_nsec);
-
-		list_for_each_safe(pos, n, &addr_list) {
-			ei = list_entry(pos, struct evict_info, next);
-			kfree(ei);
-		}
-	}
-	printk(KERN_INFO PFX "average elapsed time(evict) %lu (ns)\n", elapsed / num);
-
-
-	return 0;
-}
-
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		size_t count, loff_t *ppos)
 {
@@ -1758,39 +1497,6 @@ static int create_worker_thread(void)
 	return 0;
 }
 
-#ifdef RMM_TEST
-int init_for_test(void)
-{
-	int i;
-
-	for (i = 0; i < MAX_NUM_NODES; i++) {
-		my_data[i] = kmalloc(PAGE_SIZE * 1024, GFP_KERNEL);
-		if (!my_data[i])
-			return -1;
-	}
-
-	/*
-	   if (!server) {
-	   printk(PFX "remote memory alloc\n");
-	   for (i = 0; i < 1; i++) {
-	   mcos_rmm_alloc(0, FAKE_PA_START + i * 4096);
-	   }
-	   }
-	   else {
-	   for (i = 0; i < 1024; i++) {
-	   sprintf(my_data[0] + (i * PAGE_SIZE), "Data in server: %d", i);
-	   printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
-	   }
-	   }
-	   */
-	return 0;
-}
-#else
-int init_for_test(void)
-{
-	return 0;
-}
-#endif
 
 static int start_connection(void)
 {
@@ -1867,7 +1573,7 @@ int __init init_rmm_rdma(void)
 	if (__establish_connections())
 		goto out_free;
 
-	init_for_test();
+	init_for_test(MAX_NUM_NODES);
 
 
 	printk(PFX "Ready on InfiniBand RDMA\n");

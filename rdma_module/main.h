@@ -334,6 +334,11 @@ static inline int wait_for_ack_timeout(int *done, u64 ticks)
 	return 0;
 }
 
+static inline void rmm_yield_cpu(void)
+{
+	cond_resched();
+}
+
 /* prototype of symbol */
 /*
    int ib_dereg_mr_user(struct ib_mr *mr);
