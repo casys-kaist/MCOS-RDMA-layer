@@ -44,10 +44,10 @@ static inline int select_fetch_node(int gid)
 	p_info = get_node_infos(gid, PRIMARY);
 	s_info = get_node_infos(gid, SECONDARY);
 	size = p_info->size + s_info->size; 
-	if (i % size == 0)
-		nid  = p_info->nids[0];        
+	if (i % size < p_info->size)
+		nid  = p_info->nids[i%size];        
 	else
-		nid = s_info->nids[i%size - 1];
+		nid = s_info->nids[i%size - p_info->size];
 
 	i++;
 	return nid;
