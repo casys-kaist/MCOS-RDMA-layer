@@ -13,7 +13,7 @@
 #define MAX_RECV_DEPTH	(NR_RDMA_SLOTS + 5)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 5)
 
-#define NR_WORKER_THREAD 1
+#define NR_WORKER_THREAD 4
 
 #define ACC_CPU_ID 13
 #define POLL_CPU_ID 14 
@@ -27,7 +27,7 @@
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
-//#define RMM_TEST
+#define RMM_TEST
 
 #define FAKE_PA_START 0x20000000000UL
 

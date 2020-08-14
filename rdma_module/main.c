@@ -31,6 +31,20 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 static int server = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
+	{1, 0, PRIMARY},
+	{2, 0, PRIMARY},
+	{3, 0, PRIMARY},
+	{4, 0, PRIMARY},
+	{5, 1, PRIMARY},
+	{6, 1, PRIMARY},
+	{7, 1, PRIMARY},
+	{8, 1, PRIMARY},
+	{9, 2, PRIMARY},
+	{10, 2, PRIMARY},
+	{11, 2, PRIMARY},
+	{12, 2, PRIMARY},
+	{13, 3, PRIMARY},
+	{14, 3, PRIMARY},
 	{-1, -1, -1}, /* end */
 };
 
@@ -350,7 +364,7 @@ static int polling_cq(void * args)
 	int i;
 
 	int ret = 0;
-	int num_poll = 1;
+	int num_poll = 20;
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
 	wc = kmalloc(sizeof(struct ib_wc) * num_poll, GFP_KERNEL);
@@ -1395,7 +1409,7 @@ static int tt_worker(void *args)
 	int i, j;
 	struct worker_info *wi;
 	int nid;
-	int window_size = 1000;
+	int window_size = 2500;
 	int num_op;
 	uint16_t *random_index1, *random_index2;
 	int num_page;
@@ -1408,14 +1422,17 @@ static int tt_worker(void *args)
 	random_index2 = wi->random_index2;
 	num_page = 1 << wi->order;
 
-	done = kmalloc(sizeof(unsigned long) * 1000, GFP_KERNEL);
+	done = kmalloc(sizeof(unsigned long) * window_size, GFP_KERNEL);
 
 	for (i = 0; i < num_op; i += window_size) {
+		rmm_yield_cpu();
 		memset(done, 0, sizeof(unsigned long) * window_size);
 		for (j = 0; j < window_size; j++)
 			rmm_fetch_async(nid, my_data[nid] + (random_index1[i] * (PAGE_SIZE * num_page)), 
 					(void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order, &done[j]);
-		wait_for_ack_timeout((int *) &done[window_size-1], 100000);
+		if (wait_for_ack_timeout((int *) &done[window_size-1], 100000) < 0) {
+			printk(PFX "timeout!\n");
+		}
 	}
 
 	if (atomic_inc_return(&num_done) == wi->test_size) {
@@ -1467,7 +1484,7 @@ static void test_throughput(int test_size, int order)
 		}
 
 	for (i = 0; i < test_size; i++) {
-		wi[i].nid = i;
+		wi[i].nid = i + 1;
 		wi[i].random_index1 = random_index1[i];
 		wi[i].random_index2 = random_index2[i];
 		wi[i].order = order;
@@ -1488,9 +1505,7 @@ static void test_throughput(int test_size, int order)
 		(end_tv.tv_nsec - start_tv.tv_nsec);
 	elapsed_th[test_size-1] = elapsed;
 
-	if (test_size == MAX_NUM_NODES)
-		for (i = 0; i < MAX_NUM_NODES; i++)
-			printk(KERN_INFO PFX "test size: %d, elapsed(ns) %llu\n", i + 1, elapsed_th[i]);
+	printk(KERN_INFO PFX "test size: %d, elapsed(ns) %llu\n", test_size, elapsed_th[test_size-1]);
 
 
 out_free:
@@ -1621,7 +1636,7 @@ static int test_evict(void)
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		size_t count, loff_t *ppos)
 {
-	static int num = 1;
+	static int num = 10;
 	char *cmd, *val;
 	int i = 0;
 	static int head = 0;
@@ -1657,7 +1672,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		test_evict();
 	else if (strcmp("tt", cmd) == 0) {
 		if (num <= MAX_NUM_NODES)
-			test_throughput(10, order);
+			test_throughput(num++, order);
 	}
 	else if (strcmp("start", cmd) == 0)
 		start_connection();
@@ -1784,7 +1799,7 @@ int init_for_test(void)
 	   printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
 	   }
 	   }
-	   */
+	 */
 	return 0;
 }
 #else
