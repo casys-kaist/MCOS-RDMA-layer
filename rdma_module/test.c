@@ -23,7 +23,7 @@ int init_for_test(int nr_nodes)
 	int i;
 
 	my_data = kmalloc(sizeof (char *) * nr_nodes, GFP_KERNEL);
-	if (!mydata)
+	if (!my_data)
 		return -ENOMEM;
 	for (i = 0; i < nr_nodes; i++) {
 		my_data[i] = kmalloc(PAGE_SIZE * 1024, GFP_KERNEL);
