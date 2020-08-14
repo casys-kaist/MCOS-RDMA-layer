@@ -144,7 +144,7 @@ int mcos_rmm_evict_fanout(int gid, struct list_head *evict_list, int num_page)
 	}
 
 	for (i = 0; i < infos->size; i++)  {
-		ret = rmm_evict_async(infos->nids[0], evict_list, num_page, &done[i]);
+		ret = rmm_evict_async(infos->nids[i], evict_list, num_page, &done[i]);
 		if (ret < 0)
 			goto err;
 	}

@@ -32,7 +32,6 @@ static int server = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
 //	{2, MEM_GID, BACKUP_SYNC},
-	{1, 0, PRIMARY},
 	{-1, -1, -1}, /* end */
 };
 
