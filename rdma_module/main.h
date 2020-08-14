@@ -13,11 +13,11 @@
 #define MAX_RECV_DEPTH	(NR_RDMA_SLOTS + 5)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 5)
 
-#define NR_WORKER_THREAD 4
+#define NR_WORKER_THREAD 8
 
 #define ACC_CPU_ID 13
-#define POLL_CPU_ID 14 
-#define WORKER_CPU_ID 15 
+#define POLL_CPU_ID 19
+#define WORKER_CPU_ID 10
 
 #define MEM_GID 0 /* memory server only has a single group */
 #define MAX_GROUP_SIZE 5

@@ -1133,6 +1133,7 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 	int num_page, order;
 	void *src, *dest;
 	unsigned long *rpage_flags = NULL;
+	atomic_t *done;
 
 	struct rpc_header *rhp;
 	struct fetch_args *fap;
@@ -1159,14 +1160,14 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 	/*aux_asycn->rpage_flags is arleary copied to local var */
 	aux->async.done = 1;
 	if (rpage_flags) {
+		done = (atomic_t *) rpage_flags;
 		DEBUG_LOG(PFX "async fetch is done %s \n", __func__);
-		*rpage_flags |= RPAGE_FETCHED;
+		atomic_inc(done);
 		ring_buffer_put(rh->rb, rh->rpc_buffer + offset);
 	}
 
 	return 0;
 }
-
 /* SANGJIN START */
 static int rpc_handle_recovery_cpu(struct rdma_handle *rh, uint32_t offset)
 {

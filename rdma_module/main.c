@@ -364,7 +364,7 @@ static int polling_cq(void * args)
 	int i;
 
 	int ret = 0;
-	int num_poll = 20;
+	int num_poll = 30;
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
 	wc = kmalloc(sizeof(struct ib_wc) * num_poll, GFP_KERNEL);
@@ -1413,7 +1413,8 @@ static int tt_worker(void *args)
 	int num_op;
 	uint16_t *random_index1, *random_index2;
 	int num_page;
-	unsigned long *done;
+	atomic_t done = ATOMIC_INIT(0); 
+	int ret;
 
 	wi = (struct worker_info *) args;
 	nid = wi->nid;
@@ -1422,17 +1423,14 @@ static int tt_worker(void *args)
 	random_index2 = wi->random_index2;
 	num_page = 1 << wi->order;
 
-	done = kmalloc(sizeof(unsigned long) * window_size, GFP_KERNEL);
 
 	for (i = 0; i < num_op; i += window_size) {
-		rmm_yield_cpu();
-		memset(done, 0, sizeof(unsigned long) * window_size);
+		atomic_set(&done, 0);
 		for (j = 0; j < window_size; j++)
 			rmm_fetch_async(nid, my_data[nid] + (random_index1[i] * (PAGE_SIZE * num_page)), 
-					(void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order, &done[j]);
-		if (wait_for_ack_timeout((int *) &done[window_size-1], 100000) < 0) {
-			printk(PFX "timeout!\n");
-		}
+					(void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order, (unsigned long *) &done);
+		while ((ret = atomic_read(&done)) != window_size)
+			rmm_yield_cpu();
 	}
 
 	if (atomic_inc_return(&num_done) == wi->test_size) {
@@ -1495,7 +1493,9 @@ static void test_throughput(int test_size, int order)
 
 	getnstimeofday(&start_tv);
 	for (i = 0; i < test_size; i++) {
-		t_arr[i] = kthread_run(tt_worker, &wi[i], "woker: %d", i);
+		t_arr[i] = kthread_create(tt_worker, &wi[i], "worker %d", i);
+		kthread_bind(t_arr[i], 1 + i);
+		wake_up_process(t_arr[i]); 
 	}
 
 	wait_for_completion_interruptible(&job_done);
@@ -1636,7 +1636,7 @@ static int test_evict(void)
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		size_t count, loff_t *ppos)
 {
-	static int num = 10;
+	static int num = 5;
 	char *cmd, *val;
 	int i = 0;
 	static int head = 0;
