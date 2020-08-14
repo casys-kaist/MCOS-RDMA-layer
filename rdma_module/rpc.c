@@ -1519,6 +1519,7 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
 	struct timespec start_tv, end_tv;
 	unsigned long elapsed;
 	LIST_HEAD(addr_list);
+	int *done;
 	
 	getnstimeofday(&start_tv);
 
@@ -1543,7 +1544,7 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
 	__connect_to_server(dest_nid, QP_FETCH, BACKUP_ASYNC);
 	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
-	nr_pages = 128;
+	nr_pages = 4096;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
 
@@ -1561,6 +1562,7 @@ static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
 		}
 
 retry:
+		//ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, done);
 		ret = rmm_evict(dest_nid, &addr_list, nr_pages);
 		if (ret == -ETIME)
 			goto retry;
