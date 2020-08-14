@@ -620,8 +620,6 @@ int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page)
 	struct rpc_header *rhp;
 	struct rdma_work *rw;
 
-	struct list_head *l;
-	int i = 0;
 	int j = 0;
 
 	const struct ib_send_wr *bad_wr = NULL;
@@ -1093,7 +1091,7 @@ static int rpc_handle_prefetch_mem(struct rdma_handle *rh, uint32_t offset)
 	int ret = 0;
 	int payload_size;
 	dma_addr_t dest_dma_addr, remote_dest_dma_addr;
-	uint8_t *rpc_buffer, *args, *r_vaddr_ptr, *l_vaddr_ptr, *rpage_flags_ptr, *page_ptr;
+	uint8_t *rpc_buffer, *r_vaddr_ptr, *rpage_flags_ptr, *page_ptr;
 
 	struct rdma_work *rw;
 	struct rpc_header *rhp;
@@ -1356,7 +1354,7 @@ static int rpc_handle_prefetch_cpu(struct rdma_handle *rh, uint32_t offset)
 	// memcpy and set RPAGE_FETCHED
 	for(i = 0; i < num_page; i++) {
 		// memcpy page to l_vaddr
-		memcpy(*((uint64_t*)l_vaddr_ptr), page_ptr, PAGE_SIZE);
+		memcpy((void *) *((uint64_t*)l_vaddr_ptr), page_ptr, PAGE_SIZE);
 		l_vaddr_ptr += 8;
 		page_ptr += PAGE_SIZE;
 		rpage_flags = *((uint64_t*)rpage_flags_ptr);
