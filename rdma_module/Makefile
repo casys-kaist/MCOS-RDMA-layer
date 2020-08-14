@@ -3,7 +3,7 @@ KOBJ=/lib/modules/$(shell uname -r)/build
 
 
 obj-m += rdma_rmm.o
-rdma_rmm-y := rmm.o ring_buffer.o
+rdma_rmm-y := main.o ring_buffer.o rpc.o mcos.o
 
 default:
 	make -C $(KSRC) M=$(PWD) modules 

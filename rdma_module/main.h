@@ -5,14 +5,11 @@
 #define RDMA_ADDR_RESOLVE_TIMEOUT_MS 5000
 
 #define IMM_DATA_SIZE 4 /* bytes */
-#define RPC_ARGS_SIZE 16 /* bytes */
 
 #define DMA_BUFFER_SIZE		(PAGE_SIZE * 8192)
 
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
-//#define NR_RPC_SLOTS	(RPC_BUFFER_SIZE / RPC_ARGS_SIZE)
 #define NR_RDMA_SLOTS	(5000)
-//#define NR_SINK_SLOTS	(SINK_BUFFER_SIZE / PAGE_SIZE)
 #define MAX_RECV_DEPTH	(NR_RDMA_SLOTS + 5)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 5)
 
@@ -22,8 +19,11 @@
 #define POLL_CPU_ID 14 
 #define WORKER_CPU_ID 15 
 
-#define CONNECTION_FETCH	0
-#define CONNECTION_EVICT	1
+#define MEM_GID 0 /* memory server only has a single group */
+#define MAX_GROUP_SIZE 5
+
+#define QP_FETCH	0
+#define QP_EVICT	1
 
 #define PFX "rmm: "
 #define DEBUG_LOG if (debug) printk
@@ -59,29 +59,50 @@
 
 #define MCOS_MAX_PREFETCH_SIZE	32 // FIXME
 
-/*
+#ifdef CONFIG_RM
 enum remote_page_flags {
-	RP_PREFETCHED	= 0,
-	RP_EVICTED	= 1,
-	RP_PREFETCHING	= 2,
-	RP_EVICTING	= 3,
-	RP_ALLOCATING	= 4,
-	RP_ALLOCED	= 5,
-	RP_FREEZE_FAIL	= 6,
-	RP_ALLOC_FAILED	= 7,
-	RP_FREED	= 8,
-	RP_FREE_FAILED	= 9,
-	RP_FETCHED	= 10,
+	RP_PREFETCHED   = 0,
+	RP_EVICTED      = 1,
+	RP_PREFETCHING  = 2,
+	RP_EVICTING     = 3,
+	RP_ALLOCATING   = 4,
+	RP_ALLOCED      = 5,
+	RP_FREEZE_FAIL  = 6,
+	RP_ALLOC_FAILED = 7,
+	RP_FREED        = 8,
+	RP_FREE_FAILED  = 9,
+	RP_FETCHED      = 10, 
+	RP_LOCK         = 11, 
+	RP_HIT          = 12, 
+	RP_IN_BUF       = 13, 
+	RP_EVER_EVICTED = 14, 
 };
-*/
+#endif
 
-enum rpc_opcode {
-	RPC_OP_FETCH,
-	RPC_OP_EVICT,
-	RPC_OP_ALLOC,
-	RPC_OP_FREE,
-	RPC_OP_PREFETCH,
+enum connection_type {
+	PRIMARY, /* accept all types of RPCs */
+	SECONDARY, /* only accept fetch */
+	BACKUP_SYNC,
+	BACKUP_ASYNC,
+	NUM_CTYPE,
 };
+
+struct node_info {
+	int nids[MAX_GROUP_SIZE];
+	int size;
+};
+
+struct connection_config {
+	int nid;
+	int gid;
+	enum connection_type ctype;
+}; 
+
+struct connection_info {
+	struct node_info infos[NUM_CTYPE];
+};
+
+extern struct connection_info c_infos[];
 
 enum wr_type {
 	WORK_TYPE_REG,
@@ -92,39 +113,6 @@ enum wr_type {
 	WORK_TYPE_RPC_REQ,
 	WORK_TYPE_RPC_ACK,
 };
-
-#pragma pack(push, 1)
-struct rpc_header {
-	int nid;
-	enum rpc_opcode op;
-	bool async;
-};
-
-struct fetch_args {
-	u64 r_vaddr;
-	u32 order;
-};
-
-struct fetch_aux {
-	u64 l_vaddr;
-	union {
-		u64 rpage_flags;
-		int done;
-	} async;
-};
-
-struct mem_args {
-	u64 vaddr;
-};
-
-struct mem_aux {
-	union  {
-		u64 rpage_flags;
-		int done;
-	} async;
-};
-
-#pragma pack(pop)
 
 struct recv_work {
 	enum wr_type work_type;
@@ -189,20 +177,32 @@ struct pool_info {
 	size_t size;
 };
 
+#ifdef CONFIG_RM
 struct evict_info {
 	u64 l_vaddr;
 	u64 r_vaddr;
 
 	struct list_head next;
 };
+#endif
 
+#pragma pack(push, 1)
+struct conn_private_data {
+	unsigned int qp_type : 1;
+	unsigned int c_type : 3;
+	unsigned int nid : 28;
+};
+#pragma pack(pop)
+
+#ifdef CONFIG_RM
 struct fetch_info {
 	u64 l_vaddr;	// virtual address to be received
 	u64 r_vaddr;	// virtual address (fake pa)
 	unsigned long *rpage_flags;
-	
-	struct list_head next;
+
+	//struct list_head next;
 };
+#endif
 
 struct rdma_handle {
 	int nid;
@@ -219,11 +219,10 @@ struct rdma_handle {
 	struct completion init_done;
 	struct recv_work *recv_works;
 
-	int connection_type;
-	int backup;
+	int qp_type;
+	enum connection_type c_type;
 
 	/* local */
-	void *recv_buffer;
 	void *dma_buffer;
 	u64 vaddr_start;
 
@@ -255,7 +254,6 @@ struct rdma_handle {
 	/*************/
 
 	struct ring_buffer *rb;
-	struct ring_buffer *rb_sink;
 
 	struct rdma_cm_id *cm_id;
 	struct ib_device *device;
@@ -264,21 +262,77 @@ struct rdma_handle {
 	struct ib_mr *mr;
 };
 
-static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size);
-static int __setup_recv_works(struct rdma_handle *rh);
+static inline int nid_to_rh(int nid)
+{
+	return nid * 2;
+}
 
-/*
-   static inline int __get_rpc_buffer(struct rdma_handle *rh);
-   static inline void __put_rpc_buffer(struct rdma_handle * rh, int slot);
-   static inline int __get_sink_buffer(struct rdma_handle *rh, unsigned int order);
-   static inline void __put_sink_buffer(struct rdma_handle * rh, int slot, unsigned int order);
- */
+static inline struct node_info *get_node_infos(int gid, enum connection_type ctype)
+{
+	struct node_info *ret_nid;
+	extern spinlock_t cinfos_lock;
+	
+	spin_lock(&cinfos_lock);
+	if (ctype >= NUM_CTYPE)
+		return NULL;
+	ret_nid = &c_infos[gid].infos[ctype];
+	spin_unlock(&cinfos_lock);
+		
+	return ret_nid;
+}
 
-static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
-static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key);
-static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
-static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw);
-static int start_connection(void);
+static inline int add_node_to_group(int gid, int nid, enum connection_type ctype)
+{
+	struct node_info *infos = get_node_infos(gid, ctype);
+	extern spinlock_t cinfos_lock;
+
+	spin_lock(&cinfos_lock);
+	if (infos->size == MAX_GROUP_SIZE)
+		return -ENOMEM;
+	infos->nids[infos->size] = nid;
+	infos->size++;
+	spin_unlock(&cinfos_lock);
+	
+	return 0;
+}
+
+static inline int remove_node_from_group(int gid, int nid, enum connection_type ctype)
+{
+	int i;
+	struct node_info *infos = get_node_infos(gid, ctype);
+	extern spinlock_t cinfos_lock;
+
+	spin_lock(&cinfos_lock);
+	for (i = 0; i < infos->size; i++) {
+		if (infos->nids[i] == nid) {
+			memcpy(&infos->nids[i], &infos->nids[i+1], 
+					sizeof(infos->nids[0] * (MAX_GROUP_SIZE - 1 - i)));
+		}
+
+	}
+	infos->size--;
+	spin_unlock(&cinfos_lock);
+
+	return 0;
+}
+
+static inline int wait_for_ack_timeout(int *done, u64 ticks)
+{
+	int ret;
+	u64 start = get_jiffies_64();
+	u64 cur = get_jiffies_64();
+
+	while(!(ret = *done)) {
+		cur = get_jiffies_64();
+		if (cur - start > ticks) {
+			printk("timeout\n");
+			return -ETIME;
+		}
+		cpu_relax();
+	}
+
+	return 0;
+}
 
 /* prototype of symbol */
 /*
@@ -310,6 +364,6 @@ static int start_connection(void);
    {
    return ib_dealloc_pd_user(pd);
    }
- */
+   */
 
 #endif
