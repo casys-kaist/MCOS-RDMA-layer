@@ -1490,7 +1490,7 @@ retry:
         }
 
 	// TODO FLAG OFF
-	// add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
+	add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
 
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec);
