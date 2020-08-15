@@ -32,6 +32,9 @@ static int req_cnt = 0;
 static int ack_cnt = 0;
 extern spinlock_t cinfos_lock;
 bool evict_dirty_log = false;
+int evict_dirty_list_size = 0;
+LIST_HEAD(evict_dirty_list);
+INIT_LIST_HEAD(&evict_dirty_list);
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, 
 		size_t size, dma_addr_t rdma_addr, u32 rdma_key)
@@ -891,17 +894,16 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 	struct rdma_work *rw;
 	struct rdma_handle *rh;	
 	struct rpc_header *rhp;
-
 	int ret = 0;
+	int buffer_size = payload_size + 8;
+	const struct ib_send_wr *bad_wr = NULL;
+	int index = nid_to_rh(nid) + 1;
 
 	/*
 	   ------------------------------------------------------------------------
 	   |rpc_header| num_page(4byte) | (r_vaddr, page)...| done_pointer(8bytes)|
 	   ------------------------------------------------------------------------
-	  */
-	int buffer_size = payload_size + 8;
-	const struct ib_send_wr *bad_wr = NULL;
-	int index = nid_to_rh(nid) + 1;
+	*/
 
 	buffer_size += 4;
 	rh = rdma_handles[index];
@@ -1085,6 +1087,83 @@ int rmm_replicate(int src_nid, int dest_nid)
         }
 
 	return ret;
+
+put_buffer:
+        memset(dma_buffer, 0, buffer_size);
+        ring_buffer_put(rh->rb, dma_buffer);
+
+        return ret;
+}
+
+int rmm_evict_dirty(int src_nid, int dest_nid)
+{
+	int offset, ret = 0;
+        uint8_t *dma_buffer, *args;
+        struct rpc_header *rhp;
+        dma_addr_t dma_addr, remote_dma_addr;
+        struct rdma_handle *rh;
+        struct rdma_work *rw;
+        const struct ib_send_wr *bad_wr = NULL;
+        int *done;
+        int buffer_size = sizeof(struct rpc_header) + 8;
+        int payload_size = sizeof(struct rpc_header) + 4;
+	int index = nid_to_rh(src_nid);
+        
+	/*
+        ------------------------------------------------
+        | rpc_header | dest_nid(4bytes) | done(4bytes) |
+        ------------------------------------------------
+        */
+
+        rh = rdma_handles[index];
+
+        dma_buffer = ring_buffer_get_mapped(rh->rb, buffer_size, &dma_addr);
+        if (!dma_buffer) {
+                printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
+                return -ENOMEM;
+        }
+        offset = dma_buffer - (uint8_t *) rh->dma_buffer;
+        remote_dma_addr = rh->remote_dma_addr + offset;
+
+        /* We need to pass virtual address since using INLINE flag */
+        rw = __get_rdma_work_nonsleep(rh, (dma_addr_t) dma_buffer, payload_size, remote_dma_addr, rh->rpc_rkey);
+        if (!rw) {
+                printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
+                ret = -ENOMEM;
+                goto put_buffer;
+        }
+        rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+        rw->wr.wr.send_flags = IB_SEND_SIGNALED | IB_SEND_INLINE;
+
+        rw->rh = rh;
+
+        rhp = (struct rpc_header *) dma_buffer;
+        rhp->nid = src_nid;
+        rhp->op = RPC_OP_EVICT_DIRTY;
+        rhp->async = false;
+	rhp->req = true;
+
+        /* copy done buffer */
+        args = dma_buffer + sizeof(struct rpc_header);
+	*(uint32_t *)args = dest_nid;
+	done = (uint32_t *)(args + 4);
+	*done = 0;
+
+        ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+        __put_rdma_work_nonsleep(rh, rw);
+        if (ret || bad_wr) {
+                printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+                if (bad_wr)
+                        ret = -EINVAL;
+                goto put_buffer;
+        }
+
+        while(!(ret = *done))
+                cpu_relax();
+
+        ret = *((int *) (args + 4));
+
+        printk(PFX "evict dirty done %d\n", ret);
 
 put_buffer:
         memset(dma_buffer, 0, buffer_size);
@@ -1283,6 +1362,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	bool wait_for_replication = false;
 	struct rpc_header *rhp;
 	struct node_info *infos;
+	struct evict_info *ei;
 
 	rhp = (struct rpc_header *) (rh->evict_buffer + offset);
 	evict_buffer = rh->evict_buffer + (offset) + sizeof(struct rpc_header);
@@ -1297,25 +1377,42 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 		}
 	}
 
-	infos = get_node_infos(MEM_GID, BACKUP_SYNC);
-	for (i = 0; i < infos->size; i++) {
-		wait_for_replication = true;
-		DEBUG_LOG(PFX "replicate to backup server SYNC\n");
-		rmm_evict_forward(infos->nids[i], rh->evict_buffer + offset, 
-				num_page * (8 + PAGE_SIZE) + 
-				sizeof(struct rpc_header) + sizeof(int), &done);
-		DEBUG_LOG(PFX "replicate done\n");
-	}
+	if (evict_dirty_log) {
+		for (i = 0; i < num_page; i++) {
+			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
+			if (!ei) {
+				printk("error in %s\n", __func__);
+				return -ENOMEM;
+			}
 
-	infos = get_node_infos(MEM_GID, BACKUP_ASYNC);
-	for (i = 0; i < infos->size; i++) {
-		wait_for_replication = false;
-		req_cnt++;
-		DEBUG_LOG(PFX "replicate to backup server ASYNC\n");
-		rmm_evict_forward(infos->nids[i], rh->evict_buffer + offset, 
-				num_page * (8 + PAGE_SIZE) + 
-				sizeof(struct rpc_header) + sizeof(int), &ack_cnt);
-		DEBUG_LOG(PFX "replicate done\n");
+			ei->l_vaddr = *((uint64_t *) (page_pointer));
+			ei->r_vaddr = *((uint64_t *) (page_pointer));
+			INIT_LIST_HEAD(&ei->next);
+			list_add(&ei->next, &evict_dirty_list);
+		}
+		evict_dirty_list_size += num_page;
+	}
+	else {
+		infos = get_node_infos(MEM_GID, BACKUP_SYNC);
+		for (i = 0; i < infos->size; i++) {
+			wait_for_replication = true;
+			DEBUG_LOG(PFX "replicate to backup server SYNC\n");
+			rmm_evict_forward(infos->nids[i], rh->evict_buffer + offset, 
+					num_page * (8 + PAGE_SIZE) + 
+					sizeof(struct rpc_header) + sizeof(int), &done);
+			DEBUG_LOG(PFX "replicate done\n");
+		}
+
+		infos = get_node_infos(MEM_GID, BACKUP_ASYNC);
+		for (i = 0; i < infos->size; i++) {
+			wait_for_replication = false;
+			req_cnt++;
+			DEBUG_LOG(PFX "replicate to backup server ASYNC\n");
+			rmm_evict_forward(infos->nids[i], rh->evict_buffer + offset, 
+					num_page * (8 + PAGE_SIZE) + 
+					sizeof(struct rpc_header) + sizeof(int), &ack_cnt);
+			DEBUG_LOG(PFX "replicate done\n");
+		}
 	}
 
 	page_pointer = evict_buffer + 4;
@@ -1324,14 +1421,12 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 		dest =  *((uint64_t *) (page_pointer));
 		memcpy((void *) dest, page_pointer + 8, PAGE_SIZE);
 		page_pointer += (8 + PAGE_SIZE);
-
 	}
 
 	if (wait_for_replication) {
 		while(!(ret = done))
 			cpu_relax();
 	}
-
 
 	rhp->req = false;
 	/* FIXME: In current implementation, rpc_dma_addr == evict_dma_addr */
@@ -1489,9 +1584,6 @@ retry:
                         ret = -EINVAL;
         }
 
-	// TODO FLAG OFF
-	add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
-
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec);
 	printk(KERN_INFO PFX "replicate total elapsed time %lu (s)\n", elapsed);
@@ -1514,7 +1606,50 @@ static int rpc_handle_replicate_mem(struct rdma_handle *rh, uint32_t offset)
 
 static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 {
-	return 0;
+	int i, ret = 0;
+        uint16_t nid = 0;
+        uint16_t op = 0;
+        dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+        struct rdma_work *rw;
+        struct rpc_header *rhp;
+        const struct ib_send_wr *bad_wr = NULL;
+        char *rpc_buffer;
+	uint32_t dest_nid;
+	struct list_head *l;
+
+        rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
+        rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
+        rpc_dma_addr = rh->rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
+        remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
+	dest_nid = *(uint32_t *)(rpc_buffer);
+        nid = rhp->nid;
+        op = rhp->op;
+
+	printk("evict dirty list size %d\n", evict_dirty_list_size);
+	rmm_evict(dest_nid, evict_dirty_list, evict_dirty_list_size);
+
+        rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
+        if (!rw)
+                return -ENOMEM;
+
+        rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+        rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+        rw->rh = rh;
+
+        DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
+
+        ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+        __put_rdma_work_nonsleep(rh, rw);
+        if (ret || bad_wr) {
+                printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+                if (bad_wr)
+                        ret = -EINVAL;
+        }
+
+	evict_dirty_log = false;
+	add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
+
+        return ret;
 }
 
 
@@ -1592,7 +1727,6 @@ static int rpc_handle_prefetch_done(struct rdma_handle *rh, uint32_t offset)
 
 static int rpc_handle_synchronize_done(struct rdma_handle *rh, uint32_t offset)
 {
-	struct rpc_header *rhp;
 	uint8_t *buffer = rh->dma_buffer + offset;
 	int *done;
 	
@@ -1601,7 +1735,6 @@ static int rpc_handle_synchronize_done(struct rdma_handle *rh, uint32_t offset)
 	add_node_to_group(MEM_GID, 1, SECONDARY);
 	remove_node_from_group(MEM_GID, 2, SECONDARY);
 
-	rhp = (struct rpc_header *)buffer;
 	done = (int *)(buffer + sizeof(struct rpc_header) + 4);
 	*done = 1;
 
@@ -1611,17 +1744,33 @@ static int rpc_handle_synchronize_done(struct rdma_handle *rh, uint32_t offset)
 static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 {
 	uint8_t *buffer = rh->dma_buffer + offset;
+	uint32_t dest_nid = *(uint32_t *)(buffer + sizeof(struct rpc_header));
 
 	printk("replicate done\n");
 	ring_buffer_put(rh->rb, buffer);
+
+	printk("evict dirty start\n");
+	rmm_evict_dirty(rh->nid, dest_nid);
+	printk("evict dirty done\n");
 
 	return 0;
 }
 
 static int rpc_handle_evict_dirty_done(struct rdma_handle *rh, uint32_t offset)
 {
+	struct evict_info *ei;
+	struct list_head *pos, n;
+	
+	list_for_each_safe(pos, n, &evict_dirty_list) {
+		ei = list_entry(pos, struct evict_info, next);
+		kfree(ei);
+	}
+	
+	evict_dirty_list_size = 0;
+
 	return 0;
 }
+
 #endif
 
 #ifdef CONFIG_RM 

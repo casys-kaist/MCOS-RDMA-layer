@@ -70,4 +70,6 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done);
 int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page);
 int rmm_synchronize(int src_nid, int dest_nid);
 int rmm_replicate(int src_nid, int dest_nid);
+int rmm_evict_dirty(int src_nid, int dest_nid);
+
 #endif
