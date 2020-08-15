@@ -960,7 +960,7 @@ int rmm_synchronize(int src_nid, int dest_nid)
         const struct ib_send_wr *bad_wr = NULL;
         int *done;
         int buffer_size = sizeof(struct rpc_header) + 8;
-        int payload_size = sizeof(struct rpc_header) + 8;
+        int payload_size = sizeof(struct rpc_header) + 4;
 	int index = nid_to_rh(src_nid);
         
 	/*
@@ -991,6 +991,7 @@ int rmm_synchronize(int src_nid, int dest_nid)
 
         rw->rh = rh;
 
+	printk("a\n");
         rhp = (struct rpc_header *) dma_buffer;
         rhp->nid = src_nid;
         rhp->op = RPC_OP_SYNCHRONIZE;
@@ -999,9 +1000,10 @@ int rmm_synchronize(int src_nid, int dest_nid)
 
         /* copy done buffer */
         args = dma_buffer + sizeof(struct rpc_header);
-	*(int *)args = dest_nid;
-	*(int *)(args + 4) = 0;
+	*(uint32_t *)args = dest_nid;
+	*(uint32_t *)(args + 4) = 0;
 
+	printk("b\n");
         ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
         __put_rdma_work_nonsleep(rh, rw);
         if (ret || bad_wr) {
@@ -1011,9 +1013,11 @@ int rmm_synchronize(int src_nid, int dest_nid)
                 goto put_buffer;
         }
 
+	printk("c\n");
         while(!(ret = *done))
                 cpu_relax();
 
+	printk("d\n");
         ret = *((int *) (args + 4));
 
         DEBUG_LOG(PFX "synchronize done %d\n", ret);
