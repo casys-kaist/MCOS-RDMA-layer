@@ -28,12 +28,10 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 //static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw);
 
-/* SANGJIN START */
 static int req_cnt = 0;
 static int ack_cnt = 0;
-
 extern spinlock_t cinfos_lock;
-/* SANGJIN END */
+bool evict_dirty_log = false;
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, 
 		size_t size, dma_addr_t rdma_addr, u32 rdma_key)
@@ -160,7 +158,7 @@ int rmm_alloc(int nid, u64 vaddr)
 	   ------------------------------------------
 	   |rpc_header| vaddr(8bytes) | done(4bytes)|
 	   ------------------------------------------
-	   */
+	*/
 	int buffer_size = sizeof(struct rpc_header) + 12;
 	int payload_size = sizeof(struct rpc_header) + 8;
 	int index = nid_to_rh(nid);
@@ -951,8 +949,7 @@ put:
 	return ret;
 }
 
-/* SANGJIN START */
-int rmm_recovery(int nid)
+int rmm_synchronize(int src_nid, int dest_nid)
 {
         int offset, ret = 0;
         uint8_t *dma_buffer, *args;
@@ -962,15 +959,15 @@ int rmm_recovery(int nid)
         struct rdma_work *rw;
         const struct ib_send_wr *bad_wr = NULL;
         int *done;
-
-        /*
-        --------------------------
-        |rpc_header| done(4bytes)|
-        --------------------------
+        int buffer_size = sizeof(struct rpc_header) + 8;
+        int payload_size = sizeof(struct rpc_header) + 8;
+	int index = nid_to_rh(src_nid);
+        
+	/*
+        ------------------------------------------------
+        | rpc_header | dest_nid(4bytes) | done(4bytes) |
+        ------------------------------------------------
         */
-        int buffer_size = sizeof(struct rpc_header) + 4;
-        int payload_size = sizeof(struct rpc_header);
-        int index = nid_to_rh(nid);
 
         rh = rdma_handles[index];
 
@@ -995,15 +992,15 @@ int rmm_recovery(int nid)
         rw->rh = rh;
 
         rhp = (struct rpc_header *) dma_buffer;
-        rhp->nid = nid;
-        rhp->op = RPC_OP_RECOVERY;
+        rhp->nid = src_nid;
+        rhp->op = RPC_OP_SYNCHRONIZE;
         rhp->async = false;
 	rhp->req = true;
 
         /* copy done buffer */
         args = dma_buffer + sizeof(struct rpc_header);
-        done = (int *) args;
-        *done = 0;
+	*(int *)args = dest_nid;
+	*(int *)(args + 4) = 0;
 
         ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
         __put_rdma_work_nonsleep(rh, rw);
@@ -1019,7 +1016,7 @@ int rmm_recovery(int nid)
 
         ret = *((int *) (args + 4));
 
-        DEBUG_LOG(PFX "recovery done %d\n", ret);
+        DEBUG_LOG(PFX "synchronize done %d\n", ret);
 
 put_buffer:
         memset(dma_buffer, 0, buffer_size);
@@ -1037,15 +1034,15 @@ int rmm_replicate(int src_nid, int dest_nid)
         struct rdma_handle *rh;
         struct rdma_work *rw;
         const struct ib_send_wr *bad_wr = NULL;
-        int *done;
+        int buffer_size = sizeof(struct rpc_header) + 4;
+        int payload_size = sizeof(struct rpc_header) + 4;
+        int index = nid_to_rh(src_nid);
+
         /*
         ---------------------------------
         | rpc_header | dest_nid(4bytes) |
         ---------------------------------
         */
-        int buffer_size = sizeof(struct rpc_header) + 4;
-        int payload_size = sizeof(struct rpc_header) + 4;
-        int index = nid_to_rh(src_nid);
 
         rh = rdma_handles[index];
 
@@ -1094,7 +1091,6 @@ put_buffer:
 
         return ret;
 }
-/* SANGJIN END */
 
 static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 {
@@ -1156,7 +1152,7 @@ static int rpc_handle_prefetch_mem(struct rdma_handle *rh, uint32_t offset)
 	int ret = 0;
 	int payload_size;
 	dma_addr_t dest_dma_addr, remote_dest_dma_addr;
-	uint8_t *rpc_buffer, *args, *r_vaddr_ptr, *l_vaddr_ptr, *rpage_flags_ptr, *page_ptr;
+	uint8_t *rpc_buffer, *r_vaddr_ptr, *l_vaddr_ptr, *rpage_flags_ptr, *page_ptr;
 
 	struct rdma_work *rw;
 	struct rpc_header *rhp;
@@ -1284,7 +1280,6 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	uint8_t *evict_buffer, *page_pointer;
 	const struct ib_send_wr *bad_wr = NULL;
 	bool wait_for_replication = false;
-
 	struct rpc_header *rhp;
 	struct node_info *infos;
 
@@ -1359,9 +1354,172 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	return 0;
 }
 
+static int rpc_handle_synchronize_mem(struct rdma_handle *rh, uint32_t offset)
+{
+        int ret = 0;
+        uint16_t nid = 0;
+        uint16_t op = 0;
+        dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+        struct rdma_work *rw;
+        struct rpc_header *rhp;
+        const struct ib_send_wr *bad_wr = NULL;
+        char *rpc_buffer;
+	uint32_t dest_nid;
 
-/*rpc handle functions for cpu server */
-static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
+        rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
+        rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
+        rpc_dma_addr = rh->rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
+        remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
+	dest_nid = *(uint32_t *)(rpc_buffer);
+
+        nid = rhp->nid;
+        op = rhp->op;
+
+        rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
+        if (!rw)
+                return -ENOMEM;
+
+        rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+        rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+        rw->rh = rh;
+
+        DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
+
+        // busy wait until full consistentcy with r1 and r2
+        while (!(req_cnt == ack_cnt))
+                cpu_relax();
+
+        // initialize
+        req_cnt = 0;
+        ack_cnt = 0;
+
+        ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+        __put_rdma_work_nonsleep(rh, rw);
+        if (ret || bad_wr) {
+                printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+                if (bad_wr)
+                        ret = -EINVAL;
+        }
+
+	add_node_to_group(MEM_GID, dest_nid, BACKUP_SYNC);
+	remove_node_from_group(MEM_GID, dest_nid, BACKUP_ASYNC);
+
+        return ret;
+}
+
+static int __rpc_handle_replicate_mem(void *args)
+{
+	struct rdma_handle *rh = ((struct rpc_handle_args *)args)->rh;
+	uint32_t offset = ((struct rpc_handle_args *)args)->offset;
+	int ret = 0;
+        uint16_t nid = 0;
+	uint16_t dest_nid;
+        uint16_t op = 0;
+        struct rdma_work *rw;
+        struct rpc_header *rhp;
+        const struct ib_send_wr *bad_wr = NULL;
+        char *rpc_buffer;
+	int i, j, nr_pages;
+	struct evict_info *ei;
+	struct list_head *pos, *n;
+	struct timespec start_tv, end_tv;
+	unsigned long elapsed;
+	LIST_HEAD(addr_list);
+	
+	getnstimeofday(&start_tv);
+
+        rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
+
+        rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
+
+        nid = rhp->nid;
+        op = rhp->op;
+	dest_nid = *(uint32_t *) (rpc_buffer);
+
+	__connect_to_server(dest_nid, QP_FETCH, BACKUP_ASYNC);
+	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
+
+	nr_pages = 512;
+	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
+		INIT_LIST_HEAD(&addr_list);
+
+		for (j = 0; j < nr_pages; j++) {
+			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
+			if (!ei) {
+				printk("error in %s\n", __func__);
+				return -ENOMEM;
+			}
+
+			ei->l_vaddr = RM_VADDR_START + (nr_pages * i + j) * PAGE_SIZE; 
+			ei->r_vaddr = ei->l_vaddr;
+			INIT_LIST_HEAD(&ei->next);
+			list_add(&ei->next, &addr_list);
+		}
+
+retry:
+		//ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, done);
+		ret = rmm_evict(dest_nid, &addr_list, nr_pages);
+		if (ret == -ETIME)
+			goto retry;
+
+		list_for_each_safe(pos, n, &addr_list) {
+			ei = list_entry(pos, struct evict_info, next);
+			kfree(ei);
+		}
+	}
+        
+	rw = __get_rdma_work(rh, rh->rpc_dma_addr + offset, sizeof(struct rpc_header) + 4, rh->remote_dma_addr + offset, rh->rpc_rkey);
+        if (!rw)
+                return -ENOMEM;
+        rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
+        rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+        rw->rh = rh;
+
+        DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
+	DEBUG_LOG(PFX "ret in %s, %d\n", __func__, ret);
+
+	*((int *) rpc_buffer) = ret;
+	rhp->req = false;
+        ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+        __put_rdma_work_nonsleep(rh, rw);
+        if (ret || bad_wr) {
+                printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+                if (bad_wr)
+                        ret = -EINVAL;
+        }
+
+	// TODO FLAG OFF
+	// add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
+
+	getnstimeofday(&end_tv);
+	elapsed = (end_tv.tv_sec - start_tv.tv_sec);
+	printk(KERN_INFO PFX "replicate total elapsed time %lu (s)\n", elapsed);
+
+	kfree(args);
+
+        return ret;
+}
+
+static int rpc_handle_replicate_mem(struct rdma_handle *rh, uint32_t offset)
+{
+	struct rpc_handle_args *args = kmalloc(sizeof(struct rpc_handle_args), GFP_KERNEL);  
+	args->rh = rh;
+	args->offset = offset;
+	evict_dirty_log = true;
+	kthread_run(__rpc_handle_replicate_mem, args, "__rpc_handle_replicate_backup");	
+
+	return 0;
+}
+
+static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
+{
+	return 0;
+}
+
+
+#ifndef CONFIG_RM
+/* rpc handle functions for cpu server */
+static int rpc_handle_fetch_done(struct rdma_handle *rh, uint32_t offset)
 {
 	int num_page, order;
 	void *src, *dest;
@@ -1400,7 +1558,7 @@ static int rpc_handle_fetch_cpu(struct rdma_handle *rh, uint32_t offset)
 	return 0;
 }
 
-static int rpc_handle_prefetch_cpu(struct rdma_handle *rh, uint32_t offset)
+static int rpc_handle_prefetch_done(struct rdma_handle *rh, uint32_t offset)
 {
 	unsigned long *rpage_flags = NULL;
 	struct rpc_header *rhp;
@@ -1431,8 +1589,7 @@ static int rpc_handle_prefetch_cpu(struct rdma_handle *rh, uint32_t offset)
 	return 0;
 }
 
-/* SANGJIN START */
-static int rpc_handle_recovery_cpu(struct rdma_handle *rh, uint32_t offset)
+static int rpc_handle_synchronize_done(struct rdma_handle *rh, uint32_t offset)
 {
 	struct rpc_header *rhp;
 	uint8_t *buffer = rh->dma_buffer + offset;
@@ -1450,151 +1607,6 @@ static int rpc_handle_recovery_cpu(struct rdma_handle *rh, uint32_t offset)
 	return 0;
 }
 
-/* rpc handle functions for backup server */
-static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
-{
-        int ret = 0;
-        uint16_t nid = 0;
-        uint16_t op = 0;
-        dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
-        struct rdma_work *rw;
-        struct rpc_header *rhp;
-        const struct ib_send_wr *bad_wr = NULL;
-        char *rpc_buffer;
-
-        rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
-
-        rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
-        rpc_dma_addr = rh->rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
-        remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
-
-        nid = rhp->nid;
-        op = rhp->op;
-
-        rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
-        if (!rw)
-                return -ENOMEM;
-        rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
-        rw->wr.wr.send_flags = IB_SEND_SIGNALED;
-        rw->rh = rh;
-
-        DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
-
-        // busy wait until full consistentcy with r1 and r2
-        while (!(req_cnt == ack_cnt))
-                cpu_relax();
-
-        // initialize
-        req_cnt = 0;
-        ack_cnt = 0;
-
-        ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
-        __put_rdma_work_nonsleep(rh, rw);
-        if (ret || bad_wr) {
-                printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
-                if (bad_wr)
-                        ret = -EINVAL;
-        }
-
-	add_node_to_group(MEM_GID, 3, BACKUP_SYNC);
-	remove_node_from_group(MEM_GID, 3, BACKUP_ASYNC);
-
-        return ret;
-}
-
-static int rpc_handle_replicate_backup(struct rdma_handle *rh, uint32_t offset)
-{
-	int ret = 0;
-        uint16_t nid = 0;
-	uint16_t dest_nid;
-        uint16_t op = 0;
-        dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
-        struct rdma_work *rw;
-        struct rpc_header *rhp;
-        const struct ib_send_wr *bad_wr = NULL;
-        char *rpc_buffer;
-	int i, j, nr_pages;
-	struct evict_info *ei;
-	struct list_head *pos, *n;
-	struct timespec start_tv, end_tv;
-	unsigned long elapsed;
-	LIST_HEAD(addr_list);
-	int *done;
-	
-	getnstimeofday(&start_tv);
-
-        rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
-
-        rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
-
-        nid = rhp->nid;
-        op = rhp->op;
-	dest_nid = *(uint32_t *) (rpc_buffer);
-
-        rw = __get_rdma_work(rh, rh->rpc_dma_addr + offset, sizeof(struct rpc_header) + 4, rh->remote_dma_addr + offset, rh->rpc_rkey);
-        if (!rw)
-                return -ENOMEM;
-        rw->wr.wr.ex.imm_data = cpu_to_be32(offset);
-        rw->wr.wr.send_flags = IB_SEND_SIGNALED;
-        rw->rh = rh;
-
-        DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
-        DEBUG_LOG(PFX "dest nid: %d\n", dest_nid);
-
-	__connect_to_server(dest_nid, QP_FETCH, BACKUP_ASYNC);
-	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
-
-	nr_pages = 512;
-	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
-		INIT_LIST_HEAD(&addr_list);
-
-		for (j = 0; j < nr_pages; j++) {
-			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
-			if (!ei) {
-				printk("error in %s\n", __func__);
-				return -ENOMEM;
-			}
-
-			ei->l_vaddr = RM_VADDR_START + (nr_pages * i + j) * PAGE_SIZE; 
-			ei->r_vaddr = ei->l_vaddr;
-			INIT_LIST_HEAD(&ei->next);
-			list_add(&ei->next, &addr_list);
-		}
-
-retry:
-		//ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, done);
-		ret = rmm_evict(dest_nid, &addr_list, nr_pages);
-		if (ret == -ETIME)
-			goto retry;
-
-		list_for_each_safe(pos, n, &addr_list) {
-			ei = list_entry(pos, struct evict_info, next);
-			kfree(ei);
-		}
-	}
-
-	DEBUG_LOG(PFX "ret in %s, %d\n", __func__, ret);
-	*((int *) rpc_buffer) = ret;
-	rhp->req = false;
-        ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
-        __put_rdma_work_nonsleep(rh, rw);
-        if (ret || bad_wr) {
-                printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
-                if (bad_wr)
-                        ret = -EINVAL;
-        }
-
-	add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
-
-	getnstimeofday(&end_tv);
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-
-	printk(KERN_INFO PFX "replicate total elapsed time %lu (s)\n", elapsed / (1000 * 1000 * 1000));
-
-        return ret;
-}
-
 static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 {
 	uint8_t *buffer = rh->dma_buffer + offset;
@@ -1605,8 +1617,12 @@ static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 	return 0;
 }
 
+static int rpc_handle_evict_dirty_done(struct rdma_handle *rh, uint32_t offset)
+{
+	return 0;
+}
+#endif
 
-/* SANGJIN END */
 #ifdef CONFIG_RM 
 void regist_handler(Rpc_handler rpc_table[])
 {
@@ -1615,18 +1631,20 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_ALLOC] = rpc_handle_alloc_free_mem;
 	rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_mem;
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_mem;
-	rpc_table[RPC_OP_RECOVERY] = rpc_handle_recovery_backup;
-	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_backup;
+	rpc_table[RPC_OP_SYNCHRONIZE] = rpc_handle_synchronize_mem;
+	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_mem;
+	rpc_table[RPC_OP_EVICT_DRITY] = rpc_handle_evict_dirty_mem;
 }
 #else
 void regist_handler(Rpc_handler rpc_table[])
 {
-	rpc_table[RPC_OP_FETCH] = rpc_handle_fetch_cpu;
+	rpc_table[RPC_OP_FETCH] = rpc_handle_fetch_done;
 	//rpc_table[RPC_OP_EVICT] = rpc_handle_evict_done;
 	//rpc_table[RPC_OP_ALLOC] = rpc_handle_alloc_free_done;
 	//rpc_table[RPC_OP_FREE] = rpc_handle_alloc_free_done;
-	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_cpu;
-	rpc_table[RPC_OP_RECOVERY] = rpc_handle_recovery_cpu;
+	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_done;
+	rpc_table[RPC_OP_SYNCHRONIZE] = rpc_handle_synchronize_done;
 	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_done;
+	rpc_table[RPC_OP_EVICT_DRITY] = rpc_handle_evict_dirty_done;
 }
 #endif

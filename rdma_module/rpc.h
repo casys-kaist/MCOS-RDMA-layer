@@ -12,8 +12,9 @@ enum rpc_opcode {
 	RPC_OP_ALLOC,
 	RPC_OP_FREE,
 	RPC_OP_PREFETCH,
-	RPC_OP_RECOVERY,
+	RPC_OP_SYNCHRONIZE,
 	RPC_OP_REPLICATE,
+	RPC_OP_EVICT_DRITY,
 	NUM_RPC,
 };
 
@@ -57,7 +58,6 @@ struct mem_aux {
 };
 #pragma pack(pop)
 
-
 int rmm_alloc(int nid, u64 vaddr);
 int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags);
 int rmm_free(int nid, u64 vaddr);
@@ -68,6 +68,6 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page);
 int rmm_evict_async(int nid, struct list_head *evict_list, int num_page, int *done);
 int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done);
 int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page);
-int rmm_recovery(int nid);
+int rmm_synchronize(int src_nid, int dest_nid);
 int rmm_replicate(int src_nid, int dest_nid);
 #endif

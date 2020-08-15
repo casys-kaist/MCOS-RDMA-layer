@@ -37,7 +37,6 @@ const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
 struct connection_info c_infos[MAX_NUM_GROUPS];
 //static int num_groups = 0;
 
-// SANGJIN
 spinlock_t cinfos_lock; 
 
 static struct completion done_worker[NR_WORKER_THREAD];
@@ -217,16 +216,6 @@ static int rpc_handle_evict_done(struct rdma_handle *rh, uint32_t offset)
 	return 0;
 }
 
-static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
-{
-	uint8_t *buffer = rh->dma_buffer + offset;
-
-	printk("replicate done\n");
-	ring_buffer_put(rh->rb, buffer);
-
-	return 0;
-}
-
 static int __handle_rpc(struct ib_wc *wc)
 {
 	int ret = 0;
@@ -254,10 +243,12 @@ static int __handle_rpc(struct ib_wc *wc)
 		rpc_handle_alloc_free_done(rh, imm_data);
 		processed = 1;
 	}
+	/*
 	else if ((op == RPC_OP_REPLICATE) && !rhp->req) {
 		rpc_handle_replicate_done(rh, imm_data);
 		processed = 1;
 	}
+	*/
 
 	if (!processed) {
 		DEBUG_LOG(PFX "enqueue work in %s\n", __func__);
@@ -1677,10 +1668,9 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		}
 		head = 0;
 	}
-/* SANGJIN START */
 	else if (strcmp("dead", cmd) == 0) {
 		printk("recovery rpc start\n");
-		rmm_recovery(2);
+		rmm_synchronize(2, 3);
 	}
 	else if (strcmp("alive", cmd) == 0) {
 		printk("replicate rpc start\n");
@@ -1726,7 +1716,6 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		cleanup_all_nodes_from_group(MEM_GID, BACKUP_SYNC);
 		printk("cleanup all nodes from group %d with BACKUP_SYNC\n", MEM_GID);
 	}
-/* SANGJIN END */
 	return count;
 }
 
@@ -1911,7 +1900,6 @@ int __init init_rmm_rdma(void)
 		init_completion(&rh->init_done);
 	}
 
-	// SANGJIN
 	spin_lock_init(&cinfos_lock);
 
 	server_rh.state = RDMA_INIT;
@@ -1926,7 +1914,6 @@ int __init init_rmm_rdma(void)
 		goto out_free;
 
 	init_for_test();
-
 
 	printk(PFX "Ready on InfiniBand RDMA\n");
 

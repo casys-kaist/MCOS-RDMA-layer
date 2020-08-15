@@ -84,7 +84,6 @@ enum connection_type {
 	SECONDARY, /* only accept fetch */
 	BACKUP_SYNC,
 	BACKUP_ASYNC,
-	DUMMY,
 	NUM_CTYPE,
 };
 
@@ -170,6 +169,11 @@ struct args_worker {
 	unsigned long time_dequeue_ns;
 
 	struct list_head next;
+};
+
+struct rpc_handle_args {
+	struct rdma_handle *rh;
+	uint32_t offset;
 };
 
 struct pool_info {
