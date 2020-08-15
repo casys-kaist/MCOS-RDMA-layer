@@ -28,13 +28,14 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 //static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw);
 
+#ifdef CONFIG_RM
 static int req_cnt = 0;
 static int ack_cnt = 0;
+#endif
 extern spinlock_t cinfos_lock;
 bool evict_dirty_log = false;
 int evict_dirty_list_size = 0;
 LIST_HEAD(evict_dirty_list);
-INIT_LIST_HEAD(&evict_dirty_list);
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, 
 		size_t size, dma_addr_t rdma_addr, u32 rdma_key)
@@ -615,18 +616,12 @@ put_buffer:
 
 int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page)
 {
-	int offset, ret = 0;
+	int offset, i, ret = 0;
 	uint8_t *dma_buffer, *temp = NULL, *args, *l_vaddr_ptr, *rpage_flags_ptr;
 	dma_addr_t dma_addr, remote_dma_addr;
-
 	struct rdma_handle *rh;
 	struct rpc_header *rhp;
 	struct rdma_work *rw;
-
-	struct list_head *l;
-	int i = 0;
-	int j = 0;
-
 	const struct ib_send_wr *bad_wr = NULL;
 
 	/*
@@ -683,12 +678,12 @@ int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page)
 	rpage_flags_ptr = l_vaddr_ptr + 8 * num_page;
 	DEBUG_LOG(PFX "temp: %p\n", temp);
 
-	for (j = 0; j < num_page; j++) {
-		*((uint64_t*) (temp)) = (uint64_t) fi_array[j].r_vaddr - FAKE_PA_START;
+	for (i = 0; i < num_page; i++) {
+		*((uint64_t*) (temp)) = (uint64_t) fi_array[i].r_vaddr - FAKE_PA_START;
 		temp += 8;
-		*((uint64_t*) (l_vaddr_ptr)) = (uint64_t) fi_array[j].l_vaddr;
+		*((uint64_t*) (l_vaddr_ptr)) = (uint64_t) fi_array[i].l_vaddr;
 		l_vaddr_ptr += 8;
-		*((uint64_t*) (rpage_flags_ptr)) = (uint64_t) fi_array[j].rpage_flags;
+		*((uint64_t*) (rpage_flags_ptr)) = (uint64_t) fi_array[i].rpage_flags;
 		rpage_flags_ptr += 8;
 	}
 
@@ -1172,6 +1167,7 @@ put_buffer:
         return ret;
 }
 
+#ifdef CONFIG_RM
 static int rpc_handle_fetch_mem(struct rdma_handle *rh, uint32_t offset)
 {
 	int ret = 0;
@@ -1378,6 +1374,8 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	}
 
 	if (evict_dirty_log) {
+		INIT_LIST_HEAD(&evict_dirty_list);
+
 		for (i = 0; i < num_page; i++) {
 			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
 			if (!ei) {
@@ -1615,7 +1613,6 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
         const struct ib_send_wr *bad_wr = NULL;
         char *rpc_buffer;
 	uint32_t dest_nid;
-	struct list_head *l;
 
         rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
         rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
@@ -1626,7 +1623,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
         op = rhp->op;
 
 	printk("evict dirty list size %d\n", evict_dirty_list_size);
-	rmm_evict(dest_nid, evict_dirty_list, evict_dirty_list_size);
+	rmm_evict(dest_nid, &evict_dirty_list, evict_dirty_list_size);
 
         rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
         if (!rw)
@@ -1651,6 +1648,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 
         return ret;
 }
+#endif
 
 
 #ifndef CONFIG_RM
@@ -1713,10 +1711,10 @@ static int rpc_handle_prefetch_done(struct rdma_handle *rh, uint32_t offset)
 	// memcpy and set RPAGE_FETCHED
 	for(i = 0; i < num_page; i++) {
 		// memcpy page to l_vaddr
-		memcpy(*((uint64_t*)l_vaddr_ptr), page_ptr, PAGE_SIZE);
+		memcpy((void *)*((uint64_t*)l_vaddr_ptr), page_ptr, PAGE_SIZE);
 		l_vaddr_ptr += 8;
 		page_ptr += PAGE_SIZE;
-		rpage_flags = *((uint64_t*)rpage_flags_ptr);
+		rpage_flags = (unsigned long *)*((uint64_t*)rpage_flags_ptr);
 		set_bit(RP_FETCHED, rpage_flags);
 		rpage_flags_ptr += 8;
 	}
@@ -1759,7 +1757,7 @@ static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 static int rpc_handle_evict_dirty_done(struct rdma_handle *rh, uint32_t offset)
 {
 	struct evict_info *ei;
-	struct list_head *pos, n;
+	struct list_head *pos, *n;
 	
 	list_for_each_safe(pos, n, &evict_dirty_list) {
 		ei = list_entry(pos, struct evict_info, next);
@@ -1795,6 +1793,6 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_done;
 	rpc_table[RPC_OP_SYNCHRONIZE] = rpc_handle_synchronize_done;
 	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_done;
-	rpc_table[RPC_OP_EVICT_DRITY] = rpc_handle_evict_dirty_done;
+	rpc_table[RPC_OP_EVICT_DIRTY] = rpc_handle_evict_dirty_done;
 }
 #endif
