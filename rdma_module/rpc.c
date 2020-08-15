@@ -1228,7 +1228,7 @@ static int rpc_handle_prefetch_mem(struct rdma_handle *rh, uint32_t offset)
 	int ret = 0;
 	int payload_size;
 	dma_addr_t dest_dma_addr, remote_dest_dma_addr;
-	uint8_t *rpc_buffer, *r_vaddr_ptr, *l_vaddr_ptr, *rpage_flags_ptr, *page_ptr;
+	uint8_t *rpc_buffer, *r_vaddr_ptr, *rpage_flags_ptr, *page_ptr;
 
 	struct rdma_work *rw;
 	struct rpc_header *rhp;
@@ -1604,7 +1604,7 @@ static int rpc_handle_replicate_mem(struct rdma_handle *rh, uint32_t offset)
 
 static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 {
-	int i, ret = 0;
+	int ret = 0;
         uint16_t nid = 0;
         uint16_t op = 0;
         dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
@@ -1781,7 +1781,7 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_mem;
 	rpc_table[RPC_OP_SYNCHRONIZE] = rpc_handle_synchronize_mem;
 	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_mem;
-	rpc_table[RPC_OP_EVICT_DRITY] = rpc_handle_evict_dirty_mem;
+	rpc_table[RPC_OP_EVICT_DIRTY] = rpc_handle_evict_dirty_mem;
 }
 #else
 void regist_handler(Rpc_handler rpc_table[])
