@@ -1602,7 +1602,7 @@ static int rpc_handle_synchronize_done(struct rdma_handle *rh, uint32_t offset)
 	remove_node_from_group(MEM_GID, 2, SECONDARY);
 
 	rhp = (struct rpc_header *)buffer;
-	done = (int *)(buffer + sizeof(struct rpc_header));
+	done = (int *)(buffer + sizeof(struct rpc_header) + 4);
 	*done = 1;
 
 	return 0;
