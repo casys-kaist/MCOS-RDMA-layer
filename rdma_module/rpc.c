@@ -1376,7 +1376,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	if (evict_dirty_log) {
 		INIT_LIST_HEAD(&evict_dirty_list);
 
-		if (evict_dirty_list_size < 500) {
+		if (evict_dirty_list_size < 100) {
 			for (i = 0; i < num_page; i++) {
 				ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
 				if (!ei) {
@@ -1624,7 +1624,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
         nid = rhp->nid;
         op = rhp->op;
 
-	printk("evict dirty list size %d\n", evict_dirty_list_size);
+	printk("evict dirty list size %d dest nid %d\n", evict_dirty_list_size, dest_nid);
 	rmm_evict(dest_nid, &evict_dirty_list, evict_dirty_list_size);
 
         rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
