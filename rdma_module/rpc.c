@@ -1375,6 +1375,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 
 	if (evict_dirty_log) {
 		INIT_LIST_HEAD(&evict_dirty_list);
+		page_pointer = evict_buffer + 4;
 
 		if (evict_dirty_list_size < 100) {
 			for (i = 0; i < num_page; i++) {
@@ -1386,8 +1387,11 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 
 				ei->l_vaddr = *((uint64_t *) (page_pointer));
 				ei->r_vaddr = *((uint64_t *) (page_pointer));
+				page_pointer += (8 + PAGE_SIZE);
+
 				INIT_LIST_HEAD(&ei->next);
 				list_add(&ei->next, &evict_dirty_list);
+
 			}
 			evict_dirty_list_size += num_page;
 		}
