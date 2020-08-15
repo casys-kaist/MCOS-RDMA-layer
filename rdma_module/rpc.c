@@ -1574,7 +1574,7 @@ retry:
         DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
 	DEBUG_LOG(PFX "ret in %s, %d\n", __func__, ret);
 
-	*((int *) rpc_buffer) = ret;
+	//*((int *) rpc_buffer) = ret; FIXME
 	rhp->req = false;
         ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
         __put_rdma_work_nonsleep(rh, rw);
@@ -1746,12 +1746,12 @@ static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 	uint8_t *buffer = rh->dma_buffer + offset;
 	uint32_t dest_nid = *(uint32_t *)(buffer + sizeof(struct rpc_header));
 
-	printk("replicate done\n");
-	ring_buffer_put(rh->rb, buffer);
-
-	printk("evict dirty start\n");
+	printk("evict dirty start dest_nid %d\n", dest_nid);
 	rmm_evict_dirty(rh->nid, dest_nid);
 	printk("evict dirty done\n");
+
+	printk("replicate done\n");
+	ring_buffer_put(rh->rb, buffer);
 
 	return 0;
 }
