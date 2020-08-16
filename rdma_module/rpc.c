@@ -1797,6 +1797,6 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_done;
 	rpc_table[RPC_OP_SYNCHRONIZE] = rpc_handle_synchronize_done;
 	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_done;
-	rpc_table[RPC_OP_EVICT_DIRTY] = rpc_handle_evict_dirty_done;
+	//rpc_table[RPC_OP_EVICT_DIRTY] = rpc_handle_evict_dirty_done;
 }
 #endif

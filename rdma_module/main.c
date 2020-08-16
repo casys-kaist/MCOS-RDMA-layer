@@ -221,6 +221,7 @@ static int rpc_handle_evict_dirty_done(struct rdma_handle *rh, uint32_t offset)
 	uint8_t *buffer = rh->dma_buffer + offset;
 	int *done;
 
+	printk("%s\n", __func__);
 	done = (int *)(buffer + sizeof(struct rpc_header) + 4);
 	*done = 1;
 
