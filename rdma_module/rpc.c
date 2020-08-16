@@ -1374,7 +1374,6 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	}
 
 	if (evict_dirty_log) {
-		INIT_LIST_HEAD(&evict_dirty_list);
 		page_pointer = evict_buffer + 4;
 
 		if (evict_dirty_list_size < 100) {
@@ -1388,10 +1387,10 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 				ei->l_vaddr = *((uint64_t *) (page_pointer));
 				ei->r_vaddr = *((uint64_t *) (page_pointer));
 				page_pointer += (8 + PAGE_SIZE);
+				//printk(PFX "iterate list r_vaddr: %llx l_vaddr: %llx\n",  ei->r_vaddr, ei->l_vaddr);
 
 				INIT_LIST_HEAD(&ei->next);
 				list_add(&ei->next, &evict_dirty_list);
-
 			}
 			evict_dirty_list_size += num_page;
 		}
@@ -1603,6 +1602,9 @@ static int rpc_handle_replicate_mem(struct rdma_handle *rh, uint32_t offset)
 	args->rh = rh;
 	args->offset = offset;
 	evict_dirty_log = true;
+	evict_dirty_list_size = 0;
+	INIT_LIST_HEAD(&evict_dirty_list);
+	
 	kthread_run(__rpc_handle_replicate_mem, args, "__rpc_handle_replicate_backup");	
 
 	return 0;
