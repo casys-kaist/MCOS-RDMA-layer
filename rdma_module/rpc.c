@@ -1525,6 +1525,7 @@ static int __rpc_handle_replicate_mem(void *args)
 	struct timespec start_tv, end_tv;
 	unsigned long elapsed;
 	LIST_HEAD(addr_list);
+	int done = 0;
 	
 	getnstimeofday(&start_tv);
 
@@ -1556,17 +1557,19 @@ static int __rpc_handle_replicate_mem(void *args)
 			list_add(&ei->next, &addr_list);
 		}
 
-retry:
-		//ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, done);
-		ret = rmm_evict(dest_nid, &addr_list, nr_pages);
-		if (ret == -ETIME)
-			goto retry;
+		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, done);
+		//ret = rmm_evict(dest_nid, &addr_list, nr_pages);
 
 		list_for_each_safe(pos, n, &addr_list) {
 			ei = list_entry(pos, struct evict_info, next);
 			kfree(ei);
 		}
 	}
+
+	/*
+	while (!(ret = done))
+		cpu_relax();
+	*/
         
 	rw = __get_rdma_work(rh, rh->rpc_dma_addr + offset, sizeof(struct rpc_header) + 4, rh->remote_dma_addr + offset, rh->rpc_rkey);
         if (!rw)
