@@ -1539,7 +1539,7 @@ static int __rpc_handle_replicate_mem(void *args)
 	__connect_to_server(dest_nid, QP_FETCH, BACKUP_ASYNC);
 	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
-	nr_pages = 512;
+	nr_pages = 256;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
 
@@ -1634,6 +1634,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 
 	printk("evict dirty list size %d dest nid %d\n", evict_dirty_list_size, dest_nid);
 	rmm_evict(dest_nid, &evict_dirty_list, evict_dirty_list_size);
+	printk("evict done\n");
 
         rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
         if (!rw)
@@ -1644,6 +1645,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
         rw->rh = rh;
 
         DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
+        printk(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
 
 	rhp->req = false;
         ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
