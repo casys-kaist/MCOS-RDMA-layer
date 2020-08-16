@@ -1766,6 +1766,8 @@ static int rpc_handle_evict_dirty_done(struct rdma_handle *rh, uint32_t offset)
 {
 	struct evict_info *ei;
 	struct list_head *pos, *n;
+	uint8_t *buffer = rh->dma_buffer + offset;
+	int *done;
 	
 	list_for_each_safe(pos, n, &evict_dirty_list) {
 		ei = list_entry(pos, struct evict_info, next);
@@ -1773,6 +1775,9 @@ static int rpc_handle_evict_dirty_done(struct rdma_handle *rh, uint32_t offset)
 	}
 	
 	evict_dirty_list_size = 0;
+
+	done = (int *)(buffer + sizeof(struct rpc_header) + 4);
+	*done = 1;
 
 	return 0;
 }
