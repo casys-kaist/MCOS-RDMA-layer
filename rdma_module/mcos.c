@@ -31,6 +31,8 @@ extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned lon
 extern int (*remote_prefetch_async)(int, struct fetch_info *, int);
 #endif
 
+#define LOAD_BAL 
+
 extern spinlock_t cinfos_lock;
 
 #ifdef LOAD_BAL
