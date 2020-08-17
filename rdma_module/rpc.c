@@ -33,9 +33,9 @@ static int req_cnt = 0;
 static int ack_cnt = 0;
 #endif
 extern spinlock_t cinfos_lock;
-bool evict_dirty_log = false;
-int evict_dirty_list_size = 0;
-LIST_HEAD(evict_dirty_list);
+bool writeback_dirty_log = false;
+int writeback_dirty_list_size = 0;
+LIST_HEAD(writeback_dirty_list);
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, 
 		size_t size, dma_addr_t rdma_addr, u32 rdma_key)
@@ -1090,7 +1090,7 @@ put_buffer:
         return ret;
 }
 
-int rmm_evict_dirty(int src_nid, int dest_nid)
+int rmm_writeback_dirty(int src_nid, int dest_nid)
 {
 	int offset, ret = 0;
         uint8_t *dma_buffer, *args;
@@ -1134,7 +1134,7 @@ int rmm_evict_dirty(int src_nid, int dest_nid)
 
         rhp = (struct rpc_header *) dma_buffer;
         rhp->nid = src_nid;
-        rhp->op = RPC_OP_EVICT_DIRTY;
+        rhp->op = RPC_OP_WRITEBACK_DIRTY;
         rhp->async = false;
 	rhp->req = true;
 
@@ -1375,7 +1375,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 		}
 	}
 
-	if (evict_dirty_log) {
+	if (writeback_dirty_log) {
 		page_pointer = evict_buffer + 4;
 
 		for (i = 0; i < num_page; i++) {
@@ -1390,9 +1390,9 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 			page_pointer += (8 + PAGE_SIZE);
 
 			INIT_LIST_HEAD(&ei->next);
-			list_add(&ei->next, &evict_dirty_list);
+			list_add(&ei->next, &writeback_dirty_list);
 		}
-		evict_dirty_list_size += num_page;
+		writeback_dirty_list_size += num_page;
 	}
 	else {
 		infos = get_node_infos(MEM_GID, BACKUP_SYNC);
@@ -1518,7 +1518,7 @@ static int __rpc_handle_replicate_mem(void *args)
         struct rpc_header *rhp;
         const struct ib_send_wr *bad_wr = NULL;
         char *rpc_buffer;
-	int i, j, nr_pages;
+	int i, j, nr_pages, window_size;
 	struct evict_info *ei;
 	struct list_head *pos, *n;
 	struct timespec start_tv, end_tv;
@@ -1539,7 +1539,8 @@ static int __rpc_handle_replicate_mem(void *args)
 	__connect_to_server(dest_nid, QP_FETCH, BACKUP_ASYNC);
 	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
-	nr_pages = 128;
+	nr_pages = 256;
+	window_size = 10;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
 
@@ -1560,8 +1561,9 @@ static int __rpc_handle_replicate_mem(void *args)
 		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &done);
 		//ret = rmm_evict(dest_nid, &addr_list, nr_pages);
 
-		while (!(ret = done))
-			cpu_relax();
+		if (i % window_size == 0)
+			while (!(ret = done))
+				cpu_relax();
 
 		list_for_each_safe(pos, n, &addr_list) {
 			ei = list_entry(pos, struct evict_info, next);
@@ -1603,16 +1605,16 @@ static int rpc_handle_replicate_mem(struct rdma_handle *rh, uint32_t offset)
 	struct rpc_handle_args *args = kmalloc(sizeof(struct rpc_handle_args), GFP_KERNEL);  
 	args->rh = rh;
 	args->offset = offset;
-	evict_dirty_log = true;
-	evict_dirty_list_size = 0;
-	INIT_LIST_HEAD(&evict_dirty_list);
+	writeback_dirty_log = true;
+	writeback_dirty_list_size = 0;
+	INIT_LIST_HEAD(&writeback_dirty_list);
 	
 	kthread_run(__rpc_handle_replicate_mem, args, "__rpc_handle_replicate_backup");	
 
 	return 0;
 }
 
-static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
+static int rpc_handle_writeback_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 {
 	int nr_pages, size, ret = 0;
         uint16_t nid = 0;
@@ -1637,18 +1639,18 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
         nid = rhp->nid;
         op = rhp->op;
 
-	nr_pages = 128;
-	for (i = 0; i < evict_dirty_list_size; i += nr_pages) {
+	nr_pages = 256;
+	for (i = 0; i < writeback_dirty_list_size; i += nr_pages) {
 		INIT_LIST_HEAD(&addr_list);
 		j = 0;
 		ei = NULL;
 
-		if (evict_dirty_list_size - i < nr_pages) {
-			ei = list_last_entry(&evict_dirty_list, struct evict_info, next);
-			size = evict_dirty_list_size - i;
+		if (writeback_dirty_list_size - i < nr_pages) {
+			ei = list_last_entry(&writeback_dirty_list, struct evict_info, next);
+			size = writeback_dirty_list_size - i;
 		} 
 		else {
-			list_for_each_safe(pos, n, &evict_dirty_list) {
+			list_for_each_safe(pos, n, &writeback_dirty_list) {
 				j++;
 				if (j == nr_pages) {
 					ei = list_entry(pos, struct evict_info, next);
@@ -1658,7 +1660,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 			size = nr_pages;
 		}
 
-		list_cut_position(&addr_list, &evict_dirty_list, &ei->next); 
+		list_cut_position(&addr_list, &writeback_dirty_list, &ei->next); 
 		rmm_evict(dest_nid, &addr_list, size);
 	}
 
@@ -1682,7 +1684,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
                         ret = -EINVAL;
         }
 
-	evict_dirty_log = false;
+	writeback_dirty_log = false;
 	add_node_to_group(MEM_GID, dest_nid, BACKUP_ASYNC);
 
         return ret;
@@ -1789,30 +1791,28 @@ static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 
 	getnstimeofday(&start_tv);
 
-	rmm_evict_dirty(rh->nid, dest_nid);
+	rmm_writeback_dirty(rh->nid, dest_nid);
 
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec);
 	printk(KERN_INFO PFX "evict dirty done total elapsed time %lu (s)\n", elapsed);
 
-	list_for_each_safe(pos, n, &evict_dirty_list) {
+	list_for_each_safe(pos, n, &writeback_dirty_list) {
 		ei = list_entry(pos, struct evict_info, next);
 		kfree(ei);
 	}
 	
-	evict_dirty_list_size = 0;
-	printk("replicate done\n");
+	writeback_dirty_list_size = 0;
 	ring_buffer_put(rh->rb, buffer);
 
 	return 0;
 }
 
-static int rpc_handle_evict_dirty_done(struct rdma_handle *rh, uint32_t offset)
+static int rpc_handle_writeback_dirty_done(struct rdma_handle *rh, uint32_t offset)
 {
 	uint8_t *buffer = rh->dma_buffer + offset;
 	int *done;
 
-	printk("%s\n", __func__);
 	done = (int *)(buffer + sizeof(struct rpc_header) + 4);
 	*done = 1;
 
@@ -1831,7 +1831,7 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_mem;
 	rpc_table[RPC_OP_SYNCHRONIZE] = rpc_handle_synchronize_mem;
 	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_mem;
-	rpc_table[RPC_OP_EVICT_DIRTY] = rpc_handle_evict_dirty_mem;
+	rpc_table[RPC_OP_WRITEBACK_DIRTY] = rpc_handle_writeback_dirty_mem;
 }
 #else
 void regist_handler(Rpc_handler rpc_table[])
@@ -1843,6 +1843,5 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_done;
 	rpc_table[RPC_OP_SYNCHRONIZE] = rpc_handle_synchronize_done;
 	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_done;
-	//rpc_table[RPC_OP_EVICT_DIRTY] = rpc_handle_evict_dirty_done;
 }
 #endif

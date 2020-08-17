@@ -216,7 +216,7 @@ static int rpc_handle_evict_done(struct rdma_handle *rh, uint32_t offset)
 	return 0;
 }
 
-static int rpc_handle_evict_dirty_done(struct rdma_handle *rh, uint32_t offset)
+static int rpc_handle_writeback_dirty_done(struct rdma_handle *rh, uint32_t offset)
 {
 	uint8_t *buffer = rh->dma_buffer + offset;
 	int *done;
@@ -255,8 +255,8 @@ static int __handle_rpc(struct ib_wc *wc)
 		rpc_handle_alloc_free_done(rh, imm_data);
 		processed = 1;
 	}
-	else if (op == RPC_OP_EVICT_DIRTY && !rhp->req) {
-		rpc_handle_evict_dirty_done(rh, imm_data);
+	else if (op == RPC_OP_WRITEBACK_DIRTY && !rhp->req) {
+		rpc_handle_writeback_dirty_done(rh, imm_data);
 		processed = 1;
 	}
 
