@@ -1542,7 +1542,7 @@ static int __rpc_handle_replicate_mem(void *args)
 	__connect_to_server(dest_nid, QP_FETCH, BACKUP_ASYNC);
 	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
-	nr_pages = 32;
+	nr_pages = 128;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
 
@@ -1629,8 +1629,8 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 
         rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
         rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
-        rpc_dma_addr = rh->rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
-        remote_rpc_dma_addr = rh->remote_rpc_dma_addr + (rpc_buffer - (char *) rh->rpc_buffer);
+        dma_addr = rh->rpc_dma_addr + offset;
+        remote_dma_addr = rh->remote_rpc_dma_addr + offset;
 	dest_nid = *(uint32_t *)(rpc_buffer);
 
         nid = rhp->nid;
@@ -1640,7 +1640,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 	rmm_evict(dest_nid, &evict_dirty_list, evict_dirty_list_size);
 	printk("!!!!!!!!!!!!!! evict done\n");
 
-        rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
+        rw = __get_rdma_work(rh, dma_addr, sizeof(struct rpc_header), remote_dma_addr, rh->rpc_rkey);
         if (!rw)
                 return -ENOMEM;
 
@@ -1815,6 +1815,6 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_done;
 	rpc_table[RPC_OP_SYNCHRONIZE] = rpc_handle_synchronize_done;
 	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_done;
-	rpc_table[RPC_OP_EVICT_DIRTY] = rpc_handle_evict_dirty_done;
+	//rpc_table[RPC_OP_EVICT_DIRTY] = rpc_handle_evict_dirty_done;
 }
 #endif
