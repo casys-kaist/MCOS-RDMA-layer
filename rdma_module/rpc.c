@@ -1153,6 +1153,8 @@ int rmm_evict_dirty(int src_nid, int dest_nid)
                 goto put_buffer;
         }
 
+        printk(PFX "waiting for evict dirty\n");
+
         while(!(ret = *done))
                 cpu_relax();
 
@@ -1636,7 +1638,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 
 	printk("evict dirty list size %d dest nid %d\n", evict_dirty_list_size, dest_nid);
 	rmm_evict(dest_nid, &evict_dirty_list, evict_dirty_list_size);
-	printk("evict done\n");
+	printk("!!!!!!!!!!!!!! evict done\n");
 
         rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
         if (!rw)
