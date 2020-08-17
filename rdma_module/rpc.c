@@ -1541,7 +1541,7 @@ static int __rpc_handle_replicate_mem(void *args)
 	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
 	nr_pages = 256;
-	window_size = 256;
+	window_size = 512;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
 
@@ -1565,7 +1565,7 @@ static int __rpc_handle_replicate_mem(void *args)
 			while (!(req_cnt == ack_cnt))
 				cpu_relax();
 
-		printk("req: %d, ack: %d\n", req_cnt, ack_cnt);
+		//printk("req: %d, ack: %d\n", req_cnt, ack_cnt);
 
 		list_for_each_safe(pos, n, &addr_list) {
 			ei = list_entry(pos, struct evict_info, next);
