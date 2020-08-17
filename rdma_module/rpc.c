@@ -1559,7 +1559,7 @@ static int __rpc_handle_replicate_mem(void *args)
 
 		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &done);
 
-		if (i % window_size == 0 || i == (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGESIZE - 1)) {
+		if (i % window_size == 0 || i == (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE - 1)) {
 			while (!(window_size == done))
 				cpu_relax();
 
