@@ -1524,7 +1524,8 @@ static int __rpc_handle_replicate_mem(void *args)
 	struct timespec start_tv, end_tv;
 	unsigned long elapsed;
 	LIST_HEAD(addr_list);
-	int done = 0;
+	int req_cnt = 0;
+	int ack_cnt = 0;
 	
 	getnstimeofday(&start_tv);
 
@@ -1557,14 +1558,12 @@ static int __rpc_handle_replicate_mem(void *args)
 			list_add(&ei->next, &addr_list);
 		}
 
-		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &done);
+		req_cnt++;
+		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &ack_cnt);
 
-		if (i % window_size == 0 || i == (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE - 1)) {
-			while (!(window_size == done))
+		if (i % window_size == 0 || i == (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE - 1))
+			while (!(req_cnt == ack_cnt))
 				cpu_relax();
-
-			done = 0;
-		}
 
 		list_for_each_safe(pos, n, &addr_list) {
 			ei = list_entry(pos, struct evict_info, next);
