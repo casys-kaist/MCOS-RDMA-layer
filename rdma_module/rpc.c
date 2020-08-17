@@ -776,7 +776,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 		temp += (8 + PAGE_SIZE);
 	}
 	done = (int *) temp;
-	*done = 0;
+	//*done = 0; FIXME initialize before calling rmm_evict
 	DEBUG_LOG(PFX "iterate done\n");
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -861,7 +861,7 @@ int rmm_evict_async(int nid, struct list_head *evict_list, int num_page, int *do
 		memcpy(temp + 8, (void *) e->l_vaddr, PAGE_SIZE);
 		temp += (8 + PAGE_SIZE);
 	}
-	*done = 0;
+	//*done = 0; FIXME initialize before calling evict_async
 	*((int **) (temp)) = done;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -1518,7 +1518,7 @@ static int __rpc_handle_replicate_mem(void *args)
         struct rpc_header *rhp;
         const struct ib_send_wr *bad_wr = NULL;
         char *rpc_buffer;
-	int i, j, nr_pages;
+	int i, j, nr_pages, window_size;
 	struct evict_info *ei;
 	struct list_head *pos, *n;
 	struct timespec start_tv, end_tv;
@@ -1541,6 +1541,7 @@ static int __rpc_handle_replicate_mem(void *args)
 	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
 	nr_pages = 256;
+	window_size = 256;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
 
@@ -1559,6 +1560,10 @@ static int __rpc_handle_replicate_mem(void *args)
 
 		req_cnt++;
 		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &ack_cnt);
+
+		if (i % window_size == 0)
+			while (!(req_cnt == ack_cnt))
+				cpu_relax();
 
 		printk("req: %d, ack: %d\n", req_cnt, ack_cnt);
 
