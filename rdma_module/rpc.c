@@ -1518,7 +1518,7 @@ static int __rpc_handle_replicate_mem(void *args)
         struct rpc_header *rhp;
         const struct ib_send_wr *bad_wr = NULL;
         char *rpc_buffer;
-	int i, j, nr_pages, window_size;
+	int i, j, nr_pages;
 	struct evict_info *ei;
 	struct list_head *pos, *n;
 	struct timespec start_tv, end_tv;
@@ -1541,7 +1541,6 @@ static int __rpc_handle_replicate_mem(void *args)
 	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
 	nr_pages = 256;
-	window_size = 20;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
 
@@ -1561,15 +1560,16 @@ static int __rpc_handle_replicate_mem(void *args)
 		req_cnt++;
 		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &ack_cnt);
 
-		if (i % window_size == 0 || i == (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE - 1))
-			while (!(req_cnt == ack_cnt))
-				cpu_relax();
+		printk("req: %d, ack: %d\n", req_cnt, ack_cnt);
 
 		list_for_each_safe(pos, n, &addr_list) {
 			ei = list_entry(pos, struct evict_info, next);
 			kfree(ei);
 		}
 	}
+
+	while (!(req_cnt == ack_cnt))
+		cpu_relax();
         
 	rw = __get_rdma_work(rh, rh->rpc_dma_addr + offset, sizeof(struct rpc_header) + 4, rh->remote_dma_addr + offset, rh->rpc_rkey);
         if (!rw)
