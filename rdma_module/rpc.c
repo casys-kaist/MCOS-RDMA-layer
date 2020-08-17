@@ -28,6 +28,7 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw);
 
 bool rpc_blocked = false;
+DEFINE_RWLOCK(rpc_rwlock);
 
 /* SANGJIN START */
 static atomic_t req_cnt = ATOMIC_INIT(0);
@@ -39,11 +40,13 @@ extern spinlock_t cinfos_lock;
 static inline void block_rpc(void)
 {
 	rpc_blocked = true;
+	write_lock(&rpc_rwlock);
 }
 
 static inline void unblock_rpc(void)
 {
 	rpc_blocked = false;
+	write_unlock(&rpc_rwlock);
 }
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, 
