@@ -272,9 +272,10 @@ static inline struct node_info *get_node_infos(int gid, enum connection_type cty
 	struct node_info *ret_nid;
 	extern spinlock_t cinfos_lock;
 	
-	spin_lock(&cinfos_lock);
 	if (ctype >= NUM_CTYPE)
 		return NULL;
+
+	spin_lock(&cinfos_lock);
 	ret_nid = &c_infos[gid].infos[ctype];
 	spin_unlock(&cinfos_lock);
 		
@@ -286,9 +287,10 @@ static inline int add_node_to_group(int gid, int nid, enum connection_type ctype
 	struct node_info *infos = get_node_infos(gid, ctype);
 	extern spinlock_t cinfos_lock;
 
-	spin_lock(&cinfos_lock);
 	if (infos->size == MAX_GROUP_SIZE)
 		return -ENOMEM;
+
+	spin_lock(&cinfos_lock);
 	infos->nids[infos->size] = nid;
 	infos->size++;
 	spin_unlock(&cinfos_lock);
