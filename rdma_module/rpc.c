@@ -1557,12 +1557,14 @@ static int __rpc_handle_replicate_mem(void *args)
 			list_add(&ei->next, &addr_list);
 		}
 
-		done = 0;
 		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &done);
 
-		if (i % window_size == 0 || i == (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGESIZE - 1))
-			while (!(ret = done))
+		if (i % window_size == 0 || i == (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGESIZE - 1)) {
+			while (!(window_size == done))
 				cpu_relax();
+
+			done = 0;
+		}
 
 		list_for_each_safe(pos, n, &addr_list) {
 			ei = list_entry(pos, struct evict_info, next);
