@@ -1646,11 +1646,11 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 		ei = NULL;
 
 		if (evict_dirty_list_size - i < nr_pages) {
-			list_last_entry(ei, struct evict_info, ei);
+			ei = list_last_entry(&evict_dirty_list, struct evict_info, next);
 			size = evict_dirty_list_size - i;
 		} 
 		else {
-			list_for_each(pos, n, &evict_dirty_list) {
+			list_for_each_safe(pos, n, &evict_dirty_list) {
 				j++;
 				if (j == nr_pages) {
 					ei = list_entry(pos, struct evict_info, next);
@@ -1660,7 +1660,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 			size = nr_pages;
 		}
 
-		list_cut_position(addr_list, evict_dirty_list, ei); 
+		list_cut_position(&addr_list, &evict_dirty_list, &ei->next); 
 		rmm_evict(dest_nid, &addr_list, size);
 	}
 	printk("!!!!!!!!!!!!!! evict done\n");
