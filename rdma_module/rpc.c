@@ -1474,6 +1474,14 @@ static int rpc_handle_synchronize_mem(struct rdma_handle *rh, uint32_t offset)
         nid = rhp->nid;
         op = rhp->op;
 
+        // busy wait until full consistentcy with r1 and r2
+        while (!(req_cnt == ack_cnt))
+                cpu_relax();
+
+        // initialize
+        req_cnt = 0;
+        ack_cnt = 0;
+
         rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
         if (!rw)
                 return -ENOMEM;
@@ -1483,14 +1491,6 @@ static int rpc_handle_synchronize_mem(struct rdma_handle *rh, uint32_t offset)
         rw->rh = rh;
 
         DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
-
-        // busy wait until full consistentcy with r1 and r2
-        while (!(req_cnt == ack_cnt))
-                cpu_relax();
-
-        // initialize
-        req_cnt = 0;
-        ack_cnt = 0;
 
 	rhp->req = false;
         ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -1561,10 +1561,8 @@ static int __rpc_handle_replicate_mem(void *args)
 		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &done);
 		//ret = rmm_evict(dest_nid, &addr_list, nr_pages);
 
-		/*
 		while (!(ret = done))
 			cpu_relax();
-		*/
 
 		list_for_each_safe(pos, n, &addr_list) {
 			ei = list_entry(pos, struct evict_info, next);
