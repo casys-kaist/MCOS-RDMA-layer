@@ -1561,7 +1561,7 @@ static int __rpc_handle_replicate_mem(void *args)
 		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &done);
 		//ret = rmm_evict(dest_nid, &addr_list, nr_pages);
 
-		while (!(ret = done))
+		while (!(ret = *done))
 			cpu_relax();
 
 		list_for_each_safe(pos, n, &addr_list) {
