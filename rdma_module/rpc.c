@@ -1540,7 +1540,7 @@ static int __rpc_handle_replicate_mem(void *args)
 	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
 	nr_pages = 256;
-	window_size = 10;
+	window_size = 20;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
 
@@ -1559,9 +1559,8 @@ static int __rpc_handle_replicate_mem(void *args)
 
 		done = 0;
 		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &done);
-		//ret = rmm_evict(dest_nid, &addr_list, nr_pages);
 
-		if (i % window_size == 0)
+		if (i % window_size == 0 || i == (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGESIZE - 1))
 			while (!(ret = done))
 				cpu_relax();
 
