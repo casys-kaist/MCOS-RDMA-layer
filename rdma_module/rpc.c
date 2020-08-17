@@ -776,7 +776,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 		temp += (8 + PAGE_SIZE);
 	}
 	done = (int *) temp;
-	//*done = 0; FIXME initialize before calling rmm_evict
+	*done = 0; //FIXME initialize before calling rmm_evict
 	DEBUG_LOG(PFX "iterate done\n");
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
@@ -861,7 +861,7 @@ int rmm_evict_async(int nid, struct list_head *evict_list, int num_page, int *do
 		memcpy(temp + 8, (void *) e->l_vaddr, PAGE_SIZE);
 		temp += (8 + PAGE_SIZE);
 	}
-	//*done = 0; FIXME initialize before calling evict_async
+	*done = 0; //FIXME initialize before calling evict_async
 	*((int **) (temp)) = done;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
