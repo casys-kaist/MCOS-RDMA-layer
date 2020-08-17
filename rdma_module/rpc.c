@@ -1620,7 +1620,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 	int nr_pages, ret = 0;
         uint16_t nid = 0;
         uint16_t op = 0;
-        dma_addr_t rpc_dma_addr, remote_rpc_dma_addr;
+        dma_addr_t dma_addr, remote_dma_addr;
         struct rdma_work *rw;
         struct rpc_header *rhp;
         const struct ib_send_wr *bad_wr = NULL;
