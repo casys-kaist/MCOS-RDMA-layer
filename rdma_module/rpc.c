@@ -1779,6 +1779,18 @@ static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 	return 0;
 }
 
+static int rpc_handle_evict_dirty_done(struct rdma_handle *rh, uint32_t offset)
+{
+	uint8_t *buffer = rh->dma_buffer + offset;
+	int *done;
+
+	printk("%s\n", __func__);
+	done = (int *)(buffer + sizeof(struct rpc_header) + 4);
+	*done = 1;
+
+	return 0;
+}
+
 #endif
 
 #ifdef CONFIG_RM 
@@ -1803,6 +1815,6 @@ void regist_handler(Rpc_handler rpc_table[])
 	rpc_table[RPC_OP_PREFETCH] = rpc_handle_prefetch_done;
 	rpc_table[RPC_OP_SYNCHRONIZE] = rpc_handle_synchronize_done;
 	rpc_table[RPC_OP_REPLICATE] = rpc_handle_replicate_done;
-	//rpc_table[RPC_OP_EVICT_DIRTY] = rpc_handle_evict_dirty_done;
+	rpc_table[RPC_OP_EVICT_DIRTY] = rpc_handle_evict_dirty_done;
 }
 #endif

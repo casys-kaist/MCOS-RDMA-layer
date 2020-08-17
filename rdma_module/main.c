@@ -255,10 +255,12 @@ static int __handle_rpc(struct ib_wc *wc)
 		rpc_handle_alloc_free_done(rh, imm_data);
 		processed = 1;
 	}
+	/*
 	else if (op == RPC_OP_EVICT_DIRTY && !rhp->req) {
 		rpc_handle_evict_dirty_done(rh, imm_data);
 		processed = 1;
 	}
+	*/
 
 	if (!processed) {
 		DEBUG_LOG(PFX "enqueue work in %s\n", __func__);
