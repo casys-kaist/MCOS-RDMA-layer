@@ -1540,8 +1540,8 @@ static int __rpc_handle_replicate_mem(void *args)
 	__connect_to_server(dest_nid, QP_FETCH, BACKUP_ASYNC);
 	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
-	nr_pages = 256;
-	window_size = 512;
+	nr_pages = 512;
+	window_size = 1024;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
 
