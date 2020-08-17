@@ -1776,7 +1776,7 @@ static int rpc_handle_synchronize_done(struct rdma_handle *rh, uint32_t offset)
 	
 	add_node_to_group(MEM_GID, 2, PRIMARY);
 	remove_node_from_group(MEM_GID, 1, PRIMARY);
-	add_node_to_group(MEM_GID, 1, SECONDARY);
+	//add_node_to_group(MEM_GID, 1, SECONDARY);
 	remove_node_from_group(MEM_GID, 2, SECONDARY);
 
 	done = (int *)(buffer + sizeof(struct rpc_header) + 4);
