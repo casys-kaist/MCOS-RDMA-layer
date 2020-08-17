@@ -31,7 +31,7 @@ extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned lon
 extern int (*remote_prefetch_async)(int, struct fetch_info *, int);
 #endif
 
-extern spinlock_t cinfos_lock;
+extern bool rpc_blocked;
 
 #ifdef LOAD_BAL
 static inline int select_fetch_node(int gid)
@@ -59,10 +59,20 @@ static inline int select_fetch_node(int gid)
 }
 #endif
 
+static inline int check_rpc_status(void)
+{
+	if (unlikely(rpc_blocked)) {
+		while (rpc_blocked)
+			cpu_relax();
+	}
+}
+
 int mcos_rmm_alloc(int gid, u64 vaddr)
 {
 	struct node_info *infos;
 	int ret;
+
+	check_rpc_status();
 
 retry:
 	infos = get_node_infos(gid, PRIMARY);
@@ -79,6 +89,7 @@ int mcos_rmm_free(int gid, u64 vaddr)
 	struct node_info *infos;
 	int ret;
 
+	check_rpc_status();
 retry:	
 	infos = get_node_infos(gid, PRIMARY);
 
@@ -93,6 +104,7 @@ int mcos_rmm_fetch(int gid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
 	int nid, ret;
 
+	check_rpc_status();
 retry:
 	nid = select_fetch_node(gid);
 
@@ -109,6 +121,7 @@ int mcos_rmm_evict(int gid, struct list_head *evict_list, int num_page)
 	struct node_info *infos;
 	int ret;
 
+	check_rpc_status();
 retry:
 	infos = get_node_infos(gid, PRIMARY);
 
@@ -131,6 +144,8 @@ int mcos_rmm_evict_fanout(int gid, struct list_head *evict_list, int num_page)
 	int ret = 0;
 	int i;
 	int *done;
+
+	check_rpc_status();
 
 	infos = get_node_infos(gid, PRIMARY);
 	done = kmalloc(infos->size * sizeof(int), GFP_ATOMIC);
@@ -164,6 +179,8 @@ int mcos_rmm_alloc_async(int gid, u64 vaddr, unsigned long *rpage_flags)
 {
 	struct node_info *infos; 
 
+	check_rpc_status();
+
 	infos = get_node_infos(gid, PRIMARY);
 
 	return rmm_alloc_async(infos->nids[0], vaddr - FAKE_PA_START, rpage_flags);
@@ -172,6 +189,8 @@ int mcos_rmm_alloc_async(int gid, u64 vaddr, unsigned long *rpage_flags)
 int mcos_rmm_free_async(int gid, u64 vaddr, unsigned long *rpage_flags)
 {
 	struct node_info *infos;
+
+	check_rpc_status();
 
 	infos = get_node_infos(gid, PRIMARY);
 
@@ -182,6 +201,8 @@ int mcos_rmm_fetch_async(int gid, void *l_vaddr, void * r_vaddr, unsigned int or
 {
 	int nid; 
 
+	check_rpc_status();
+
 	nid = select_fetch_node(gid);
 
 	return rmm_fetch_async(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, rpage_flags);
@@ -191,6 +212,8 @@ int mcos_rmm_fetch_async(int gid, void *l_vaddr, void * r_vaddr, unsigned int or
 int mcos_rmm_prefetch_async(int gid, struct fetch_info *fi_array, int num_page)
 {
 	int nid;
+
+	check_rpc_status();
 
 	nid = select_fetch_node(gid);
 	return rmm_prefetch_async(nid, fi_array, num_page);

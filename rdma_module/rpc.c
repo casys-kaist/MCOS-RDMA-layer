@@ -27,12 +27,24 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh, dma_ad
 //static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw);
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw);
 
+bool rpc_blocked = false;
+
 /* SANGJIN START */
-static int req_cnt = 0;
+static atomic_t req_cnt = ATOMIC_INIT(0);
 static int ack_cnt = 0;
 
 extern spinlock_t cinfos_lock;
 /* SANGJIN END */
+
+static inline void block_rpc(void)
+{
+	rpc_blocked = true;
+}
+
+static inline void unblock_rpc(void)
+{
+	rpc_blocked = false;
+}
 
 static struct rdma_work *__get_rdma_work(struct rdma_handle *rh, dma_addr_t dma_addr, 
 		size_t size, dma_addr_t rdma_addr, u32 rdma_key)
@@ -1249,7 +1261,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	infos = get_node_infos(MEM_GID, BACKUP_ASYNC);
 	for (i = 0; i < infos->size; i++) {
 		wait_for_replication = false;
-		req_cnt++;
+		atomic_inc(&req_cnt);
 		DEBUG_LOG(PFX "replicate to backup server ASYNC\n");
 		rmm_evict_forward(infos->nids[i], rh->evict_buffer + offset, 
 				num_page * (8 + PAGE_SIZE) + 
@@ -1416,11 +1428,11 @@ static int rpc_handle_recovery_backup(struct rdma_handle *rh, uint32_t offset)
         DEBUG_LOG(PFX "nid: %d, offset: %d, op: %d\n", nid, offset, op);
 
         // busy wait until full consistentcy with r1 and r2
-        while (!(req_cnt == ack_cnt))
+        while (!(atomic_read(&req_cnt) == ack_cnt))
                 cpu_relax();
 
         // initialize
-        req_cnt = 0;
+	atomic_set(&req_cnt, 0);
         ack_cnt = 0;
 
         ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);

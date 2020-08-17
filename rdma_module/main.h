@@ -335,7 +335,6 @@ static inline int wait_for_ack_timeout(int *done, u64 ticks)
 
 	return 0;
 }
-
 /* prototype of symbol */
 /*
    int ib_dereg_mr_user(struct ib_mr *mr);
