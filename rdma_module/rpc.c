@@ -1378,24 +1378,21 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 	if (evict_dirty_log) {
 		page_pointer = evict_buffer + 4;
 
-		if (evict_dirty_list_size < 100) {
-			for (i = 0; i < num_page; i++) {
-				ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
-				if (!ei) {
-					printk("error in %s\n", __func__);
-					return -ENOMEM;
-				}
-
-				ei->l_vaddr = *((uint64_t *) (page_pointer));
-				ei->r_vaddr = *((uint64_t *) (page_pointer));
-				page_pointer += (8 + PAGE_SIZE);
-				//printk(PFX "iterate list r_vaddr: %llx l_vaddr: %llx\n",  ei->r_vaddr, ei->l_vaddr);
-
-				INIT_LIST_HEAD(&ei->next);
-				list_add(&ei->next, &evict_dirty_list);
+		for (i = 0; i < num_page; i++) {
+			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
+			if (!ei) {
+				printk("error in %s\n", __func__);
+				return -ENOMEM;
 			}
-			evict_dirty_list_size += num_page;
+
+			ei->l_vaddr = *((uint64_t *) (page_pointer));
+			ei->r_vaddr = *((uint64_t *) (page_pointer));
+			page_pointer += (8 + PAGE_SIZE);
+
+			INIT_LIST_HEAD(&ei->next);
+			list_add(&ei->next, &evict_dirty_list);
 		}
+		evict_dirty_list_size += num_page;
 	}
 	else {
 		infos = get_node_infos(MEM_GID, BACKUP_SYNC);
@@ -1617,7 +1614,7 @@ static int rpc_handle_replicate_mem(struct rdma_handle *rh, uint32_t offset)
 
 static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 {
-	int nr_pages, ret = 0;
+	int nr_pages, size, ret = 0;
         uint16_t nid = 0;
         uint16_t op = 0;
         dma_addr_t dma_addr, remote_dma_addr;
@@ -1626,6 +1623,10 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
         const struct ib_send_wr *bad_wr = NULL;
         char *rpc_buffer;
 	uint32_t dest_nid;
+	LIST_HEAD(addr_list);
+	int i, j;
+	struct evict_info *ei;
+	struct list_head *pos, *n;
 
         rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
         rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
@@ -1636,8 +1637,32 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
         nid = rhp->nid;
         op = rhp->op;
 
+	nr_pages = 128;
 	printk("evict dirty list size %d dest nid %d\n", evict_dirty_list_size, dest_nid);
-	rmm_evict(dest_nid, &evict_dirty_list, evict_dirty_list_size);
+	for (i = 0; i < evict_dirty_list_size; i += nr_pages) {
+		printk("%d %d\n", i, evict_dirty_list_size);
+		INIT_LIST_HEAD(&addr_list);
+		j = 0;
+		ei = NULL;
+
+		if (evict_dirty_list_size - i < nr_pages) {
+			list_last_entry(ei, struct evict_info, ei);
+			size = evict_dirty_list_size - i;
+		} 
+		else {
+			list_for_each(pos, n, &evict_dirty_list) {
+				j++;
+				if (j == nr_pages) {
+					ei = list_entry(pos, struct evict_info, next);
+					break;
+				}
+			}
+			size = nr_pages;
+		}
+
+		list_cut_position(addr_list, evict_dirty_list, ei); 
+		rmm_evict(dest_nid, &addr_list, size);
+	}
 	printk("!!!!!!!!!!!!!! evict done\n");
 
         rw = __get_rdma_work(rh, dma_addr, sizeof(struct rpc_header), remote_dma_addr, rh->rpc_rkey);
