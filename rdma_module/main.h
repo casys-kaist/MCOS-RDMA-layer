@@ -6,7 +6,7 @@
 
 #define IMM_DATA_SIZE 4 /* bytes */
 
-#define DMA_BUFFER_SIZE		(PAGE_SIZE * 8192 * 8) 
+#define DMA_BUFFER_SIZE		(PAGE_SIZE * 8192 * 16) 
 
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
 #define NR_RDMA_SLOTS	(5000)

@@ -1541,7 +1541,7 @@ static int __rpc_handle_replicate_mem(void *args)
 	__connect_to_server(dest_nid, QP_EVICT, BACKUP_ASYNC);
 
 	nr_pages = 512;
-	window_size = 1024;
+	window_size = 512;
 	for (i = 0; i < (MCOS_BASIC_MEMORY_SIZE * RM_PAGE_SIZE / PAGE_SIZE) / nr_pages; i++) {
 		INIT_LIST_HEAD(&addr_list);
 
@@ -1631,9 +1631,11 @@ static int rpc_handle_writeback_dirty_mem(struct rdma_handle *rh, uint32_t offse
         char *rpc_buffer;
 	uint32_t dest_nid;
 	LIST_HEAD(addr_list);
-	int i, j;
+	int i, j, window_size;
 	struct evict_info *ei;
 	struct list_head *pos, *n;
+	int req_cnt = 0;
+	int ack_cnt = 0;
 
         rhp = (struct rpc_header *) (rh->rpc_buffer + offset);
         rpc_buffer = (rh->rpc_buffer + offset + sizeof(struct rpc_header));
@@ -1644,7 +1646,8 @@ static int rpc_handle_writeback_dirty_mem(struct rdma_handle *rh, uint32_t offse
         nid = rhp->nid;
         op = rhp->op;
 
-	nr_pages = 256;
+	nr_pages = 512;
+	window_size = 512;
 	for (i = 0; i < writeback_dirty_list_size; i += nr_pages) {
 		INIT_LIST_HEAD(&addr_list);
 		j = 0;
@@ -1666,8 +1669,16 @@ static int rpc_handle_writeback_dirty_mem(struct rdma_handle *rh, uint32_t offse
 		}
 
 		list_cut_position(&addr_list, &writeback_dirty_list, &ei->next); 
-		rmm_evict(dest_nid, &addr_list, size);
+		req_cnt++;
+		rmm_evict_async(dest_nid, &addr_list, size, &ack_cnt);
+
+		if ((i / nr_pages) % window_size == 0)
+			while (!(req_cnt == ack_cnt))
+				cpu_relax();
 	}
+
+	while (!(req_cnt == ack_cnt))
+		cpu_relax();
 
         rw = __get_rdma_work(rh, dma_addr, sizeof(struct rpc_header), remote_dma_addr, rh->rpc_rkey);
         if (!rw)
