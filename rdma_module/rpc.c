@@ -1638,9 +1638,7 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
         op = rhp->op;
 
 	nr_pages = 128;
-	printk("evict dirty list size %d dest nid %d\n", evict_dirty_list_size, dest_nid);
 	for (i = 0; i < evict_dirty_list_size; i += nr_pages) {
-		printk("%d %d\n", i, evict_dirty_list_size);
 		INIT_LIST_HEAD(&addr_list);
 		j = 0;
 		ei = NULL;
@@ -1663,7 +1661,6 @@ static int rpc_handle_evict_dirty_mem(struct rdma_handle *rh, uint32_t offset)
 		list_cut_position(&addr_list, &evict_dirty_list, &ei->next); 
 		rmm_evict(dest_nid, &addr_list, size);
 	}
-	printk("!!!!!!!!!!!!!! evict done\n");
 
         rw = __get_rdma_work(rh, dma_addr, sizeof(struct rpc_header), remote_dma_addr, rh->rpc_rkey);
         if (!rw)
@@ -1787,10 +1784,16 @@ static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 	uint32_t dest_nid = *(uint32_t *)(buffer + sizeof(struct rpc_header));
 	struct evict_info *ei;
 	struct list_head *pos, *n;
+	struct timespec start_tv, end_tv;
+	unsigned long elapsed;
 
-	printk("evict dirty start dest_nid %d\n", dest_nid);
+	getnstimeofday(&start_tv);
+
 	rmm_evict_dirty(rh->nid, dest_nid);
-	printk("evict dirty done\n");
+
+	getnstimeofday(&end_tv);
+	elapsed = (end_tv.tv_sec - start_tv.tv_sec);
+	printk(KERN_INFO PFX "evict dirty done total elapsed time %lu (s)\n", elapsed);
 
 	list_for_each_safe(pos, n, &evict_dirty_list) {
 		ei = list_entry(pos, struct evict_info, next);
