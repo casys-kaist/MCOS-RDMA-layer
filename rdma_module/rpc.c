@@ -1809,6 +1809,8 @@ static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 	struct list_head *pos, *n;
 	struct timespec start_tv, end_tv;
 	unsigned long elapsed;
+	
+	ring_buffer_put(rh->rb, buffer);
 
 	getnstimeofday(&start_tv);
 
@@ -1824,7 +1826,6 @@ static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 	}
 	
 	writeback_dirty_list_size = 0;
-	ring_buffer_put(rh->rb, buffer);
 
 	return 0;
 }
