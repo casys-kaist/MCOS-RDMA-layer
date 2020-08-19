@@ -236,7 +236,7 @@ struct rdma_handle {
 
 	/* point to dma_buffer */
 	dma_addr_t rpc_dma_addr;
-	dma_addr_t sink_dma_addr;
+	dma_addr_t direct_dma_addr;
 	dma_addr_t evict_dma_addr;
 
 	struct rdma_work *rdma_work_head;
@@ -248,9 +248,11 @@ struct rdma_handle {
 
 	/* remote */
 	dma_addr_t remote_dma_addr;
+	dma_addr_t remote_direct_dma_addr;
 	dma_addr_t remote_rpc_dma_addr;
 	size_t remote_rpc_size;
 	u32 rpc_rkey;
+	u32 direct_rkey;
 	/*************/
 
 	struct ring_buffer *rb;
@@ -260,6 +262,7 @@ struct rdma_handle {
 	struct ib_cq *cq;
 	struct ib_qp *qp;
 	struct ib_mr *mr;
+	struct ib_mr *direct_mr;
 };
 
 static inline int nid_to_rh(int nid)

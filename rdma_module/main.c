@@ -29,6 +29,7 @@ module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 
 static int server = 0;
+static int init = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
 //	{2, MEM_GID, BACKUP_SYNC},
@@ -288,6 +289,19 @@ static int __handle_recv(struct ib_wc *wc)
 			rh->rpc_rkey = rp->rkey;
 			kfree(rw);
 			DEBUG_LOG(PFX "recv rpc addr %llx %x\n", rh->remote_rpc_dma_addr, rh->rpc_rkey);
+			complete(&rh->init_done);
+			break;
+		case WORK_TYPE_SINK_ADDR:
+			ib_dma_unmap_single(rh->device, rw->dma_addr, 
+					sizeof(struct pool_info), DMA_FROM_DEVICE);
+			if (rh->qp_type == QP_FETCH)
+				rp = sink_pools[rh->nid*2];
+			else 
+				rp = sink_pools[(rh->nid*2)+1];
+			rh->remote_direct_dma_addr = rp->addr;
+			rh->rpc_rkey = rp->rkey;
+			kfree(rw);
+			DEBUG_LOG(PFX "recv remote paddr %llx %x\n", rh->remote_rpc_dma_addr, rh->rpc_rkey);
 			complete(&rh->init_done);
 			break;
 		default:
@@ -566,12 +580,11 @@ out_err:
 	return ret;
 }
 
-/* Alloc dma buffer */
-static  int __setup_dma_buffer(struct rdma_handle *rh)
+static int inline rmm_reg_mr(struct rdma_handle *rh, struct ib_mr *mr, dma_addr_t dma_addr, 
+		unsigned long buffer_size)
 {
-	int ret = 0;
-	dma_addr_t dma_addr = 0;
-	size_t buffer_size = DMA_BUFFER_SIZE;
+	int ret;
+	char *step = NULL;
 	struct ib_reg_wr reg_wr = {
 		.wr = {
 			.opcode = IB_WR_REG_MR,
@@ -583,36 +596,13 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	};
 	const struct ib_send_wr *bad_wr = NULL;
 	struct scatterlist sg = {};
-	struct ib_mr *mr = NULL;
-	char *step = NULL;
-	int rh_id = 0;
-	resource_size_t paddr;
-
-	step = "alloc dma buffer";
-	rh_id = nid_to_rh(rh->nid);
-	if (rh->qp_type == QP_EVICT)
-		rh_id++;
-	DEBUG_LOG(PFX "%s with rh id: %d\n", step, rh_id);
-	if (!rh->dma_buffer) {
-		paddr = (resource_size_t) (((uint8_t *) DMA_BUFFER_START) + (rh_id * buffer_size));
-
-		if (!(rh->dma_buffer = memremap(paddr, buffer_size, MEMREMAP_WB))) {
-			printk(KERN_ERR PFX "memremap error in %s\n", __func__);
-			return -ENOMEM;
-		}
-		//flush_tlb_all();
-		memset(rh->dma_buffer, 0, buffer_size);
-		dma_addr = paddr;
-	}
 
 	step = "alloc mr";
 	DEBUG_LOG(PFX "%s\n", step);
-	if (!rh->mr) {
-		mr = ib_alloc_mr(rdma_pd, IB_MR_TYPE_MEM_REG, 2);
-		if (IS_ERR(mr)) {
-			ret = PTR_ERR(mr);
-			goto out_free;
-		}
+	mr = ib_alloc_mr(rdma_pd, IB_MR_TYPE_MEM_REG, 2);
+	if (IS_ERR(mr)) {
+		ret = PTR_ERR(mr);
+		goto out_free;
 	}
 
 	sg_dma_address(&sg) = dma_addr;
@@ -639,12 +629,60 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 			out_dereg;
 	}
 
+	return 0;
+
+out_dereg:
+	ib_dereg_mr(mr);
+out_free:
+	return -1;
+
+}
+
+/* Alloc dma buffer */
+static  int __setup_dma_buffer(struct rdma_handle *rh)
+{
+	int ret = 0;
+	dma_addr_t dma_addr = 0;
+	size_t buffer_size = DMA_BUFFER_SIZE;
+	char *step = NULL;
+	int rh_id = 0;
+	resource_size_t paddr;
+
+	step = "alloc dma buffer";
+	rh_id = nid_to_rh(rh->nid);
+	if (rh->qp_type == QP_EVICT)
+		rh_id++;
+	DEBUG_LOG(PFX "%s with rh id: %d\n", step, rh_id);
+	if (!rh->dma_buffer) {
+		paddr = (resource_size_t) (((uint8_t *) DMA_BUFFER_START) + (rh_id * buffer_size));
+
+		if (!(rh->dma_buffer = memremap(paddr, buffer_size, MEMREMAP_WB))) {
+			printk(KERN_ERR PFX "memremap error in %s\n", __func__);
+			return -ENOMEM;
+		}
+		//flush_tlb_all();
+		memset(rh->dma_buffer, 0, buffer_size);
+		dma_addr = paddr;
+	}
+
+	rmm_reg_mr(rh, rh->mr, dma_addr, buffer_size);
 	ret = wait_for_completion_interruptible(&rh->init_done);
 	if (ret) 
 		goto out_dereg;
 
+#ifdef CONFIG_RM
+	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY) {
+		rmm_reg_mr(rh, rh->direct_mr, RM_PADDR_START, RM_PADDR_SIZE);
+		ret = wait_for_completion_interruptible(&rh->init_done);
+		if (ret)  {
+			ib_dereg_mr(rh->direct_mr);
+			goto out_dereg;
+		}
+	}
+	rh->direct_dma_addr = RM_PADDR_START;
+#endif
+
 	rh->dma_addr = dma_addr;
-	rh->mr = mr;
 
 	rh->rpc_buffer = rh->dma_buffer;
 	rh->rpc_dma_addr = rh->dma_addr;
@@ -656,7 +694,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 
 	return 0;
 out_dereg:
-	ib_dereg_mr(mr);
+	ib_dereg_mr(rh->mr);
 
 out_free:
 	printk(KERN_ERR PFX "fail at %s\n", step);
@@ -802,6 +840,14 @@ static int __setup_recv_works(struct rdma_handle *rh)
 	ret = __setup_recv_addr(rh, WORK_TYPE_RPC_ADDR);
 	if (ret)
 		return ret;
+
+#ifndef CONFIG_RM
+	if (rh->qp_type == QP_FETCH) {
+		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
+		if (ret)
+			return ret;
+	}
+#endif
 
 	/* pre-post receive work requests-imm */
 	DEBUG_LOG(PFX "post recv for imm\n");
@@ -1048,12 +1094,15 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 		goto out_err;
 
 	step = "send pool addr";
-	DEBUG_LOG(PFX "%s %llx %llx\n", step, rh->rpc_dma_addr, rh->sink_dma_addr);
+	DEBUG_LOG(PFX "%s %llx\n", step, rh->rpc_dma_addr);
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE);
 	if (ret)
 		goto out_err;
 
 	wait_for_completion_interruptible(&rh->init_done);
+#ifndef CONFIG_RM
+	wait_for_completion_interruptible(&rh->init_done);
+#endif
 
 	printk(PFX "Connected to %d\n", nid);
 	return 0;
@@ -1144,6 +1193,11 @@ static int __accept_client(struct rdma_handle *rh)
 	DEBUG_LOG(PFX "%s\n", step);
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE);
 	if (ret)  goto out_err;
+
+	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY) {
+		ret = __send_dma_addr(rh, RM_PADDR_START, RM_PADDR_SIZE);
+		if (ret)  goto out_err;
+	}
 
 	wait_for_completion_interruptible(&rh->init_done);
 

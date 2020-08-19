@@ -59,12 +59,14 @@ static inline int select_fetch_node(int gid)
 }
 #endif
 
-static inline int check_rpc_status(void)
+static inline void check_rpc_status(void)
 {
+	/*
 	if (unlikely(rpc_blocked)) {
 		while (rpc_blocked)
 			cpu_relax();
 	}
+	*/
 }
 
 int mcos_rmm_alloc(int gid, u64 vaddr)
