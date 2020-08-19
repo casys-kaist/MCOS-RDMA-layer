@@ -299,9 +299,9 @@ static int __handle_recv(struct ib_wc *wc)
 			else 
 				rp = sink_pools[(rh->nid*2)+1];
 			rh->remote_direct_dma_addr = rp->addr;
-			rh->rpc_rkey = rp->rkey;
+			rh->direct_rkey = rp->rkey;
 			kfree(rw);
-			DEBUG_LOG(PFX "recv remote paddr %llx %x\n", rh->remote_rpc_dma_addr, rh->rpc_rkey);
+			DEBUG_LOG(PFX "recv remote paddr %llx %x\n", rh->remote_direct_dma_addr, rh->direct_rkey);
 			complete(&rh->init_done);
 			break;
 		default:
@@ -580,10 +580,9 @@ out_err:
 	return ret;
 }
 
-static int inline rmm_reg_mr(struct rdma_handle *rh, struct ib_mr *mr, dma_addr_t dma_addr, 
-		unsigned long buffer_size)
+static struct ib_mr *rmm_reg_mr(struct rdma_handle *rh, dma_addr_t dma_addr, unsigned long buffer_size)
 {
-	int ret;
+	int i, ret;
 	char *step = NULL;
 	struct ib_reg_wr reg_wr = {
 		.wr = {
@@ -595,25 +594,46 @@ static int inline rmm_reg_mr(struct rdma_handle *rh, struct ib_mr *mr, dma_addr_
 			IB_ACCESS_LOCAL_WRITE , 
 	};
 	const struct ib_send_wr *bad_wr = NULL;
-	struct scatterlist sg = {};
+	struct scatterlist *sg;
+	struct ib_mr *mr = NULL;
+	unsigned int dma_len;
+	int nr_entries = 1;
+
+	if (buffer_size > (1UL << 30) * 2) {
+		dma_len = (1UL << 30) * 2;
+		nr_entries = buffer_size / (1UL << 30) * 2;
+	}
+	else {
+		dma_len = buffer_size;
+		nr_entries = 1;
+	}
+
+	sg = kmalloc(sizeof(struct scatterlist) * nr_entries, GFP_KERNEL);
+	if (!sg) {
+		printk(PFX "failed to allocate memory in %s\n", __func__);
+		return -ENOMEM;
+	}
+	sg_init_table(sg, nr_entries);
 
 	step = "alloc mr";
-	DEBUG_LOG(PFX "%s\n", step);
-	mr = ib_alloc_mr(rdma_pd, IB_MR_TYPE_MEM_REG, 2);
+	DEBUG_LOG(PFX "%s,nr_entries %d\n", step, nr_entries);
+	mr = ib_alloc_mr(rdma_pd, IB_MR_TYPE_MEM_REG, nr_entries);
 	if (IS_ERR(mr)) {
 		ret = PTR_ERR(mr);
 		goto out_free;
 	}
 
-	sg_dma_address(&sg) = dma_addr;
-	sg_dma_len(&sg) = buffer_size;
+	for (i = 0; i < nr_entries; i++) {
+		sg_dma_address(&sg[i]) = dma_addr + (dma_len * i);
+		sg_dma_len(&sg[i]) = dma_len;
+	}
 
 	step = "map mr";
 	DEBUG_LOG(PFX "%s\n", step);
-	ret = ib_map_mr_sg(mr, &sg, 1, NULL, buffer_size);
+	ret = ib_map_mr_sg(mr, sg, nr_entries, NULL, dma_len);
 	if (ret != 1) {
 		printk(PFX "Cannot map scatterlist to mr, %d\n", ret);
-		goto out_dereg;
+		//		goto out_dereg;
 	}
 	reg_wr.mr = mr;
 	reg_wr.key = mr->rkey;
@@ -629,12 +649,12 @@ static int inline rmm_reg_mr(struct rdma_handle *rh, struct ib_mr *mr, dma_addr_
 			out_dereg;
 	}
 
-	return 0;
+	return mr;
 
 out_dereg:
 	ib_dereg_mr(mr);
 out_free:
-	return -1;
+	return NULL;
 
 }
 
@@ -665,14 +685,14 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 		dma_addr = paddr;
 	}
 
-	rmm_reg_mr(rh, rh->mr, dma_addr, buffer_size);
+	rh->mr = rmm_reg_mr(rh, dma_addr, buffer_size);
 	ret = wait_for_completion_interruptible(&rh->init_done);
 	if (ret) 
 		goto out_dereg;
 
 #ifdef CONFIG_RM
-	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY) {
-		rmm_reg_mr(rh, rh->direct_mr, RM_PADDR_START, (1UL << 30) * 64);
+	if ((rh->c_type == PRIMARY || rh->c_type == SECONDARY) && rh->qp_type == QP_FETCH) {
+		rh->direct_mr = rmm_reg_mr(rh, RM_PADDR_START, (1UL << 30) * 32);
 		ret = wait_for_completion_interruptible(&rh->init_done);
 		if (ret)  {
 			ib_dereg_mr(rh->direct_mr);
@@ -842,11 +862,9 @@ static int __setup_recv_works(struct rdma_handle *rh)
 		return ret;
 
 #ifndef CONFIG_RM
-	if (rh->qp_type == QP_FETCH) {
 		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
 		if (ret)
 			return ret;
-	}
 #endif
 
 	/* pre-post receive work requests-imm */
@@ -1098,6 +1116,7 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE);
 	if (ret)
 		goto out_err;
+	DEBUG_LOG(PFX "post done\n");
 
 	wait_for_completion_interruptible(&rh->init_done);
 #ifndef CONFIG_RM
@@ -1195,7 +1214,7 @@ static int __accept_client(struct rdma_handle *rh)
 	if (ret)  goto out_err;
 
 	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY) {
-		ret = __send_dma_addr(rh, RM_PADDR_START, (1UL << 30) * 64);
+		ret = __send_dma_addr(rh, RM_PADDR_START, (1UL << 30) * 32);
 		if (ret)  goto out_err;
 	}
 
