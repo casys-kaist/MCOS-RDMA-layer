@@ -672,7 +672,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 
 #ifdef CONFIG_RM
 	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY) {
-		rmm_reg_mr(rh, rh->direct_mr, RM_PADDR_START, RM_PADDR_SIZE);
+		rmm_reg_mr(rh, rh->direct_mr, RM_PADDR_START, (1UL << 30) * 64);
 		ret = wait_for_completion_interruptible(&rh->init_done);
 		if (ret)  {
 			ib_dereg_mr(rh->direct_mr);
@@ -1195,7 +1195,7 @@ static int __accept_client(struct rdma_handle *rh)
 	if (ret)  goto out_err;
 
 	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY) {
-		ret = __send_dma_addr(rh, RM_PADDR_START, RM_PADDR_SIZE);
+		ret = __send_dma_addr(rh, RM_PADDR_START, (1UL << 30) * 64);
 		if (ret)  goto out_err;
 	}
 
@@ -1895,6 +1895,9 @@ int __init init_rmm_rdma(void)
 		if (!rh) 
 			goto out_free;
 		if (!(rpc_pools[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
+			goto out_free;
+
+		if (!(sink_pools[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
 			goto out_free;
 
 		rh->state = RDMA_INIT;

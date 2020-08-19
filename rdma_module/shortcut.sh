@@ -1,6 +1,5 @@
 set -x
 
-sudo ip link set ib0 down
 sudo modprobe -r rdma_rmm || true
 make clean
 make
