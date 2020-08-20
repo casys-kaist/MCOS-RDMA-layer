@@ -879,9 +879,11 @@ static int __setup_recv_works(struct rdma_handle *rh)
 		return ret;
 
 #ifndef CONFIG_RM
-	ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
-	if (ret)
-		return ret;
+	if ((rh->c_type == PRIMARY || rh->c_type == SECONDARY) && rh->qp_type == QP_FETCH) {
+		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
+		if (ret)
+			return ret;
+	}
 #endif
 
 	/* pre-post receive work requests-imm */
@@ -1611,8 +1613,8 @@ static void test_read(int order)
 	}
 
 	for (i = 0; i < 512; i++) {
-		while (flags[i] != RP_FETCHED)
-			cpu_relax;
+		while (!test_bit(RP_FETCHED, &flags[i]))
+			cpu_relax();
 	}
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
