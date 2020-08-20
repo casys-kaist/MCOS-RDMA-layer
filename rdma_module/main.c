@@ -356,7 +356,7 @@ static void handle_read(struct ib_wc *wc)
 	size = rw->sgl.length;
 
 	set_bit(RP_FETCHED, rw->rpage_flags);
-	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_BIDIRECTIONAL);
+	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_FROM_DEVICE);
 
 	rw->wr.wr.opcode = IB_WR_RDMA_WRITE_WITH_IMM;
         __put_rdma_work_nonsleep(rh, rw);
@@ -428,7 +428,6 @@ static int polling_cq(void * args)
 					handle_read(&wc[i]);
 					DEBUG_LOG(PFX "rdma read completion\n");
 					break;
-
 				case IB_WC_RECV:
 					DEBUG_LOG(PFX "recv completion\n");
 					__handle_recv(&wc[i]);
@@ -620,7 +619,7 @@ static struct ib_mr *rmm_reg_mr(struct rdma_handle *rh, dma_addr_t dma_addr, uns
 
 	if (buffer_size > (1UL << 30) * 2) {
 		dma_len = (1UL << 30) * 2;
-		nr_entries = buffer_size / (1UL << 30) * 2;
+		nr_entries = buffer_size / ((1UL << 30) * 2);
 	}
 	else {
 		dma_len = buffer_size;
