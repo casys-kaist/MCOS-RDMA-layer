@@ -12,6 +12,7 @@
 #define NR_RDMA_SLOTS	(5000)
 #define MAX_RECV_DEPTH	(NR_RDMA_SLOTS + 5)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 5)
+#define NR_RESPONDER_RESOURCES 128
 
 #define NR_WORKER_THREAD 1
 
@@ -146,6 +147,7 @@ struct rdma_work {
 	struct rdma_work *next;
 	struct ib_sge sgl;
 	struct ib_rdma_wr wr;
+	unsigned long *rpage_flags;
 };
 
 struct worker_thread {
@@ -255,6 +257,8 @@ struct rdma_handle {
 	u32 direct_rkey;
 	/*************/
 
+	atomic_t pending_reads;
+
 	struct ring_buffer *rb;
 
 	struct rdma_cm_id *cm_id;
@@ -337,6 +341,26 @@ static inline int wait_for_ack_timeout(int *done, u64 ticks)
 	}
 
 	return 0;
+}
+
+static inline void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw)
+{
+#ifdef CONFIG_MCOS_IRQ_LOCK
+	unsigned long flags;
+#endif
+
+#ifdef CONFIG_MCOS_IRQ_LOCK
+	spin_lock_irqsave(&rh->rdma_work_head_lock, flags);
+#else
+	spin_lock(&rh->rdma_work_head_lock);
+#endif
+	rw->next = rh->rdma_work_head;
+	rh->rdma_work_head = rw;
+#ifdef CONFIG_MCOS_IRQ_LOCK
+	spin_unlock_irqrestore(&rh->rdma_work_head_lock, flags);
+#else
+	spin_unlock(&rh->rdma_work_head_lock);
+#endif
 }
 /* prototype of symbol */
 /*

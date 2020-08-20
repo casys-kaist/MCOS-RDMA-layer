@@ -55,7 +55,7 @@ static struct pool_info *sink_pools[NUM_QPS] = { NULL };
 static u64 vaddr_start_arr[MAX_NUM_NODES] = { 0 };
 
 /* Global protection domain (pd) and memory region (mr) */
-static struct ib_pd *rdma_pd = NULL;
+struct ib_pd *rdma_pd = NULL;
 /*Global CQ */
 static struct ib_cq *rdma_cq = NULL;
 
@@ -343,6 +343,26 @@ static int __handle_send(struct ib_wc *wc)
 	return 0;
 }
 
+static void handle_read(struct ib_wc *wc)
+{
+	struct rdma_handle *rh;
+	struct rdma_work *rw;
+	dma_addr_t dma_addr;
+	int size;
+
+	rw = (struct rdma_work *) wc->wr_id;
+	rh = rw->rh;
+	dma_addr = rw->sgl.addr;
+	size = rw->sgl.length;
+
+	set_bit(RP_FETCHED, rw->rpage_flags);
+	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_BIDIRECTIONAL);
+
+	rw->wr.wr.opcode = IB_WR_RDMA_WRITE_WITH_IMM;
+	atomic_dec(&rh->pending_reads);
+        __put_rdma_work_nonsleep(rh, rw);
+}
+
 static void handle_error(struct ib_wc *wc)
 {
 	struct rdma_handle *rh;
@@ -365,7 +385,7 @@ static int polling_cq(void * args)
 	int i;
 
 	int ret = 0;
-	int num_poll = 1;
+	int num_poll = 20;
 
 	DEBUG_LOG(PFX "Polling thread now running\n");
 	wc = kmalloc(sizeof(struct ib_wc) * num_poll, GFP_KERNEL);
@@ -406,8 +426,7 @@ static int polling_cq(void * args)
 					break;
 
 				case IB_WC_RDMA_READ:
-					rh = (struct rdma_handle *) wc[i].wr_id; 
-					complete(&rh->init_done);
+					handle_read(&wc[i]);
 					DEBUG_LOG(PFX "rdma read completion\n");
 					break;
 
@@ -716,7 +735,6 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 out_dereg:
 	ib_dereg_mr(rh->mr);
 
-out_free:
 	printk(KERN_ERR PFX "fail at %s\n", step);
 	return ret;
 }
@@ -778,7 +796,7 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 	return ret;
 
 out_free:
-	ib_dma_unmap_single(rh->device, dma_addr, sizeof(struct pool_info), DMA_FROM_DEVICE);
+	ib_dma_unmap_single(rh->device, dma_addr, sizeof(struct pool_info), DMA_TO_DEVICE);
 	return ret;
 }
 
@@ -862,9 +880,9 @@ static int __setup_recv_works(struct rdma_handle *rh)
 		return ret;
 
 #ifndef CONFIG_RM
-		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
-		if (ret)
-			return ret;
+	ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
+	if (ret)
+		return ret;
 #endif
 
 	/* pre-post receive work requests-imm */
@@ -1189,7 +1207,7 @@ static int __accept_client(struct rdma_handle *rh)
 	step = "accept";
 	DEBUG_LOG(PFX "%s\n", step);
 	rh->state = RDMA_CONNECTING;
-	conn_param.responder_resources = 1;
+	conn_param.responder_resources = NR_RESPONDER_RESOURCES;
 	conn_param.initiator_depth = 1;
 	ret = rdma_accept(rh->cm_id, &conn_param);
 	if (ret)  goto out_err;
@@ -1923,6 +1941,7 @@ int __init init_rmm_rdma(void)
 		rh->vaddr_start = 0;
 
 		spin_lock_init(&rh->rdma_work_head_lock);
+		atomic_set(&rh->pending_reads, 0);
 
 		init_completion(&rh->cm_done);
 		init_completion(&rh->init_done);

@@ -210,6 +210,17 @@ int mcos_rmm_fetch_async(int gid, void *l_vaddr, void * r_vaddr, unsigned int or
 	return rmm_fetch_async(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, rpage_flags);
 }
 
+int mcos_rmm_read(int gid, void *l_vaddr, void * r_vaddr, unsigned int order, unsigned long *rpage_flags)
+{
+	int nid; 
+
+	check_rpc_status();
+
+	nid = select_fetch_node(gid);
+
+	return rmm_read(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, rpage_flags);
+}
+
 // TODO
 int mcos_rmm_prefetch_async(int gid, struct fetch_info *fi_array, int num_page)
 {
@@ -228,7 +239,7 @@ void init_mcos(void)
 	remote_evict = mcos_rmm_evict;
 	remote_alloc = mcos_rmm_alloc;
 	remote_free = mcos_rmm_free;
-	remote_fetch_async = mcos_rmm_fetch_async;
+	remote_fetch_async = mcos_rmm_read;
 	remote_prefetch_async = mcos_rmm_prefetch_async;
 }
 #else
