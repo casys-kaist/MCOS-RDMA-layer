@@ -77,7 +77,7 @@ unsigned long delta[512], delta_delay[512];
 unsigned long accum = 0, accum_delay = 0;
 //int head = 0, head_delay = 0;
 //
-static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size);
+static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size, u32 rkey);
 static int __setup_recv_works(struct rdma_handle *rh);
 static int start_connection(void);
 void clean_rdma_handle(struct rdma_handle *rh);
@@ -911,7 +911,7 @@ static int __setup_recv_works(struct rdma_handle *rh)
 }
 
 /*send dma_addr and rkey */
-static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)
+static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size, u32 rkey)
 {
 	int ret = 0;
 	struct send_work *sw;
@@ -927,7 +927,7 @@ static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size)
 	sw = kmalloc(sizeof(struct send_work), GFP_KERNEL);
 	if (!sw) 
 		return -ENOMEM;
-	rp->rkey = rh->mr->rkey;
+	rp->rkey = rkey;
 	rp->addr = addr;
 	rp->size = size;
 
@@ -1130,7 +1130,7 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 
 	step = "send pool addr";
 	DEBUG_LOG(PFX "%s %llx\n", step, rh->rpc_dma_addr);
-	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE);
+	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE, rh->mr->rkey);
 	if (ret)
 		goto out_err;
 	DEBUG_LOG(PFX "post done\n");
@@ -1227,11 +1227,11 @@ static int __accept_client(struct rdma_handle *rh)
 
 	step = "post send";
 	DEBUG_LOG(PFX "%s\n", step);
-	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE);
+	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE, rh->mr->rkey);
 	if (ret)  goto out_err;
 
 	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY) {
-		ret = __send_dma_addr(rh, RM_PADDR_START, PADDR_SIZE);
+		ret = __send_dma_addr(rh, RM_PADDR_START, PADDR_SIZE, rh->direct_mr->rkey);
 		if (ret)  goto out_err;
 	}
 
