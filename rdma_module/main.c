@@ -401,7 +401,7 @@ static int polling_cq(void * args)
 		for (i = 0; i < ret; i++) {
 			if (wc[i].status) {
 				if (wc[i].status == IB_WC_WR_FLUSH_ERR) {
-					DEBUG_LOG("cq flushed\n");
+				//	DEBUG_LOG("cq flushed\n");
 					continue;
 				} 
 				else {
@@ -711,7 +711,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 
 #ifdef CONFIG_RM
 	if ((rh->c_type == PRIMARY || rh->c_type == SECONDARY) && rh->qp_type == QP_FETCH) {
-		rh->direct_mr = rmm_reg_mr(rh, RM_PADDR_START, (1UL << 30) * 32);
+		rh->direct_mr = rmm_reg_mr(rh, RM_PADDR_START, PADDR_SIZE);
 		ret = wait_for_completion_interruptible(&rh->init_done);
 		if (ret)  {
 			ib_dereg_mr(rh->direct_mr);
@@ -1208,7 +1208,7 @@ static int __accept_client(struct rdma_handle *rh)
 	DEBUG_LOG(PFX "%s\n", step);
 	rh->state = RDMA_CONNECTING;
 	conn_param.responder_resources = NR_RESPONDER_RESOURCES;
-	conn_param.initiator_depth = 1;
+	conn_param.initiator_depth = NR_RESPONDER_RESOURCES;
 	ret = rdma_accept(rh->cm_id, &conn_param);
 	if (ret)  goto out_err;
 
@@ -1232,7 +1232,7 @@ static int __accept_client(struct rdma_handle *rh)
 	if (ret)  goto out_err;
 
 	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY) {
-		ret = __send_dma_addr(rh, RM_PADDR_START, (1UL << 30) * 32);
+		ret = __send_dma_addr(rh, RM_PADDR_START, PADDR_SIZE);
 		if (ret)  goto out_err;
 	}
 

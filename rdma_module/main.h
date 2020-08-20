@@ -12,7 +12,7 @@
 #define NR_RDMA_SLOTS	(5000)
 #define MAX_RECV_DEPTH	(NR_RDMA_SLOTS + 5)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 5)
-#define NR_RESPONDER_RESOURCES 128
+#define NR_RESPONDER_RESOURCES 30
 
 #define NR_WORKER_THREAD 1
 
@@ -39,6 +39,8 @@
 #else 
 #define DMA_BUFFER_START (_AC(1, UL) << 36) /* 64GB */
 #endif
+
+#define PADDR_SIZE ((1UL << 30) * 64)
 
 #define CONFIG_MCOS_RMM_PREFETCH
 
