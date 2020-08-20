@@ -609,7 +609,8 @@ static struct ib_mr *rmm_reg_mr(struct rdma_handle *rh, dma_addr_t dma_addr, uns
 			.wr_id = (u64) rh,
 		},
 		.access = IB_ACCESS_REMOTE_WRITE | 
-			IB_ACCESS_LOCAL_WRITE , 
+			IB_ACCESS_LOCAL_WRITE |
+			IB_ACCESS_REMOTE_READ, 
 	};
 	const struct ib_send_wr *bad_wr = NULL;
 	struct scatterlist *sg;
@@ -1230,7 +1231,7 @@ static int __accept_client(struct rdma_handle *rh)
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE, rh->mr->rkey);
 	if (ret)  goto out_err;
 
-	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY) {
+	if ((rh->c_type == PRIMARY || rh->c_type == SECONDARY) && rh->qp_type == QP_FETCH) {
 		ret = __send_dma_addr(rh, RM_PADDR_START, PADDR_SIZE, rh->direct_mr->rkey);
 		if (ret)  goto out_err;
 	}
@@ -1589,6 +1590,43 @@ out_free:
 	}
 }
 
+static void test_read(int order)
+{
+	int i;
+	int num_page, size;
+	struct timespec start_tv, end_tv;
+	unsigned long elapsed;
+	unsigned long *flags;
+
+	num_page = (1 << order);
+	size = PAGE_SIZE * num_page;
+
+	flags = kmalloc(sizeof(unsigned long) * 512, GFP_KERNEL);
+	memset(flags, 0, sizeof(unsigned long) * 512);
+
+	elapsed = 0;
+	DEBUG_LOG(PFX "read start\n");
+	getnstimeofday(&start_tv);
+	for (i = 0; i < 512; i++) {
+		rmm_read(0, my_data[0] + (i * size), (void *) (i * size), order, &flags[i]);
+	}
+
+	for (i = 0; i < 512; i++) {
+		while (flags[i] != RP_FETCHED)
+			cpu_relax;
+	}
+	getnstimeofday(&end_tv);
+	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+		(end_tv.tv_nsec - start_tv.tv_nsec);
+
+	printk(KERN_INFO PFX "total elapsed time %lu (ns)\n", elapsed);
+	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 512);
+	//	printk(KERN_INFO PFX "average elapsed time for preparing fetch %lu (ns)\n", 
+	//			elapsed_fetch / 512);
+
+	kfree(flags);
+}
+
 static void test_fetch(int order)
 {
 	int i;
@@ -1740,6 +1778,8 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		;
 	else if (strcmp("tf", cmd) == 0)
 		test_fetch(order);
+	else if (strcmp("tr", cmd) == 0)
+		test_read(order);
 	else if (strcmp("te", cmd) == 0)
 		test_evict();
 	else if (strcmp("tt", cmd) == 0) {

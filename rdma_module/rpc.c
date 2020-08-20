@@ -164,6 +164,8 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 		goto out_free;
 	}
 
+	return 0;
+
 out_free:
 	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_BIDIRECTIONAL);
 	return -ENOMEM;
