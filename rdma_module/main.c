@@ -355,8 +355,8 @@ static void handle_read(struct ib_wc *wc)
 	dma_addr = rw->sgl.addr;
 	size = rw->sgl.length;
 
-	set_bit(RP_FETCHED, rw->rpage_flags);
 	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_FROM_DEVICE);
+	set_bit(RP_FETCHED, rw->rpage_flags);
 
 	rw->wr.wr.opcode = IB_WR_RDMA_WRITE_WITH_IMM;
         __put_rdma_work_nonsleep(rh, rw);
