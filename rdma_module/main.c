@@ -359,7 +359,6 @@ static void handle_read(struct ib_wc *wc)
 	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_BIDIRECTIONAL);
 
 	rw->wr.wr.opcode = IB_WR_RDMA_WRITE_WITH_IMM;
-	atomic_dec(&rh->pending_reads);
         __put_rdma_work_nonsleep(rh, rw);
 }
 
@@ -650,7 +649,7 @@ static struct ib_mr *rmm_reg_mr(struct rdma_handle *rh, dma_addr_t dma_addr, uns
 	step = "map mr";
 	DEBUG_LOG(PFX "%s\n", step);
 	ret = ib_map_mr_sg(mr, sg, nr_entries, NULL, dma_len);
-	if (ret != 1) {
+	if (ret != nr_entries) {
 		printk(PFX "Cannot map scatterlist to mr, %d\n", ret);
 		//		goto out_dereg;
 	}
@@ -1104,8 +1103,8 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 		struct rdma_conn_param conn_param = {
 			.private_data = &private_data,
 			.private_data_len = sizeof(private_data),
-			.responder_resources = 1,
-			.initiator_depth = 1,
+			.responder_resources = NR_RESPONDER_RESOURCES,
+			.initiator_depth = NR_RESPONDER_RESOURCES,
 		};
 
 		rh->state = RDMA_CONNECTING;

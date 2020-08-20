@@ -134,9 +134,11 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 
 	rh = rdma_handles[index];
 
+	/*
 	while (atomic_read(&rh->pending_reads) == NR_RESPONDER_RESOURCES)
 		;
 	atomic_inc(&rh->pending_reads);
+	*/
 
 	dma_addr = ib_dma_map_single(rh->device, l_vaddr, size, DMA_BIDIRECTIONAL);
 	ret = ib_dma_mapping_error(rh->device, dma_addr);
@@ -144,7 +146,7 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 		return ret;
 
 	remote_dma_addr = (dma_addr_t) r_vaddr + rh->remote_direct_dma_addr;
-	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->rpc_rkey);
+	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->direct_rkey);
 	if (!rw) {
 		goto out_free;
 	}
