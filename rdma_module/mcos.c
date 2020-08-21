@@ -214,8 +214,6 @@ int mcos_rmm_read(int gid, void *l_vaddr, void * r_vaddr, unsigned int order, un
 {
 	int nid; 
 
-	check_rpc_status();
-
 	nid = select_fetch_node(gid);
 
 	return rmm_read(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, rpage_flags);
@@ -225,8 +223,6 @@ int mcos_rmm_read_sync(int gid, void *l_vaddr, void * r_vaddr, unsigned int orde
 {
 	int ret, nid; 
 	unsigned long rpage_flags = 0;
-
-	check_rpc_status();
 
 	nid = select_fetch_node(gid);
 retry:
@@ -247,11 +243,11 @@ int mcos_rmm_write_sync(int gid, struct list_head *evict_list, int num_page)
 	int i, ret;
 	unsigned long *rpage_flags;
 
-	check_rpc_status();
-
 	rpage_flags = kzalloc(sizeof(unsigned long) * num_page, GFP_ATOMIC);
-	if (rpage_flags)
+	if (!rpage_flags) {
+		printk(PFX "fail to alloc in %s\n", __func__);
 		return -ENOMEM;
+	}
 
 retry:
 	ret = 0;
@@ -272,6 +268,7 @@ retry:
 			cpu_relax();
 	}
 
+	kfree(rpage_flags);
 	return ret;
 }
 
