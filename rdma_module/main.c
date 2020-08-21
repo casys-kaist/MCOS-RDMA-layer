@@ -1658,6 +1658,7 @@ int __init init_rmm_rdma(void)
 	/* allocate memory for cpu servers */
 	for (i = 0; i < MAX_NUM_NODES; i++)
 		vaddr_start_arr[i] = rm_machine_init();
+	basic_memory_init(0);
 #endif /*end for CONFIG_RM */
 
 

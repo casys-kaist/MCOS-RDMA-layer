@@ -249,7 +249,7 @@ int mcos_rmm_write_sync(int gid, struct list_head *evict_list, int num_page)
 
 	check_rpc_status();
 
-	rpage_flags = kmalloc(sizeof(unsigned long) * num_page, GFP_ATOMIC);
+	rpage_flags = kzalloc(sizeof(unsigned long) * num_page, GFP_ATOMIC);
 	if (rpage_flags)
 		return -ENOMEM;
 
