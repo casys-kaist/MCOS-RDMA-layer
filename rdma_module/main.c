@@ -1530,6 +1530,8 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		test_read(order);
 	else if (strcmp("te", cmd) == 0)
 		test_evict();
+	else if (strcmp("tw", cmd) == 0)
+		test_write();
 	else if (strcmp("tt", cmd) == 0) {
 		if (num <= MAX_NUM_NODES)
 			test_throughput(num++, order);

@@ -300,12 +300,13 @@ void test_read(int order)
 	DEBUG_LOG(PFX "read start\n");
 	getnstimeofday(&start_tv);
 	for (i = 0; i < 512; i++) {
-		rmm_read(0, my_data[0] + (i * size), (void *) (i * size), order, &flags[i]);
+		rmm_read(1, my_data[1] + (i * size), (void *) (i * size), order, &flags[i]);
 	}
 
 	for (i = 0; i < 512; i++) {
 		while (!test_bit(RP_FETCHED, &flags[i]))
 			cpu_relax();
+		DEBUG_LOG(PFX "fetched data %s\n", my_data[1] + (i * size));
 	}
 	getnstimeofday(&end_tv);
 	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
@@ -313,8 +314,48 @@ void test_read(int order)
 
 	printk(KERN_INFO PFX "total elapsed time %lu (ns)\n", elapsed);
 	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 512);
-	//	printk(KERN_INFO PFX "average elapsed time for preparing fetch %lu (ns)\n", 
-	//			elapsed_fetch / 512);
 
 	kfree(flags);
+}
+
+int test_write(void)
+{
+	int i, num;
+	struct timespec start_tv, end_tv;
+	unsigned long elapsed, total;
+	unsigned long *rpage_flags;
+
+	num = 1024;
+	rpage_flags = kzalloc(sizeof(unsigned long) * num, GFP_KERNEL);
+	if (!rpage_flags) {
+		printk(PFX "fail to alloc in %s\n", __func__);
+		return -ENOMEM;
+	}
+
+	elapsed = 0;
+	total = 0;
+	printk(PFX "evict start\n");
+	for (i = 0; i < 1024; i++) {
+		sprintf(my_data[0] + (i * PAGE_SIZE), "This is %d", i);
+
+	}
+
+	getnstimeofday(&start_tv);
+	for (i = 0; i < num; i++) {
+		rmm_write(1, my_data[0] + (i * PAGE_SIZE), (void *) (i * PAGE_SIZE), &rpage_flags[i]);
+
+	}
+	getnstimeofday(&end_tv);
+	elapsed += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+			(end_tv.tv_nsec - start_tv.tv_nsec);
+
+	for (i = 0; i < num; i++) {
+		while (!test_bit(RP_EVICTED, &rpage_flags[i]))
+			cpu_relax();
+	}
+
+	printk(KERN_INFO PFX "average elapsed time(evict) %lu (ns)\n", elapsed / num);
+
+
+	return 0;
 }

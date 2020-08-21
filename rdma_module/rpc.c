@@ -37,7 +37,7 @@ extern spinlock_t cinfos_lock;
 
 #define TABLE_SIZE 262144 * 2
 DEFINE_SPINLOCK(on_evicting_lock);
-bool on_evicting[262144];
+bool on_evicting[TABLE_SIZE];
 
 static inline void set_evicting(u64 addr)
 {
@@ -219,6 +219,7 @@ int rmm_write(int nid, void *laddr, void *raddr, unsigned long *rpage_flags)
 	ret = ib_dma_mapping_error(rh->device, dma_addr);
 	if (ret) 
 		return ret;
+	ib_dma_sync_single_for_device(rh->device, dma_addr, size, DMA_TO_DEVICE);
 
 	set_evicting((u64) raddr);
 	remote_dma_addr = (dma_addr_t) raddr + rh->remote_mem_dma_addr;
