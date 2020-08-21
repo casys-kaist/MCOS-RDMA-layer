@@ -119,54 +119,6 @@ static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
 	spin_unlock(&rh->rdma_work_head_lock);
 }
 */
-int rmm_read_sync(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
-{
-	struct rdma_work *rw;
-	struct rdma_handle *rh;	
-	const struct ib_send_wr *bad_wr = NULL;
-	int index = nid_to_rh(nid);
-	int size = (1 << order) * PAGE_SIZE;
-	dma_addr_t dma_addr, remote_dma_addr;
-	int ret;
-	unsigned long rpage_flags = 0;
-
-	rh = rdma_handles[index];
-
-	dma_addr = ib_dma_map_single(rh->device, l_vaddr, size, DMA_FROM_DEVICE);
-	ret = ib_dma_mapping_error(rh->device, dma_addr);
-	if (ret) 
-		return ret;
-
-	remote_dma_addr = (dma_addr_t) r_vaddr + rh->remote_mem_dma_addr;
-	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->mem_rkey);
-	if (!rw) {
-		ret = -ENOMEM;
-		goto out_free;
-	}
-
-	rw->wr.wr.opcode = IB_WR_RDMA_READ;
-	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
-	rw->rh = rh;
-	rw->rpage_flags = &rpage_flags;
-
-	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
-	if (ret || bad_wr) {
-		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
-		if (bad_wr)
-			ret = -EINVAL;
-		goto out_free;
-	}
-
-	while (!test_bit(RP_FETCHED, &rpage_flags))
-		cpu_relax();
-
-	return 0;
-
-out_free:
-	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_FROM_DEVICE);
-	return ret;
-
-}
 
 
 int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
@@ -187,8 +139,8 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 	if (ret) 
 		return ret;
 
-	remote_dma_addr = (dma_addr_t) r_vaddr + rh->remote_direct_dma_addr;
-	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->direct_rkey);
+	remote_dma_addr = (dma_addr_t) r_vaddr + rh->remote_mem_dma_addr;
+	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->mem_rkey);
 	if (!rw) {
 		ret = -ENOMEM;
 		goto out_free;
@@ -204,16 +156,65 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
-		goto out_free;
+		goto out_free_rw;
 	}
 
 	return 0;
 
+out_free_rw:
+		__put_rdma_work_nonsleep(rh, rw);
 out_free:
 	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_FROM_DEVICE);
 	return ret;
 
 }
+
+int rmm_write(int nid, void *laddr, void *raddr, unsigned long *rpage_flags)
+{
+	struct rdma_handle *rh;
+	dma_addr_t dma_addr, remote_dma_addr;
+	struct rdma_work *rw;
+	const struct ib_send_wr *bad_wr = NULL;
+	int index = nid_to_rh(nid);
+	int ret = 0;
+	int size = PAGE_SIZE;
+
+	rh = rdma_handles[index+1];
+
+	dma_addr = ib_dma_map_single(rh->device, laddr, size, DMA_TO_DEVICE);
+	ret = ib_dma_mapping_error(rh->device, dma_addr);
+	if (ret) 
+		return ret;
+
+	remote_dma_addr = (dma_addr_t) raddr + rh->remote_mem_dma_addr;
+	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->mem_rkey);
+	if (!rw) {
+		ret = -ENOMEM;
+		goto out_unmap_dma;
+	}
+
+	rw->wr.wr.opcode = IB_WR_RDMA_WRITE;
+	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
+	rw->rh = rh;
+	rw->rpage_flags = rpage_flags;
+
+	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
+	if (ret || bad_wr) {
+		printk(KERN_ERR PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
+		if (bad_wr)
+			ret = -EINVAL;
+		goto out_free_rw;
+	}
+
+	return 0;
+
+out_free_rw:
+	__put_rdma_work_nonsleep(rh, rw);
+out_unmap_dma:
+	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_TO_DEVICE);
+	return ret;
+}
+
 
 int rmm_alloc(int nid, u64 vaddr)
 {
@@ -1334,7 +1335,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 		dest =  *((uint64_t *) (page_pointer));
 		memcpy((void *) dest, page_pointer + 8, PAGE_SIZE);
 		page_pointer += (8 + PAGE_SIZE);
-	//	clflush_cache_range((void *) dest, PAGE_SIZE);
+		//	clflush_cache_range((void *) dest, PAGE_SIZE);
 
 	}
 

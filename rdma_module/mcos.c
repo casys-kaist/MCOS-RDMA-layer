@@ -223,13 +223,56 @@ int mcos_rmm_read(int gid, void *l_vaddr, void * r_vaddr, unsigned int order, un
 
 int mcos_rmm_read_sync(int gid, void *l_vaddr, void * r_vaddr, unsigned int order)
 {
-	int nid; 
+	int ret, nid; 
+	unsigned long rpage_flags = 0;
 
 	check_rpc_status();
 
 	nid = select_fetch_node(gid);
+retry:
+	ret = rmm_read(nid, l_vaddr, r_vaddr - FAKE_PA_START, order, &rpage_flags);
+	if (ret < 0)
+		goto retry;
 
-	return rmm_read_sync(nid, l_vaddr, r_vaddr - FAKE_PA_START, order);
+	while (!test_bit(RP_FETCHED, &rpage_flags))
+		cpu_relax();
+
+	return 0;
+}
+
+int mcos_rmm_write_sync(int gid, struct list_head *evict_list, int num_page)
+{
+	struct list_head *l;
+	struct node_info *infos;
+	int i, ret;
+	unsigned long *rpage_flags;
+
+	check_rpc_status();
+
+	rpage_flags = kmalloc(sizeof(unsigned long) * num_page, GFP_ATOMIC);
+	if (rpage_flags)
+		return -ENOMEM;
+
+retry:
+	ret = 0;
+	i = 0;
+	infos = get_node_infos(gid, PRIMARY);
+
+	list_for_each(l, evict_list) {
+		struct evict_info *e = list_entry(l, struct evict_info, next);
+		e->r_vaddr -= FAKE_PA_START;
+		ret = rmm_write(infos->nids[0], (void *) e->l_vaddr, (void *) e->r_vaddr, &rpage_flags[i]);
+		if (ret < 0)
+			goto retry;
+		i++;
+	}
+	
+	for (i = 0; i < num_page; i++) {
+		while (!test_bit(RP_EVICTED, &rpage_flags[i]))
+			cpu_relax();
+	}
+
+	return ret;
 }
 
 // TODO
@@ -247,7 +290,7 @@ int mcos_rmm_prefetch_async(int gid, struct fetch_info *fi_array, int num_page)
 void init_mcos(void)
 {
 	remote_fetch = mcos_rmm_read_sync;
-	remote_evict = mcos_rmm_evict;
+	remote_evict = mcos_rmm_write_sync;
 	remote_alloc = mcos_rmm_alloc;
 	remote_free = mcos_rmm_free;
 	remote_fetch_async = mcos_rmm_read;

@@ -28,7 +28,6 @@ int my_nid = 0;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 
-static int server = 0;
 //static int init = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
@@ -357,6 +356,25 @@ static void handle_read(struct ib_wc *wc)
 
 	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_FROM_DEVICE);
 	set_bit(RP_FETCHED, rw->rpage_flags);
+
+	rw->wr.wr.opcode = IB_WR_RDMA_WRITE_WITH_IMM;
+        __put_rdma_work_nonsleep(rh, rw);
+}
+
+static void handle_write(struct ib_wc *wc)
+{
+	struct rdma_handle *rh;
+	struct rdma_work *rw;
+	dma_addr_t dma_addr;
+	int size;
+
+	rw = (struct rdma_work *) wc->wr_id;
+	rh = rw->rh;
+	dma_addr = rw->sgl.addr;
+	size = rw->sgl.length;
+
+	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_TO_DEVICE);
+	set_bit(RP_EVICTED, rw->rpage_flags);
 
 	rw->wr.wr.opcode = IB_WR_RDMA_WRITE_WITH_IMM;
         __put_rdma_work_nonsleep(rh, rw);
@@ -1221,8 +1239,7 @@ static int __accept_client(struct rdma_handle *rh)
 		rh->mem_mr = rmm_reg_mr(rh, RM_PADDR_START, PADDR_SIZE);
 		ret = wait_for_completion_interruptible(&rh->init_done);
 		if (ret)  {
-			ib_dereg_mr(rh->mem_mr);
-			goto out_dereg;
+			goto out_err;
 		}
 	}
 	rh->mem_dma_addr = RM_PADDR_START;
@@ -1624,7 +1641,6 @@ int __init init_rmm_rdma(void)
 	//	unsigned long flags;
 
 #ifdef CONFIG_RM
-	server = 1;
 	/* allocate memory for cpu servers */
 	for (i = 0; i < MAX_NUM_NODES; i++)
 		vaddr_start_arr[i] = rm_machine_init();
