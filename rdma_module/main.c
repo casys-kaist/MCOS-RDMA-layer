@@ -1208,6 +1208,12 @@ static int __accept_client(struct rdma_handle *rh)
 	ret = __setup_recv_works(rh);
 	if (ret)  goto out_err;
 
+	if (connect_as_rmem(rh->c_type)) {
+		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
+		if (ret)
+			goto out_err;
+	}
+
 	step = "setup rdma works";
 	DEBUG_LOG(PFX "%s\n", step);
 	ret = __setup_work_request_pools(rh);
