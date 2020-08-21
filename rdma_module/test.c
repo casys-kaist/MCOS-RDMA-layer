@@ -367,10 +367,10 @@ int test_write_read(void)
 	char test_string[] = "qqwweerrttyy";
 	unsigned long rpage_flags;
 
+	sprintf(my_data[0], test_string);
 	for (i = 0; i < PADDR_SIZE / PAGE_SIZE; i++) {
-		sprintf(my_data[0], test_string);
 		dest = ((u64) i) * PAGE_SIZE;
-		printk(PFX "dest: %llX\n" dest);
+		printk(PFX "dest: %llX\n", dest);
 
 		rpage_flags = 0;
 		rmm_write(1, my_data[0], (void *) dest, &rpage_flags);
@@ -378,12 +378,15 @@ int test_write_read(void)
 			cpu_relax();
 
 		rpage_flags = 0;
+		sprintf(my_data[1], "aassddffgghh");
 		rmm_read(1, my_data[1], (void *) dest, 0, &rpage_flags);
 		while (!test_bit(RP_FETCHED, &rpage_flags))
 			cpu_relax();
 
-		if (memcmp(my_data[0], my_data[1], PAGE_SIZE))
+		if (memcmp(my_data[0], my_data[1], PAGE_SIZE)) {
 			printk(PFX "data miss match\n");
+			return -1;
+		}
 
 		rmm_yield_cpu();
 	}
