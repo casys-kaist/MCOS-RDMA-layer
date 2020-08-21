@@ -137,8 +137,8 @@ int rmm_read_sync(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	if (ret) 
 		return ret;
 
-	remote_dma_addr = (dma_addr_t) r_vaddr + rh->remote_direct_dma_addr;
-	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->direct_rkey);
+	remote_dma_addr = (dma_addr_t) r_vaddr + rh->remote_mem_dma_addr;
+	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->mem_rkey);
 	if (!rw) {
 		ret = -ENOMEM;
 		goto out_free;

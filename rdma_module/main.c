@@ -1,6 +1,5 @@
 #include <linux/module.h>
 #include <linux/delay.h>
-#include <linux/bitmap.h>
 #include <linux/seq_file.h>
 #include <linux/atomic.h>
 #include <linux/proc_fs.h>
@@ -20,6 +19,7 @@
 #include "main.h"
 #include "mcos.h"
 #include "rpc.h"
+#include "test.h"
 
 #define NUM_QPS (MAX_NUM_NODES * 2)
 
@@ -32,7 +32,6 @@ static int server = 0;
 //static int init = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
-//	{2, MEM_GID, BACKUP_SYNC},
 	{-1, -1, -1}, /* end */
 };
 
@@ -50,7 +49,7 @@ static atomic_t HEAD = ATOMIC_INIT(0);
 static struct rdma_handle server_rh;
 struct rdma_handle *rdma_handles[NUM_QPS] = { NULL };
 static struct pool_info *rpc_pools[NUM_QPS] = { NULL };
-static struct pool_info *sink_pools[NUM_QPS] = { NULL };
+static struct pool_info *mem_pools[NUM_QPS] = { NULL };
 
 static u64 vaddr_start_arr[MAX_NUM_NODES] = { 0 };
 
@@ -64,14 +63,11 @@ static struct task_struct *polling_k = NULL;
 /*proc file for control */
 static struct proc_dir_entry *rmm_proc;
 
-/*Variables for server */
 static uint32_t my_ip;
 
 /* RPC hadnler table */
 Rpc_handler rpc_table[NUM_RPC];
 
-/*buffer for test */
-char *my_data[MAX_NUM_NODES] = { NULL };
 
 unsigned long delta[512], delta_delay[512];
 unsigned long accum = 0, accum_delay = 0;
@@ -82,6 +78,13 @@ static int __setup_recv_works(struct rdma_handle *rh);
 static int start_connection(void);
 void clean_rdma_handle(struct rdma_handle *rh);
 
+static inline bool connect_as_rmem(enum connection_type ctype)
+{
+	if (ctype == PRIMARY || ctype == SECONDARY)
+		return true;
+	else
+		return false;
+}
 
 static inline unsigned long long get_ns(void)
 {
@@ -90,10 +93,6 @@ static inline unsigned long long get_ns(void)
 	return sched_clock();
 }
 
-static inline void rmm_yield_cpu(void)
-{
-	cond_resched();
-}
 
 static inline struct worker_thread *get_worker_thread(void)
 {
@@ -296,13 +295,13 @@ static int __handle_recv(struct ib_wc *wc)
 			ib_dma_unmap_single(rh->device, rw->dma_addr, 
 					sizeof(struct pool_info), DMA_FROM_DEVICE);
 			if (rh->qp_type == QP_FETCH)
-				rp = sink_pools[rh->nid*2];
+				rp = mem_pools[rh->nid*2];
 			else 
-				rp = sink_pools[(rh->nid*2)+1];
-			rh->remote_direct_dma_addr = rp->addr;
-			rh->direct_rkey = rp->rkey;
+				rp = mem_pools[(rh->nid*2)+1];
+			rh->remote_mem_dma_addr = rp->addr;
+			rh->mem_rkey = rp->rkey;
 			kfree(rw);
-			DEBUG_LOG(PFX "recv remote paddr %llx %x\n", rh->remote_direct_dma_addr, rh->direct_rkey);
+			DEBUG_LOG(PFX "recv remote paddr %llx %x\n", rh->remote_mem_dma_addr, rh->mem_rkey);
 			complete(&rh->init_done);
 			break;
 		default:
@@ -708,17 +707,6 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	if (ret) 
 		goto out_dereg;
 
-#ifdef CONFIG_RM
-	if ((rh->c_type == PRIMARY || rh->c_type == SECONDARY) && rh->qp_type == QP_FETCH) {
-		rh->direct_mr = rmm_reg_mr(rh, RM_PADDR_START, PADDR_SIZE);
-		ret = wait_for_completion_interruptible(&rh->init_done);
-		if (ret)  {
-			ib_dereg_mr(rh->direct_mr);
-			goto out_dereg;
-		}
-	}
-	rh->direct_dma_addr = RM_PADDR_START;
-#endif
 
 	rh->dma_addr = dma_addr;
 
@@ -758,9 +746,9 @@ static int __setup_recv_addr(struct rdma_handle *rh, enum wr_type work_type)
 	}
 	else {
 		if (rh->qp_type == QP_FETCH)
-			pp = sink_pools[index];
+			pp = mem_pools[index];
 		else 
-			pp = sink_pools[index+1];
+			pp = mem_pools[index+1];
 	}
 
 	rw = kmalloc(sizeof(struct recv_work_addr), GFP_KERNEL);
@@ -878,13 +866,6 @@ static int __setup_recv_works(struct rdma_handle *rh)
 	if (ret)
 		return ret;
 
-#ifndef CONFIG_RM
-	if ((rh->c_type == PRIMARY || rh->c_type == SECONDARY) && rh->qp_type == QP_FETCH) {
-		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
-		if (ret)
-			return ret;
-	}
-#endif
 
 	/* pre-post receive work requests-imm */
 	DEBUG_LOG(PFX "post recv for imm\n");
@@ -1091,6 +1072,12 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 	if (ret) 
 		goto out_err;
 
+	if (connect_as_rmem(rh->c_type)) {
+		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
+		if (ret)
+			goto out_err;
+	}
+
 	step = "setup work reqeusts";
 	ret = __setup_work_request_pools(rh);
 	if (ret == 0)
@@ -1138,9 +1125,11 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 	DEBUG_LOG(PFX "post done\n");
 
 	wait_for_completion_interruptible(&rh->init_done);
-#ifndef CONFIG_RM
-	wait_for_completion_interruptible(&rh->init_done);
-#endif
+
+	/* waiting for rmem address */
+	if (connect_as_rmem(rh->c_type)) {
+		wait_for_completion_interruptible(&rh->init_done);
+	}
 
 	printk(PFX "Connected to %d\n", nid);
 	return 0;
@@ -1222,18 +1211,29 @@ static int __accept_client(struct rdma_handle *rh)
 		rh->vaddr_start = vaddr_start_arr[rh->nid];
 	if (rh->vaddr_start < 0) goto out_err;
 
+
 	step = "setup dma buffer";
 	DEBUG_LOG(PFX "%s\n", step);
 	ret = __setup_dma_buffer(rh);
 	if (ret) goto out_err;
+
+	if (connect_as_rmem(rh->c_type)) {
+		rh->mem_mr = rmm_reg_mr(rh, RM_PADDR_START, PADDR_SIZE);
+		ret = wait_for_completion_interruptible(&rh->init_done);
+		if (ret)  {
+			ib_dereg_mr(rh->mem_mr);
+			goto out_dereg;
+		}
+	}
+	rh->mem_dma_addr = RM_PADDR_START;
 
 	step = "post send";
 	DEBUG_LOG(PFX "%s\n", step);
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE, rh->mr->rkey);
 	if (ret)  goto out_err;
 
-	if ((rh->c_type == PRIMARY || rh->c_type == SECONDARY) && rh->qp_type == QP_FETCH) {
-		ret = __send_dma_addr(rh, RM_PADDR_START, PADDR_SIZE, rh->direct_mr->rkey);
+	if (connect_as_rmem(rh->c_type)) {
+		ret = __send_dma_addr(rh, RM_PADDR_START, PADDR_SIZE, rh->mem_mr->rkey);
 		if (ret)  goto out_err;
 	}
 
@@ -1291,8 +1291,10 @@ static int __on_client_connecting(struct rdma_cm_id *cm_id, struct rdma_cm_event
 
 	complete(&rh->cm_done);
 
-	if (qp_type == QP_FETCH)
-		basic_memory_init(nid);
+	/*
+	   if (qp_type == QP_FETCH)
+	   basic_memory_init(nid);
+	   */
 
 	accept_k = kthread_create(accept_client, rh, "accept thread");
 	if (!accept_k)
@@ -1439,7 +1441,7 @@ void __exit exit_rmm_rdma(void)
 		clean_rdma_handle(rh);
 		kfree(rdma_handles[i]);
 		kfree(rpc_pools[i]);
-		kfree(sink_pools[i]);
+		kfree(mem_pools[i]);
 	}
 
 	if (rdma_cq && !IS_ERR(rdma_cq)) ib_destroy_cq(rdma_cq);
@@ -1453,296 +1455,6 @@ void __exit exit_rmm_rdma(void)
 	return;
 }
 
-
-static atomic_t num_done = ATOMIC_INIT(0);
-
-struct worker_info {
-	int nid;
-	int test_size;
-	int order;
-	int num_op;
-	uint16_t *random_index1;
-	uint16_t *random_index2;
-	struct completion *done;
-};
-
-static int dummy_thread(void *args)
-{
-	int i;
-	int nid = (int) args;
-
-
-	i = 0;
-	while (1)  {
-		if (kthread_should_stop())
-			return 0;
-		rmm_fetch(nid, my_data[nid] + (i * (PAGE_SIZE)), (void *) (i * (PAGE_SIZE)), 0);
-		i = (i + 1) % 1024;
-		rmm_yield_cpu();
-	}
-
-	return 0;
-}
-
-static int tt_worker(void *args)
-{
-	int i;
-	struct worker_info *wi;
-	int nid;
-	int num_op;
-	uint16_t *random_index1, *random_index2;
-	int num_page;
-
-	wi = (struct worker_info *) args;
-	nid = wi->nid;
-	num_op = wi->num_op;
-	random_index1 = wi->random_index1;
-	random_index2 = wi->random_index2;
-	num_page = 1 << wi->order;
-
-	for (i = 0; i < num_op; i++) {
-		//rmm_fetch(nid, my_data[nid] + (random_index1[i] * (PAGE_SIZE * num_page)), (void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order);
-		rmm_fetch(nid % 4, my_data[nid] + (random_index1[i] * (PAGE_SIZE * num_page)), 
-				(void *) (random_index2[i] * (PAGE_SIZE * num_page)), wi->order);
-	}
-
-	if (atomic_inc_return(&num_done) == wi->test_size) {
-		complete(wi->done);
-	}
-
-	return 0;
-}
-
-static uint64_t elapsed_th[MAX_NUM_NODES];
-
-
-static void test_throughput(int test_size, int order)
-{
-	int i, j;
-	int num_op = 1000000;
-	struct completion job_done;
-	struct task_struct *t_arr[16];
-	uint16_t index;
-	uint16_t *random_index1[16], *random_index2[16];
-	struct worker_info wi[16];
-	struct timespec start_tv, end_tv;
-	uint64_t elapsed;
-	int num_page;
-
-	printk(KERN_INFO PFX "tt start %d\n", test_size);
-
-	init_completion(&job_done);
-	atomic_set(&num_done, 0);
-	for (i = 0; i < test_size; i++) {
-		random_index1[i] = kmalloc(num_op * sizeof(uint16_t), GFP_KERNEL);
-		if (!random_index1[i])
-			goto out_free;
-
-		random_index2[i] = kmalloc(num_op * sizeof(uint16_t), GFP_KERNEL);
-		if (!random_index2[i])
-			goto out_free;
-	}
-
-	num_page = 1 << order;
-	if (order >= 9)
-		num_op = 5000;
-
-	for (i = 0; i < test_size; i++)
-		for (j = 0; j < num_op; j++) {
-			get_random_bytes(&index, sizeof(index));
-			random_index1[i][j] = index % (1024 / num_page);
-			random_index2[i][j] = index % ((1 << 18) / num_page);
-		}
-
-	for (i = 0; i < test_size; i++) {
-		wi[i].nid = i;
-		wi[i].random_index1 = random_index1[i];
-		wi[i].random_index2 = random_index2[i];
-		wi[i].order = order;
-		wi[i].num_op = num_op;
-		wi[i].done = &job_done;
-		wi[i].test_size = test_size;
-	}
-
-	getnstimeofday(&start_tv);
-	for (i = 0; i < test_size; i++) {
-		t_arr[i] = kthread_run(tt_worker, &wi[i], "woker: %d", i);
-	}
-
-	wait_for_completion_interruptible(&job_done);
-
-	getnstimeofday(&end_tv);
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-	elapsed_th[test_size-1] = elapsed;
-
-	//	printk(KERN_INFO PFX "num op: %d, test size: %d, elapsed(ns) %llu\n", (num_op * test_size), test_size, elapsed);
-	if (test_size == MAX_NUM_NODES)
-		for (i = 0; i < MAX_NUM_NODES; i++)
-			printk(KERN_INFO PFX "test size: %d, elapsed(ns) %llu\n", i + 1, elapsed_th[i]);
-
-
-out_free:
-	for (i = 0; i < test_size; i++) {
-		if (random_index1[i])
-			kfree(random_index1[i]);
-		if (random_index2[i])
-			kfree(random_index2[i]);
-	}
-}
-
-static void test_read(int order)
-{
-	int i;
-	int num_page, size;
-	struct timespec start_tv, end_tv;
-	unsigned long elapsed;
-	unsigned long *flags;
-
-	num_page = (1 << order);
-	size = PAGE_SIZE * num_page;
-
-	flags = kmalloc(sizeof(unsigned long) * 512, GFP_KERNEL);
-	memset(flags, 0, sizeof(unsigned long) * 512);
-
-	elapsed = 0;
-	DEBUG_LOG(PFX "read start\n");
-	getnstimeofday(&start_tv);
-	for (i = 0; i < 512; i++) {
-		rmm_read(0, my_data[0] + (i * size), (void *) (i * size), order, &flags[i]);
-	}
-
-	for (i = 0; i < 512; i++) {
-		while (!test_bit(RP_FETCHED, &flags[i]))
-			cpu_relax();
-	}
-	getnstimeofday(&end_tv);
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-
-	printk(KERN_INFO PFX "total elapsed time %lu (ns)\n", elapsed);
-	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 512);
-	//	printk(KERN_INFO PFX "average elapsed time for preparing fetch %lu (ns)\n", 
-	//			elapsed_fetch / 512);
-
-	kfree(flags);
-}
-
-static void test_fetch(int order)
-{
-	int i;
-	int num_page, size;
-	struct timespec start_tv, end_tv;
-	unsigned long elapsed;
-	uint16_t index;
-	uint16_t *arr1, *arr2;
-	//unsigned long flags;
-
-	arr1 = kmalloc(512 * sizeof(uint16_t), GFP_KERNEL);
-	if (!arr1)
-		return;
-
-	arr2 = kmalloc(512 * sizeof(uint16_t), GFP_KERNEL);
-	if (!arr2) {
-		kfree(arr1);
-		return;
-	}
-
-	num_page = (1 << order);
-	size = PAGE_SIZE * num_page;
-	for (i = 0; i < 512; i++) {
-		get_random_bytes(&index, sizeof(index));
-		index %= (1024 / num_page);
-		arr1[i] = index;
-	}
-
-	for (i = 0; i < 512; i++) {
-		get_random_bytes(&index, sizeof(index));
-		index %= ((1 << 18) / num_page);
-		arr2[i] = index;
-	}
-
-	if (server)
-		return;
-
-	elapsed = 0;
-	DEBUG_LOG(PFX "fetch start\n");
-	getnstimeofday(&start_tv);
-	for (i = 0; i < 512; i++) {
-		rmm_fetch(0, my_data[0] + (i * size), (void *) (i * size), order);
-		DEBUG_LOG(PFX "fetched data %s\n", my_data[0] + (i * size));
-	}
-	getnstimeofday(&end_tv);
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-		(end_tv.tv_nsec - start_tv.tv_nsec);
-
-	printk(KERN_INFO PFX "total elapsed time %lu (ns)\n", elapsed);
-	printk(KERN_INFO PFX "average elapsed time %lu (ns)\n", elapsed / 512);
-	//	printk(KERN_INFO PFX "average elapsed time for preparing fetch %lu (ns)\n", 
-	//			elapsed_fetch / 512);
-
-	kfree(arr1);
-	kfree(arr2);
-}
-
-static int test_evict(void)
-{
-	int i, j, num;
-	uint16_t index;
-	struct timespec start_tv, end_tv;
-	unsigned long elapsed, total;
-	struct evict_info *ei;
-	struct list_head *pos, *n;
-	LIST_HEAD(addr_list);
-
-	if (server)
-		return 0;
-
-	elapsed = 0;
-	total = 0;
-	DEBUG_LOG(PFX "evict start\n");
-	for (i = 0; i < 1024; i++) {
-		sprintf(my_data[0] + (i * PAGE_SIZE), "This is %d", i);
-
-	}
-
-	num = 100;
-	for (i = 0; i < num; i++) {
-		INIT_LIST_HEAD(&addr_list);
-		printk(PFX "evict %d\n", i);
-
-		for (j = 0; j < 64; j++) {
-			ei = kmalloc(sizeof(struct evict_info), GFP_KERNEL);
-			if (!ei) {
-				printk("error in %s\n", __func__);
-				return -ENOMEM;
-			}
-
-			get_random_bytes(&index, sizeof(index));
-			index %= 1024;
-
-			ei->l_vaddr = (uint64_t) (my_data[0] + index * (PAGE_SIZE));
-			ei->r_vaddr = (uint64_t) (index * PAGE_SIZE);
-			INIT_LIST_HEAD(&ei->next);
-			list_add(&ei->next, &addr_list);
-		}
-
-		getnstimeofday(&start_tv);
-		rmm_evict(0, &addr_list, 64);
-		getnstimeofday(&end_tv);
-		elapsed += (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
-			(end_tv.tv_nsec - start_tv.tv_nsec);
-
-		list_for_each_safe(pos, n, &addr_list) {
-			ei = list_entry(pos, struct evict_info, next);
-			kfree(ei);
-		}
-	}
-	printk(KERN_INFO PFX "average elapsed time(evict) %lu (ns)\n", elapsed / num);
-
-
-	return 0;
-}
 
 static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 		size_t count, loff_t *ppos)
@@ -1888,39 +1600,6 @@ static int create_worker_thread(void)
 	return 0;
 }
 
-#ifdef RMM_TEST
-int init_for_test(void)
-{
-	int i;
-
-	for (i = 0; i < MAX_NUM_NODES; i++) {
-		my_data[i] = kmalloc(PAGE_SIZE * 1024, GFP_KERNEL);
-		if (!my_data[i])
-			return -1;
-	}
-
-	/*
-	   if (!server) {
-	   printk(PFX "remote memory alloc\n");
-	   for (i = 0; i < 1; i++) {
-	   mcos_rmm_alloc(0, FAKE_PA_START + i * 4096);
-	   }
-	   }
-	   else {
-	   for (i = 0; i < 1024; i++) {
-	   sprintf(my_data[0] + (i * PAGE_SIZE), "Data in server: %d", i);
-	   printk(PFX "%s\n", my_data[0] + (i * PAGE_SIZE));
-	   }
-	   }
-	   */
-	return 0;
-}
-#else
-int init_for_test(void)
-{
-	return 0;
-}
-#endif
 
 static int start_connection(void)
 {
@@ -1974,7 +1653,7 @@ int __init init_rmm_rdma(void)
 		if (!(rpc_pools[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
 			goto out_free;
 
-		if (!(sink_pools[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
+		if (!(mem_pools[i] = kzalloc(sizeof(struct pool_info), GFP_KERNEL)))
 			goto out_free;
 
 		rh->state = RDMA_INIT;
@@ -2001,7 +1680,7 @@ int __init init_rmm_rdma(void)
 	if (__establish_connections())
 		goto out_free;
 
-	init_for_test();
+	init_for_test(MAX_NUM_NODES);
 
 
 	printk(PFX "Ready on InfiniBand RDMA\n");

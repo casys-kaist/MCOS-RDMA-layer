@@ -240,7 +240,7 @@ struct rdma_handle {
 
 	/* point to dma_buffer */
 	dma_addr_t rpc_dma_addr;
-	dma_addr_t direct_dma_addr;
+	dma_addr_t mem_dma_addr;
 	dma_addr_t evict_dma_addr;
 
 	struct rdma_work *rdma_work_head;
@@ -252,11 +252,11 @@ struct rdma_handle {
 
 	/* remote */
 	dma_addr_t remote_dma_addr;
-	dma_addr_t remote_direct_dma_addr;
+	dma_addr_t remote_mem_dma_addr;
 	dma_addr_t remote_rpc_dma_addr;
 	size_t remote_rpc_size;
 	u32 rpc_rkey;
-	u32 direct_rkey;
+	u32 mem_rkey;
 	/*************/
 
 	atomic_t pending_reads;
@@ -268,7 +268,7 @@ struct rdma_handle {
 	struct ib_cq *cq;
 	struct ib_qp *qp;
 	struct ib_mr *mr;
-	struct ib_mr *direct_mr;
+	struct ib_mr *mem_mr;
 };
 
 static inline int nid_to_rh(int nid)
@@ -364,6 +364,12 @@ static inline void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_
 	spin_unlock(&rh->rdma_work_head_lock);
 #endif
 }
+
+static inline void rmm_yield_cpu(void)
+{
+	cond_resched();
+}
+
 /* prototype of symbol */
 /*
    int ib_dereg_mr_user(struct ib_mr *mr);
