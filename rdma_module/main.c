@@ -437,6 +437,7 @@ static int polling_cq(void * args)
 						DEBUG_LOG(PFX "rdma write-imm completion\n");
 					}
 					else {
+						handle_write(&wc[i]);
 						DEBUG_LOG(PFX "rdma write completion\n");
 					}
 					break;
