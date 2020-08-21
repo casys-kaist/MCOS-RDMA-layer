@@ -35,20 +35,32 @@ static int ack_cnt = 0;
 extern spinlock_t cinfos_lock;
 /* SANGJIN END */
 
-//DEFINE_HASHTABLE(on_evicting, 32);
-//
+#define TABLE_SIZE 262144 * 2
 DEFINE_SPINLOCK(on_evicting_lock);
 bool on_evicting[262144];
 
 static inline void set_evicting(u64 addr)
 {
+	if (addr / PAGE_SIZE >= TABLE_SIZE)
+		return;
 	spin_lock(&on_evicting_lock);
 	on_evicting[addr/PAGE_SIZE] = true;
 	spin_unlock(&on_evicting_lock);
 }
 
+void unset_evicting(u64 addr)
+{
+	if (addr / PAGE_SIZE >= TABLE_SIZE)
+		return;
+	spin_lock(&on_evicting_lock);
+	on_evicting[addr/PAGE_SIZE] = false;
+	spin_unlock(&on_evicting_lock);
+}
+
 static inline bool check_evicting(u64 addr)
 {
+	if (addr / PAGE_SIZE >= TABLE_SIZE)
+		return false;
 	return on_evicting[addr/PAGE_SIZE];
 }
 
@@ -172,7 +184,6 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
 	rw->rh = rh;
 	rw->rpage_flags = rpage_flags;
-	rw->raddr = (u64) r_vaddr;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -221,6 +232,7 @@ int rmm_write(int nid, void *laddr, void *raddr, unsigned long *rpage_flags)
 	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
 	rw->rh = rh;
 	rw->rpage_flags = rpage_flags;
+	rw->raddr = (u64) raddr;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {

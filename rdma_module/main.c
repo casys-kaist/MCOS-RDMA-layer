@@ -361,10 +361,10 @@ static void handle_read(struct ib_wc *wc)
         __put_rdma_work_nonsleep(rh, rw);
 }
 
+void unset_evicting(u64 addr);
+
 static void handle_write(struct ib_wc *wc)
 {
-	extern bool on_evicting[];
-	extern spinlock_t on_evicting_lock;
 	struct rdma_handle *rh;
 	struct rdma_work *rw;
 	dma_addr_t dma_addr;
@@ -375,9 +375,7 @@ static void handle_write(struct ib_wc *wc)
 	dma_addr = rw->sgl.addr;
 	size = rw->sgl.length;
 
-	spin_lock(&on_evicting_lock);
-	on_evicting[rw->raddr/PAGE_SIZE] = false;
-	spin_unlock(&on_evicting_lock);
+	unset_evicting(rw->raddr);
 
 	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_TO_DEVICE);
 	set_bit(RP_EVICTED, rw->rpage_flags);
