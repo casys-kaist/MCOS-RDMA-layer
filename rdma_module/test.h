@@ -9,6 +9,7 @@ void test_fetch(int order);
 int test_evict(void);
 void test_read(int order);
 int test_write(void);
+int test_write_read(void);
 
 #endif
 
