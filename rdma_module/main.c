@@ -29,7 +29,7 @@ module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 
 static int server = 0;
-static int init = 0;
+//static int init = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
 //	{2, MEM_GID, BACKUP_SYNC},
@@ -81,6 +81,7 @@ static int __send_dma_addr(struct rdma_handle *rh, dma_addr_t addr, size_t size,
 static int __setup_recv_works(struct rdma_handle *rh);
 static int start_connection(void);
 void clean_rdma_handle(struct rdma_handle *rh);
+
 
 static inline unsigned long long get_ns(void)
 {
@@ -414,7 +415,6 @@ static int polling_cq(void * args)
 					DEBUG_LOG(PFX "send completion\n");
 					__handle_send(&wc[i]);
 					break;
-
 				case IB_WC_RDMA_WRITE:
 					if (wc[i].wc_flags == IB_WC_WITH_IMM) {
 						DEBUG_LOG(PFX "rdma write-imm completion\n");
@@ -423,7 +423,6 @@ static int polling_cq(void * args)
 						DEBUG_LOG(PFX "rdma write completion\n");
 					}
 					break;
-
 				case IB_WC_RDMA_READ:
 					handle_read(&wc[i]);
 					DEBUG_LOG(PFX "rdma read completion\n");
@@ -498,6 +497,7 @@ retry:
  */
 
 /*setup qp*/
+
 static int __setup_pd_cq_qp(struct rdma_handle *rh)
 {
 	int ret = 0;
@@ -1123,7 +1123,7 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 	}
 
 	/*Because we need to register rpc regions to mr, 
-	  those functions had to call after connection*/
+	  those functions had to be called after connection*/
 	step = "setup dma buffers";
 	DEBUG_LOG(PFX "%s\n", step);
 	ret = __setup_dma_buffer(rh);

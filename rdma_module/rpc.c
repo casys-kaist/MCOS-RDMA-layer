@@ -128,15 +128,9 @@ int rmm_read_sync(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	int size = (1 << order) * PAGE_SIZE;
 	dma_addr_t dma_addr, remote_dma_addr;
 	int ret;
-	unsigned long rpage_flags;
+	unsigned long rpage_flags = 0;
 
 	rh = rdma_handles[index];
-
-	/*
-	while (atomic_read(&rh->pending_reads) == NR_RESPONDER_RESOURCES)
-		;
-	atomic_inc(&rh->pending_reads);
-	*/
 
 	dma_addr = ib_dma_map_single(rh->device, l_vaddr, size, DMA_FROM_DEVICE);
 	ret = ib_dma_mapping_error(rh->device, dma_addr);
@@ -166,7 +160,6 @@ int rmm_read_sync(int nid, void *l_vaddr, void * r_vaddr, unsigned int order)
 	while (!test_bit(RP_FETCHED, &rpage_flags))
 		cpu_relax();
 
-
 	return 0;
 
 out_free:
@@ -188,12 +181,6 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 	int ret;
 
 	rh = rdma_handles[index];
-
-	/*
-	   while (atomic_read(&rh->pending_reads) == NR_RESPONDER_RESOURCES)
-	   ;
-	   atomic_inc(&rh->pending_reads);
-	   */
 
 	dma_addr = ib_dma_map_single(rh->device, l_vaddr, size, DMA_FROM_DEVICE);
 	ret = ib_dma_mapping_error(rh->device, dma_addr);
@@ -1347,6 +1334,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 		dest =  *((uint64_t *) (page_pointer));
 		memcpy((void *) dest, page_pointer + 8, PAGE_SIZE);
 		page_pointer += (8 + PAGE_SIZE);
+	//	clflush_cache_range((void *) dest, PAGE_SIZE);
 
 	}
 
