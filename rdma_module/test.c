@@ -370,13 +370,21 @@ int test_write_read(void)
 	for (i = 0; i < PADDR_SIZE / PAGE_SIZE; i++) {
 		sprintf(my_data[0], test_string);
 		dest = ((u64) i) * PAGE_SIZE;
+		printk(PFX "dest: %llX\n" dest);
+
 		rpage_flags = 0;
 		rmm_write(1, my_data[0], (void *) dest, &rpage_flags);
 		while (!test_bit(RP_EVICTED, &rpage_flags))
 			cpu_relax();
+
+		rpage_flags = 0;
 		rmm_read(1, my_data[1], (void *) dest, 0, &rpage_flags);
-		if (!memcmp(my_data[0], my_data[1], PAGE_SIZE))
+		while (!test_bit(RP_FETCHED, &rpage_flags))
+			cpu_relax();
+
+		if (memcmp(my_data[0], my_data[1], PAGE_SIZE))
 			printk(PFX "data miss match\n");
+
 		rmm_yield_cpu();
 	}
 
