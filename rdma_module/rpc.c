@@ -103,32 +103,16 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh,
 		dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key)
 {
 	struct rdma_work *rw;
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	unsigned long flags;
-#endif
-
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	spin_lock_irqsave(&rh->rdma_work_head_lock, flags);
-#else
 	spin_lock(&rh->rdma_work_head_lock);
-#endif
 
 	if (!rh->rdma_work_head) {
-#ifdef CONFIG_MCOS_IRQ_LOCK
-		spin_unlock_irqrestore(&rh->rdma_work_head_lock, flags);
-#else
 		spin_unlock(&rh->rdma_work_head_lock);
-#endif
 		return NULL;
 	}
 
 	rw = rh->rdma_work_head;
 	rh->rdma_work_head = rh->rdma_work_head->next;
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	spin_unlock_irqrestore(&rh->rdma_work_head_lock, flags);
-#else
 	spin_unlock(&rh->rdma_work_head_lock);
-#endif
 
 	rw->sgl.addr = dma_addr;
 	rw->sgl.length = size;
@@ -139,15 +123,15 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh,
 }
 
 /*
-static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
-{
-	might_sleep();
-	spin_lock(&rh->rdma_work_head_lock);
-	rw->next = rh->rdma_work_head;
-	rh->rdma_work_head = rw;
-	spin_unlock(&rh->rdma_work_head_lock);
-}
-*/
+   static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
+   {
+   might_sleep();
+   spin_lock(&rh->rdma_work_head_lock);
+   rw->next = rh->rdma_work_head;
+   rh->rdma_work_head = rw;
+   spin_unlock(&rh->rdma_work_head_lock);
+   }
+   */
 
 
 int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
@@ -167,6 +151,7 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 	ret = ib_dma_mapping_error(rh->device, dma_addr);
 	if (ret) 
 		return ret;
+	ib_dma_sync_single_for_device(rh->device, dma_addr, size, DMA_FROM_DEVICE);
 
 	if (check_evicting((u64) r_vaddr)) {
 		printk(PFX "error !!!!!\n");
@@ -196,7 +181,7 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 	return 0;
 
 out_free_rw:
-		__put_rdma_work_nonsleep(rh, rw);
+	__put_rdma_work_nonsleep(rh, rw);
 out_free:
 	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_FROM_DEVICE);
 	return ret;

@@ -348,22 +348,10 @@ static inline int wait_for_ack_timeout(int *done, u64 ticks)
 
 static inline void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw)
 {
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	unsigned long flags;
-#endif
-
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	spin_lock_irqsave(&rh->rdma_work_head_lock, flags);
-#else
 	spin_lock(&rh->rdma_work_head_lock);
-#endif
 	rw->next = rh->rdma_work_head;
 	rh->rdma_work_head = rw;
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	spin_unlock_irqrestore(&rh->rdma_work_head_lock, flags);
-#else
 	spin_unlock(&rh->rdma_work_head_lock);
-#endif
 }
 
 static inline void rmm_yield_cpu(void)
