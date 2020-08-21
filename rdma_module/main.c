@@ -880,12 +880,6 @@ static int __setup_recv_works(struct rdma_handle *rh)
 	else {
 	}
 
-	DEBUG_LOG(PFX "post recv for exchanging dma addr\n");
-	ret = __setup_recv_addr(rh, WORK_TYPE_RPC_ADDR);
-	if (ret)
-		return ret;
-
-
 	/* pre-post receive work requests-imm */
 	DEBUG_LOG(PFX "post recv for imm\n");
 	for (i = 0; i < MAX_RECV_DEPTH; i++) {
@@ -1085,17 +1079,24 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 	if (ret) 
 		goto out_err;
 
-	step = "post recv works";
+	step = "post recv for addr";
 	DEBUG_LOG(PFX "%s\n", step);
-	ret = __setup_recv_works(rh);
-	if (ret) 
-		goto out_err;
+	ret = __setup_recv_addr(rh, WORK_TYPE_RPC_ADDR);
+	if (ret)
+		return ret;
 
 	if (connect_as_rmem(rh->c_type)) {
 		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
 		if (ret)
 			goto out_err;
 	}
+
+	step = "post recv works";
+	DEBUG_LOG(PFX "%s\n", step);
+	ret = __setup_recv_works(rh);
+	if (ret) 
+		goto out_err;
+
 
 	step = "setup work reqeusts";
 	ret = __setup_work_request_pools(rh);
@@ -1203,6 +1204,12 @@ static int __accept_client(struct rdma_handle *rh)
 	ret = __setup_pd_cq_qp(rh);
 	if (ret) goto out_err;
 
+	step = "post recv for exchanging dma addr\n";
+	DEBUG_LOG(PFX "%s\n", step);
+	ret = __setup_recv_addr(rh, WORK_TYPE_RPC_ADDR);
+	if (ret)
+		return ret;
+
 	step = "post recv works";
 	DEBUG_LOG(PFX "%s\n", step);
 	ret = __setup_recv_works(rh);
@@ -1232,7 +1239,7 @@ static int __accept_client(struct rdma_handle *rh)
 
 	step = "allocate memory for cpu server";
 	DEBUG_LOG(PFX "%s\n", step);
-	if (rh->c_type == PRIMARY || rh->c_type == SECONDARY)
+	if (connect_as_rmem(rh->c_type))
 		rh->vaddr_start = vaddr_start_arr[rh->nid];
 	if (rh->vaddr_start < 0) goto out_err;
 
