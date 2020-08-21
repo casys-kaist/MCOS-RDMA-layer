@@ -150,6 +150,7 @@ struct rdma_work {
 	struct ib_sge sgl;
 	struct ib_rdma_wr wr;
 	unsigned long *rpage_flags;
+	u64 raddr;
 };
 
 struct worker_thread {
@@ -369,6 +370,7 @@ static inline void rmm_yield_cpu(void)
 {
 	cond_resched();
 }
+
 
 /* prototype of symbol */
 /*

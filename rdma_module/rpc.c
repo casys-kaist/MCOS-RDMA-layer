@@ -35,6 +35,23 @@ static int ack_cnt = 0;
 extern spinlock_t cinfos_lock;
 /* SANGJIN END */
 
+//DEFINE_HASHTABLE(on_evicting, 32);
+//
+DEFINE_SPINLOCK(on_evicting_lock);
+bool on_evicting[262144];
+
+static inline void set_evicting(u64 addr)
+{
+	spin_lock(&on_evicting_lock);
+	on_evicting[addr/PAGE_SIZE] = true;
+	spin_unlock(&on_evicting_lock);
+}
+
+static inline bool check_evicting(u64 addr)
+{
+	return on_evicting[addr/PAGE_SIZE];
+}
+
 static inline void block_rpc(void)
 {
 	rpc_blocked = true;
@@ -139,6 +156,11 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 	if (ret) 
 		return ret;
 
+	if (check_evicting((u64) r_vaddr)) {
+		printk(PFX "error !!!!!\n");
+		return -1;
+	}
+
 	remote_dma_addr = (dma_addr_t) r_vaddr + rh->remote_mem_dma_addr;
 	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->mem_rkey);
 	if (!rw) {
@@ -150,6 +172,7 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
 	rw->rh = rh;
 	rw->rpage_flags = rpage_flags;
+	rw->raddr = (u64) r_vaddr;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {
@@ -186,6 +209,7 @@ int rmm_write(int nid, void *laddr, void *raddr, unsigned long *rpage_flags)
 	if (ret) 
 		return ret;
 
+	set_evicting((u64) raddr);
 	remote_dma_addr = (dma_addr_t) raddr + rh->remote_mem_dma_addr;
 	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->mem_rkey);
 	if (!rw) {
