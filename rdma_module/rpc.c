@@ -153,11 +153,6 @@ int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order,
 		return ret;
 	ib_dma_sync_single_for_device(rh->device, dma_addr, size, DMA_FROM_DEVICE);
 
-	if (check_evicting((u64) r_vaddr)) {
-		printk(PFX "error !!!!!\n");
-		return -1;
-	}
-
 	remote_dma_addr = (dma_addr_t) r_vaddr + rh->remote_mem_dma_addr;
 	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->mem_rkey);
 	if (!rw) {
@@ -206,7 +201,6 @@ int rmm_write(int nid, void *laddr, void *raddr, unsigned long *rpage_flags)
 		return ret;
 	ib_dma_sync_single_for_device(rh->device, dma_addr, size, DMA_TO_DEVICE);
 
-	set_evicting((u64) raddr);
 	remote_dma_addr = (dma_addr_t) raddr + rh->remote_mem_dma_addr;
 	rw = __get_rdma_work_nonsleep(rh, dma_addr, size, remote_dma_addr, rh->mem_rkey);
 	if (!rw) {
@@ -218,7 +212,6 @@ int rmm_write(int nid, void *laddr, void *raddr, unsigned long *rpage_flags)
 	rw->wr.wr.send_flags = IB_SEND_SIGNALED;
 	rw->rh = rh;
 	rw->rpage_flags = rpage_flags;
-	rw->raddr = (u64) raddr;
 
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	if (ret || bad_wr) {

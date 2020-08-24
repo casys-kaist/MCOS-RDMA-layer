@@ -375,8 +375,6 @@ static void handle_write(struct ib_wc *wc)
 	dma_addr = rw->sgl.addr;
 	size = rw->sgl.length;
 
-	unset_evicting(rw->raddr);
-
 	ib_dma_unmap_single(rh->device, dma_addr, size, DMA_TO_DEVICE);
 	set_bit(RP_EVICTED, rw->rpage_flags);
 
