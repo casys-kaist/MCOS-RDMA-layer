@@ -634,7 +634,7 @@ static struct ib_mr *rmm_reg_mr(struct rdma_handle *rh, dma_addr_t dma_addr, uns
 	const struct ib_send_wr *bad_wr = NULL;
 	struct scatterlist *sg;
 	struct ib_mr *mr = NULL;
-	unsigned int dma_len;
+	u64 dma_len;
 	int nr_entries = 1;
 
 	if (buffer_size > (1UL << 30) * 2) {
