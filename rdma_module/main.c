@@ -1152,12 +1152,11 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 		goto out_err;
 	DEBUG_LOG(PFX "post done\n");
 
+	/* wait for rpc buffer */
 	wait_for_completion_interruptible(&rh->init_done);
 
-	/* waiting for rmem address */
-	if (connect_as_rmem(rh->c_type)) {
-		wait_for_completion_interruptible(&rh->init_done);
-	}
+	/* wait for memory pool */
+	wait_for_completion_interruptible(&rh->init_done);
 
 	printk(PFX "Connected to %d\n", nid);
 	return 0;
@@ -1264,10 +1263,8 @@ static int __accept_client(struct rdma_handle *rh)
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE, rh->mr->rkey);
 	if (ret)  goto out_err;
 
-	if (connect_as_rmem(rh->c_type)) {
-		ret = __send_dma_addr(rh, RM_PADDR_START, PADDR_SIZE, rh->mem_mr->rkey);
-		if (ret)  goto out_err;
-	}
+	ret = __send_dma_addr(rh, RM_PADDR_START, PADDR_SIZE, rh->mem_mr->rkey);
+	if (ret)  goto out_err;
 
 	wait_for_completion_interruptible(&rh->init_done);
 
