@@ -85,6 +85,14 @@ static inline bool connect_as_rmem(enum connection_type ctype)
 		return false;
 }
 
+static inline bool connect_as_backup(enum connection_type ctype)
+{
+	if (ctype == BACKUP_SYNC || ctype == BACKUP_ASYNC)
+		return true;
+	else
+		return false;
+}
+
 static inline unsigned long long get_ns(void)
 {
 	//return (cpu_clock(0) * (1000000L / NSEC_PER_SEC));
@@ -1087,11 +1095,9 @@ static int __connect_to_server(int nid, int qp_type, enum connection_type c_type
 	if (ret)
 		return ret;
 
-	if (connect_as_rmem(rh->c_type)) {
-		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
-		if (ret)
-			goto out_err;
-	}
+	ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
+	if (ret)
+		goto out_err;
 
 	step = "post recv works";
 	DEBUG_LOG(PFX "%s\n", step);
@@ -1217,11 +1223,6 @@ static int __accept_client(struct rdma_handle *rh)
 	ret = __setup_recv_works(rh);
 	if (ret)  goto out_err;
 
-	if (connect_as_rmem(rh->c_type)) {
-		ret = __setup_recv_addr(rh, WORK_TYPE_SINK_ADDR);
-		if (ret)
-			goto out_err;
-	}
 
 	step = "setup rdma works";
 	DEBUG_LOG(PFX "%s\n", step);
@@ -1251,12 +1252,10 @@ static int __accept_client(struct rdma_handle *rh)
 	ret = __setup_dma_buffer(rh);
 	if (ret) goto out_err;
 
-	if (connect_as_rmem(rh->c_type)) {
-		rh->mem_mr = rmm_reg_mr(rh, RM_PADDR_START, PADDR_SIZE);
-		ret = wait_for_completion_interruptible(&rh->init_done);
-		if (ret)  {
-			goto out_err;
-		}
+	rh->mem_mr = rmm_reg_mr(rh, RM_PADDR_START, PADDR_SIZE);
+	ret = wait_for_completion_interruptible(&rh->init_done);
+	if (ret)  {
+		goto out_err;
 	}
 	rh->mem_dma_addr = RM_PADDR_START;
 
