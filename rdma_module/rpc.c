@@ -1492,6 +1492,7 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 					sizeof(struct rpc_header) + sizeof(int), &done);
 			DEBUG_LOG(PFX "replicate done\n");
 		}
+	}
 
 	infos = get_node_infos(MEM_GID, BACKUP_ASYNC);
 	for (i = 0; i < infos->size; i++) {
