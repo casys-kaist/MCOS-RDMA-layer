@@ -32,6 +32,8 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
 	{1, 0, PRIMARY},
+	{2, 0, SECONDARY},
+	{3, 0, BACKUP_ASYNC},
 	{-1, -1, -1}, /* end */
 };
 
@@ -1036,7 +1038,7 @@ int cm_client_event_handler(struct rdma_cm_id *cm_id, struct rdma_cm_event *cm_e
 	return 0;
 }
 
-int __connect_to_server(int nid, int qp_type, enum connection_type c_type)
+static int __connect_to_server(int nid, int qp_type, enum connection_type c_type)
 {
 	struct conn_private_data private_data;
 	const char *step;
@@ -1177,6 +1179,7 @@ out_err:
 	printk(KERN_ERR PFX "Unable to %s, %pI4, %d\n", step, ip_table + nid, ret);
 	return ret;
 }
+
 
 int connect_to_servers(void)
 {
