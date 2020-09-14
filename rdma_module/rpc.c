@@ -1563,11 +1563,12 @@ static int rpc_handle_synchronize_mem(struct rdma_handle *rh, uint32_t offset)
         op = rhp->op;
 
         // busy wait until full consistentcy with r1 and r2
-        while (!(req_cnt == ack_cnt))
+        while (!(atomic_read(&req_cnt) == ack_cnt))
                 cpu_relax();
 
         // initialize
-        req_cnt = 0;
+        //req_cnt = 0;
+	atomic_set(&req_cnt, 0);
         ack_cnt = 0;
 
         rw = __get_rdma_work(rh, rpc_dma_addr, 0, remote_rpc_dma_addr, rh->rpc_rkey);
