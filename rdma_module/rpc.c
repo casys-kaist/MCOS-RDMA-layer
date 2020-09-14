@@ -710,7 +710,6 @@ int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page)
 	struct rdma_handle *rh;
 	struct rpc_header *rhp;
 	struct rdma_work *rw;
-	int j = 0;
 	const struct ib_send_wr *bad_wr = NULL;
 
 	/*
@@ -988,9 +987,6 @@ int rmm_evict_forward(int nid, void *src_buffer, int payload_size, int *done)
 	   |rpc_header| num_page(4byte) | (r_vaddr, page)...| done_pointer(8bytes)|
 	   ------------------------------------------------------------------------
 	*/
-	int buffer_size = payload_size + 8;
-	const struct ib_send_wr *bad_wr = NULL;
-	int index = nid_to_rh(nid) + 1;
 
 	buffer_size += 4;
 	rh = rdma_handles[index];
