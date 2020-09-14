@@ -31,6 +31,7 @@ MODULE_PARM_DESC(debug, "Debug level (0=none, 1=all)");
 //static int init = 0;
 
 const struct connection_config c_config[ARRAY_SIZE(ip_addresses)] = {
+	{1, 0, PRIMARY},
 	{-1, -1, -1}, /* end */
 };
 
