@@ -12,6 +12,7 @@
 #define NR_RDMA_SLOTS	(5000)
 #define MAX_RECV_DEPTH	(NR_RDMA_SLOTS + 5)
 #define MAX_SEND_DEPTH	(NR_RDMA_SLOTS + 5)
+#define NR_RESPONDER_RESOURCES 16
 
 #define NR_WORKER_THREAD 1
 
@@ -39,7 +40,12 @@
 #define DMA_BUFFER_START (_AC(1, UL) << 36) /* 64GB */
 #endif
 
+#define PADDR_SIZE ((1UL << 30) * 64)
+
+#define CONFIG_MCOS_RMM_PREFETCH
+
 //#define CONFIG_MCOS_IRQ_LOCK
+#define CONFIG_MCOS_WO_RPAGE_LOCK_RMM
 
 /* rpage flags */
 #define RPAGE_PREFETCHED        0x00000001
@@ -53,6 +59,8 @@
 #define RPAGE_FREED             0x00000100
 #define RPAGE_FREE_FAILED       0x00000200
 #define RPAGE_FETCHED           0x00000400
+
+#define MCOS_MAX_PREFETCH_SIZE	32 // FIXME
 
 #ifdef CONFIG_RM
 enum remote_page_flags {
@@ -146,6 +154,8 @@ struct rdma_work {
 	struct rdma_work *next;
 	struct ib_sge sgl;
 	struct ib_rdma_wr wr;
+	unsigned long *rpage_flags;
+	u64 raddr;
 };
 
 struct worker_thread {
@@ -241,7 +251,7 @@ struct rdma_handle {
 
 	/* point to dma_buffer */
 	dma_addr_t rpc_dma_addr;
-	dma_addr_t sink_dma_addr;
+	dma_addr_t mem_dma_addr;
 	dma_addr_t evict_dma_addr;
 
 	struct rdma_work *rdma_work_head;
@@ -253,10 +263,14 @@ struct rdma_handle {
 
 	/* remote */
 	dma_addr_t remote_dma_addr;
+	dma_addr_t remote_mem_dma_addr;
 	dma_addr_t remote_rpc_dma_addr;
 	size_t remote_rpc_size;
 	u32 rpc_rkey;
+	u32 mem_rkey;
 	/*************/
+
+	atomic_t pending_reads;
 
 	struct ring_buffer *rb;
 
@@ -265,6 +279,7 @@ struct rdma_handle {
 	struct ib_cq *cq;
 	struct ib_qp *qp;
 	struct ib_mr *mr;
+	struct ib_mr *mem_mr;
 };
 
 static inline int nid_to_rh(int nid)
@@ -277,9 +292,10 @@ static inline struct node_info *get_node_infos(int gid, enum connection_type cty
 	struct node_info *ret_nid;
 	extern spinlock_t cinfos_lock;
 	
-	spin_lock(&cinfos_lock);
 	if (ctype >= NUM_CTYPE)
 		return NULL;
+
+	spin_lock(&cinfos_lock);
 	ret_nid = &c_infos[gid].infos[ctype];
 	spin_unlock(&cinfos_lock);
 		
@@ -291,9 +307,10 @@ static inline int add_node_to_group(int gid, int nid, enum connection_type ctype
 	struct node_info *infos = get_node_infos(gid, ctype);
 	extern spinlock_t cinfos_lock;
 
-	spin_lock(&cinfos_lock);
 	if (infos->size == MAX_GROUP_SIZE)
 		return -ENOMEM;
+
+	spin_lock(&cinfos_lock);
 	infos->nids[infos->size] = nid;
 	infos->size++;
 	spin_unlock(&cinfos_lock);
@@ -357,6 +374,20 @@ static inline int wait_for_ack_timeout(int *done, u64 ticks)
 }
 
 int __connect_to_server(int nid, int qp_type, enum connection_type c_type);
+
+static inline void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw)
+{
+	spin_lock(&rh->rdma_work_head_lock);
+	rw->next = rh->rdma_work_head;
+	rh->rdma_work_head = rw;
+	spin_unlock(&rh->rdma_work_head_lock);
+}
+
+static inline void rmm_yield_cpu(void)
+{
+	cond_resched();
+}
+
 
 /* prototype of symbol */
 /*
