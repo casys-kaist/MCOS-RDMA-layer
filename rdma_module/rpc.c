@@ -1744,7 +1744,7 @@ static int rpc_handle_writeback_dirty_mem(struct rdma_handle *rh, uint32_t offse
         op = rhp->op;
 
 	nr_pages = 512;
-	//window_size = 128;
+	window_size = 128;
 	for (i = 0; i < writeback_dirty_list_size; i += nr_pages) {
 		INIT_LIST_HEAD(&addr_list);
 		j = 0;
@@ -1766,21 +1766,17 @@ static int rpc_handle_writeback_dirty_mem(struct rdma_handle *rh, uint32_t offse
 		}
 
 		list_cut_position(&addr_list, &writeback_dirty_list, &ei->next); 
-		rmm_evict(dest_nid, &addr_list, size);
-		/*
+		//rmm_evict(dest_nid, &addr_list, size);
 		req_cnt++;
 		rmm_evict_async(dest_nid, &addr_list, size, &ack_cnt);
 
 		if ((i / nr_pages) % window_size == 0)
 			while (!(req_cnt == ack_cnt))
 				cpu_relax();
-		*/
 	}
 	
-	/*
 	while (!(req_cnt == ack_cnt))
 		cpu_relax();
-	*/
 
         rw = __get_rdma_work(rh, dma_addr, sizeof(struct rpc_header), remote_dma_addr, rh->rpc_rkey);
         if (!rw)

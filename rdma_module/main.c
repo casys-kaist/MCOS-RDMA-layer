@@ -1552,7 +1552,7 @@ static ssize_t rmm_write_proc(struct file *file, const char __user *buffer,
 	else if (strcmp("start", cmd) == 0)
 		start_connection();
 	else if (strcmp("make dummy", cmd) == 0)
-		t_arr[head++] = kthread_run(dummy_thread, 0, "dummy thread %d", head);
+		t_arr[head++] = kthread_run(dummy_thread, 1, "dummy thread %d", head);
 	else if (strcmp("stop dummy", cmd) == 0) {
 		for (i = 0; i < head; i++)  {
 			kthread_stop(t_arr[i]);

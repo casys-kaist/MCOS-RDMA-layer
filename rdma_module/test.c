@@ -58,14 +58,20 @@ int dummy_thread(void *args)
 {
 	int i;
 	int nid = (int) args;
-	const int fetch_size = 4096 * 16;
+	//const int fetch_size = 4096 * 16;
+	const int fetch_size = 4096;
 	const int boundary = (4 * (1 << 20)) / fetch_size;
+	unsigned long rpage_flags;
 
 	i = 0;
 	while (1)  {
 		if (kthread_should_stop())
 			return 0;
-		rmm_fetch(nid, my_data[nid] + (i * fetch_size), (void *) (i * fetch_size), 4);
+		rpage_flags = 0;
+		rmm_read(nid, my_data[nid] + (i * fetch_size), (void *) (i * fetch_size), 0, &rpage_flags);
+		while (!test_bit(RP_FETCHED, &rpage_flags))
+			cpu_relax();
+
 		i = (i + 1) % boundary;
 		rmm_yield_cpu();
 	}
