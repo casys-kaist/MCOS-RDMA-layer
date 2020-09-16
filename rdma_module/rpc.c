@@ -1906,8 +1906,11 @@ static int rpc_handle_replicate_done(struct rdma_handle *rh, uint32_t offset)
 	rmm_writeback_dirty(rh->nid, dest_nid);
 
 	getnstimeofday(&end_tv);
-	elapsed = (end_tv.tv_sec - start_tv.tv_sec);
-	printk(KERN_INFO PFX "evict dirty done total elapsed time %lu (s)\n", elapsed);
+
+	elapsed = (end_tv.tv_sec - start_tv.tv_sec) * 1000000000 +
+		(end_tv.tv_nsec - start_tv.tv_nsec);
+
+	printk(KERN_INFO PFX "evict dirty done total elapsed time %lu (ns)\n", elapsed);
 
 	list_for_each_safe(pos, n, &writeback_dirty_list) {
 		ei = list_entry(pos, struct evict_info, next);
