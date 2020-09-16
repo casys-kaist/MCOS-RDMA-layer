@@ -1739,6 +1739,8 @@ static int rpc_handle_writeback_dirty_mem(struct rdma_handle *rh, uint32_t offse
         nid = rhp->nid;
         op = rhp->op;
 
+	printk("wb dirty list size: %d\n", writeback_dirty_list_size);
+
 	nr_pages = 512;
 	window_size = 128;
 	for (i = 0; i < writeback_dirty_list_size; i += nr_pages) {

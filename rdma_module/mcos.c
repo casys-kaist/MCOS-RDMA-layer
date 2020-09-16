@@ -31,7 +31,7 @@ extern int (*remote_fetch_async)(int, void *, void *, unsigned int, unsigned lon
 extern int (*remote_prefetch_async)(int, struct fetch_info *, int);
 #endif
 
-//#define LOAD_BAL 
+#define LOAD_BAL 
 
 extern bool rpc_blocked;
 
