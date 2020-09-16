@@ -1649,9 +1649,8 @@ static int __rpc_handle_replicate_mem(void *args)
 			list_add(&ei->next, &addr_list);
 		}
 
-		ret = rmm_evict(dest_nid, &addr_list, nr_pages);
+		//ret = rmm_evict(dest_nid, &addr_list, nr_pages);
 
-		/*
 		req_cnt++;
 		ret = rmm_evict_async(dest_nid, &addr_list, nr_pages, &ack_cnt);
 
@@ -1661,18 +1660,15 @@ static int __rpc_handle_replicate_mem(void *args)
 
 		//printk("req: %d, ack: %d\n", req_cnt, ack_cnt);
 		
-		*/
-
 		list_for_each_safe(pos, n, &addr_list) {
 			ei = list_entry(pos, struct evict_info, next);
 			kfree(ei);
 		}
 	}
 
-/*
 	while (!(req_cnt == ack_cnt))
 		cpu_relax();
-*/       
+
 	rw = __get_rdma_work(rh, rh->rpc_dma_addr + offset, sizeof(struct rpc_header) + 4, rh->remote_dma_addr + offset, rh->rpc_rkey);
         if (!rw)
                 return -ENOMEM;
