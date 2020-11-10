@@ -1,0 +1,1 @@
+sudo ipmitool -I lan -H 143.248.188.210 -U admin -P calab4406 power reset

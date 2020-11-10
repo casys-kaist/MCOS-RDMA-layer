@@ -58,6 +58,7 @@ struct mem_aux {
 };
 #pragma pack(pop)
 
+/* rpc */
 int rmm_alloc(int nid, u64 vaddr);
 int rmm_alloc_async(int nid, u64 vaddr, unsigned long *rpage_flags);
 int rmm_free(int nid, u64 vaddr);
@@ -71,5 +72,9 @@ int rmm_prefetch_async(int nid, struct fetch_info *fi_array, int num_page);
 int rmm_synchronize(int src_nid, int dest_nid);
 int rmm_replicate(int src_nid, int dest_nid);
 int rmm_writeback_dirty(int src_nid, int dest_nid);
+
+/* rdma */
+int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, unsigned long *rpage_flags);
+int rmm_write(int nid, void *laddr, void *raddr, unsigned long *rpage_flags);
 
 #endif
