@@ -66,32 +66,17 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh,
 		dma_addr_t dma_addr, size_t size, dma_addr_t rdma_addr, u32 rdma_key)
 {
 	struct rdma_work *rw;
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	unsigned long flags;
-#endif
 
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	spin_lock_irqsave(&rh->rdma_work_head_lock, flags);
-#else
 	spin_lock(&rh->rdma_work_head_lock);
-#endif
 
 	if (!rh->rdma_work_head) {
-#ifdef CONFIG_MCOS_IRQ_LOCK
-		spin_unlock_irqrestore(&rh->rdma_work_head_lock, flags);
-#else
 		spin_unlock(&rh->rdma_work_head_lock);
-#endif
 		return NULL;
 	}
 
 	rw = rh->rdma_work_head;
 	rh->rdma_work_head = rh->rdma_work_head->next;
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	spin_unlock_irqrestore(&rh->rdma_work_head_lock, flags);
-#else
 	spin_unlock(&rh->rdma_work_head_lock);
-#endif
 
 	rw->sgl.addr = dma_addr;
 	rw->sgl.length = size;
@@ -101,51 +86,13 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh,
 	return rw;
 }
 
-/*
-static void __put_rdma_work(struct rdma_handle *rh, struct rdma_work *rw)
-{
-	might_sleep();
-	spin_lock(&rh->rdma_work_head_lock);
-	rw->next = rh->rdma_work_head;
-	rh->rdma_work_head = rw;
-	spin_unlock(&rh->rdma_work_head_lock);
-}
-*/
-
 static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw)
 {
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	unsigned long flags;
-#endif
-
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	spin_lock_irqsave(&rh->rdma_work_head_lock, flags);
-#else
 	spin_lock(&rh->rdma_work_head_lock);
-#endif
 	rw->next = rh->rdma_work_head;
 	rh->rdma_work_head = rw;
-#ifdef CONFIG_MCOS_IRQ_LOCK
-	spin_unlock_irqrestore(&rh->rdma_work_head_lock, flags);
-#else
 	spin_unlock(&rh->rdma_work_head_lock);
-#endif
 }
-
-/*
-void *get_buffer(struct rdma_handle *rh, size_t size, dma_addr_t *dma_addr)
-{
-	void *addr;
-
-	dma_addr_t = d_addr;
-	addr =  ring_buffer_get_mapped(rh->rb, size + , &d_addr);
-	*dma_addr = d_addr + sizeof(struct rpc_header);
-
-	return addr + sizeof(struct rpc_header);
-}
-*/
-
-
 
 int rmm_alloc(int nid, u64 vaddr)
 {
