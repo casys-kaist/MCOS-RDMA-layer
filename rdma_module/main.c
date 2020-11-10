@@ -1714,7 +1714,6 @@ static void init_connection_infos(void)
 int __init init_rmm_rdma(void)
 {
 	int i;
-	//	unsigned long flags;
 
 #ifdef CONFIG_RM
 	/* allocate memory for cpu servers */
