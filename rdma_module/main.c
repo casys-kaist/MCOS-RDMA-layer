@@ -185,13 +185,11 @@ static int rpc_handle_alloc_free_done(struct rdma_handle *rh, uint32_t offset)
 		}
 		else {
 			if (op == RPC_OP_ALLOC) {
-				//DEBUG_LOG(PFX "asycn alloc is failed %s \n", __func__);
-				printk(KERN_ALERT "asycn alloc is failed %s \n", __func__);
+				DEBUG_LOG(PFX "asycn alloc is failed %s \n", __func__);
 				*rpage_flags |= RPAGE_ALLOC_FAILED;
 			}
 			else {
-				//DEBUG_LOG(PFX "asycn free is failed %s \n", __func__);
-				printk(KERN_ALERT "asycn free is failed %s \n", __func__);
+				DEBUG_LOG(PFX "asycn free is failed %s \n", __func__);
 				*rpage_flags |= RPAGE_FREE_FAILED;
 			}
 		}
@@ -256,8 +254,6 @@ static int __handle_rpc(struct ib_wc *wc)
 	imm_data = be32_to_cpu(wc->ex.imm_data);
 	rhp = rh->rpc_buffer + imm_data;
 	op = rhp->op;
-
-	//	DEBUG_LOG(PFX "%08X\n", imm_data);
 
 	if (op == RPC_OP_EVICT && !rhp->req) {
 		rpc_handle_evict_done(rh, imm_data);
@@ -383,8 +379,6 @@ static void handle_read(struct ib_wc *wc)
         __put_rdma_work_nonsleep(rh, rw);
 }
 
-void unset_evicting(u64 addr);
-
 static void handle_write(struct ib_wc *wc)
 {
 	struct rdma_handle *rh;
@@ -442,7 +436,6 @@ static int polling_cq(void * args)
 		for (i = 0; i < ret; i++) {
 			if (wc[i].status) {
 				if (wc[i].status == IB_WC_WR_FLUSH_ERR) {
-				//	DEBUG_LOG("cq flushed\n");
 					continue;
 				} 
 				else {
@@ -1721,7 +1714,7 @@ int __init init_rmm_rdma(void)
 		vaddr_start_arr[i] = rm_machine_init();
 	
 	/* basic memory initialization */	
-	basic_memory_init(0);
+	basic_memory_init(my_nid);
 #endif /*end for CONFIG_RM */
 
 	rmm_proc = proc_create("rmm", 0666, NULL, &rmm_ops);

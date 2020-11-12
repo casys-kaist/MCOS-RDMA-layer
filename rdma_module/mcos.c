@@ -258,7 +258,6 @@ retry:
 
 	list_for_each(l, evict_list) {
 		struct evict_info *e = list_entry(l, struct evict_info, next);
-		//e->r_vaddr -= FAKE_PA_START;
 		ret = rmm_write(infos->nids[0], (void *) e->l_vaddr, (void *) e->r_vaddr - FAKE_PA_START, &rpage_flags[i]);
 		if (ret < 0)
 			goto retry;
@@ -289,7 +288,6 @@ int mcos_rmm_prefetch_async(int gid, struct fetch_info *fi_array, int num_page)
 void init_mcos(void)
 {
 	remote_fetch = mcos_rmm_read_sync;
-	//remote_evict = mcos_rmm_write_sync;
 	remote_evict = mcos_rmm_evict;
 	remote_alloc = mcos_rmm_alloc;
 	remote_free = mcos_rmm_free;

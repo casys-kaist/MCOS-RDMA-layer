@@ -243,10 +243,8 @@ struct rdma_handle {
 
 	/* point to dma_buffer */
 	void *rpc_buffer;
-	void *sink_buffer;
 	void *evict_buffer;
 
-	dma_addr_t recv_buffer_dma_addr;
 	dma_addr_t dma_addr;
 
 	/* point to dma_buffer */
@@ -258,7 +256,6 @@ struct rdma_handle {
 	struct rdma_work *rdma_work_pool;
 	spinlock_t rdma_work_head_lock;
 
-	size_t recv_buffer_size;
 	size_t rpc_buffer_size;
 
 	/* remote */
