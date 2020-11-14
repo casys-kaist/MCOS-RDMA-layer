@@ -39,35 +39,6 @@ bool writeback_dirty_log = false;
 int writeback_dirty_list_size = 0;
 LIST_HEAD(writeback_dirty_list);
 
-#define TABLE_SIZE 262144 * 2
-DEFINE_SPINLOCK(on_evicting_lock);
-bool on_evicting[TABLE_SIZE];
-
-static inline void set_evicting(u64 addr)
-{
-	if (addr / PAGE_SIZE >= TABLE_SIZE)
-		return;
-	spin_lock(&on_evicting_lock);
-	on_evicting[addr/PAGE_SIZE] = true;
-	spin_unlock(&on_evicting_lock);
-}
-
-void unset_evicting(u64 addr)
-{
-	if (addr / PAGE_SIZE >= TABLE_SIZE)
-		return;
-	spin_lock(&on_evicting_lock);
-	on_evicting[addr/PAGE_SIZE] = false;
-	spin_unlock(&on_evicting_lock);
-}
-
-static inline bool check_evicting(u64 addr)
-{
-	if (addr / PAGE_SIZE >= TABLE_SIZE)
-		return false;
-	return on_evicting[addr/PAGE_SIZE];
-}
-
 static inline void block_rpc(void)
 {
 	rpc_blocked = true;
@@ -821,8 +792,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	rh = rdma_handles[index];
 	evict_buffer = ring_buffer_get_mapped(rh->rb, buffer_size , &evict_dma_addr);
 	if (!evict_buffer) {
-		//printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
-		//printk(KERN_ALERT "buffer overun in %s\n", __func__);
+		printk(KERN_ALERT PFX "buffer overun in %s\n", __func__);
 		return -ENOMEM;
 	}
 	offset = evict_buffer - (uint8_t *) rh->evict_buffer;
@@ -830,8 +800,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 
 	rw = __get_rdma_work_nonsleep(rh, evict_dma_addr, payload_size, remote_evict_dma_addr, rh->rpc_rkey);
 	if (!rw) {
-		//printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
-		printk(KERN_ALERT "work pool overun in %s\n", __func__);
+		printk(KERN_ALERT PFX "work pool overun in %s\n", __func__);
 		ret = -ENOMEM;
 		goto put;
 	}
@@ -868,8 +837,7 @@ int rmm_evict(int nid, struct list_head *evict_list, int num_page)
 	ret = ib_post_send(rh->qp, &rw->wr.wr, &bad_wr);
 	__put_rdma_work_nonsleep(rh, rw);
 	if (ret || bad_wr) {
-		//printk(KERN_ALERT PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
-		printk(KERN_ALERT "Cannot post send wr, %d %p\n", ret, bad_wr);
+		printk(KERN_ALERT PFX "Cannot post send wr, %d %p\n", ret, bad_wr);
 		if (bad_wr)
 			ret = -EINVAL;
 		goto put;
@@ -1494,7 +1462,6 @@ static int rpc_handle_evict_mem(struct rdma_handle *rh,  uint32_t offset)
 
 	infos = get_node_infos(MEM_GID, BACKUP_ASYNC);
 	for (i = 0; i < infos->size; i++) {
-		wait_for_replication = false;
 		atomic_inc(&req_cnt);
 		DEBUG_LOG(PFX "replicate to backup server ASYNC\n");
 		rmm_evict_forward(infos->nids[i], rh->evict_buffer + offset, 
@@ -1566,7 +1533,6 @@ static int rpc_handle_synchronize_mem(struct rdma_handle *rh, uint32_t offset)
                 cpu_relax();
 
         // initialize
-        //req_cnt = 0;
 	atomic_set(&req_cnt, 0);
         ack_cnt = 0;
 
@@ -1762,7 +1728,6 @@ static int rpc_handle_writeback_dirty_mem(struct rdma_handle *rh, uint32_t offse
 		}
 
 		list_cut_position(&addr_list, &writeback_dirty_list, &ei->next); 
-		//rmm_evict(dest_nid, &addr_list, size);
 		req_cnt++;
 		rmm_evict_async(dest_nid, &addr_list, size, &ack_cnt);
 
