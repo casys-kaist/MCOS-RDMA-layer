@@ -97,15 +97,6 @@ static struct rdma_work *__get_rdma_work_nonsleep(struct rdma_handle *rh,
 	return rw;
 }
 
-static void __put_rdma_work_nonsleep(struct rdma_handle *rh, struct rdma_work *rw)
-{
-	spin_lock(&rh->rdma_work_head_lock);
-	rw->next = rh->rdma_work_head;
-	rh->rdma_work_head = rw;
-	spin_unlock(&rh->rdma_work_head_lock);
-}
-
-
 int rmm_read(int nid, void *l_vaddr, void * r_vaddr, unsigned int order, 
 		unsigned long *rpage_flags)
 {
@@ -202,8 +193,6 @@ out_unmap_dma:
 	return ret;
 }
 
-
->>>>>>> b4013bcc8d65db06b3adc4a4c366504397b75bff
 int rmm_alloc(int nid, u64 vaddr)
 {
 	int offset, ret = 0;
