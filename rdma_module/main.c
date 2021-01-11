@@ -10,6 +10,7 @@
 #include <linux/kernel.h>
 #include <linux/sched_clock.h>
 #include <linux/jiffies.h>
+#include <linux/tribuos.h>
 
 #include <rdma/rdma_cm.h>
 #include <rdma/ib_verbs.h>
@@ -670,7 +671,7 @@ static struct ib_mr *rmm_reg_mr(struct rdma_handle *rh, dma_addr_t dma_addr, uns
 
 	step = "alloc mr";
 	DEBUG_LOG(PFX "%s,nr_entries %d\n", step, nr_entries);
-	mr = ib_alloc_mr(rdma_pd, IB_MR_TYPE_MEM_REG, nr_entries);
+	mr = ib_alloc_mr_user(rdma_pd, IB_MR_TYPE_MEM_REG, nr_entries, NULL);
 	if (IS_ERR(mr)) {
 		ret = PTR_ERR(mr);
 		goto out_free;
@@ -705,7 +706,7 @@ static struct ib_mr *rmm_reg_mr(struct rdma_handle *rh, dma_addr_t dma_addr, uns
 	return mr;
 
 out_dereg:
-	ib_dereg_mr(mr);
+	ib_dereg_mr_user(mr, NULL);
 out_free:
 	return NULL;
 
@@ -720,6 +721,11 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	char *step = NULL;
 	int rh_id = 0;
 	resource_size_t paddr;
+	phys_addr_t dma_buffer_base;
+	phys_addr_t rm_paddr_base;
+
+	rm_paddr_base = get_pmem_paddr_base();
+	dma_buffer_base = rm_paddr_base + RM_PADDR_SIZE;
 
 	step = "alloc dma buffer";
 	rh_id = nid_to_rh(rh->nid);
@@ -727,7 +733,7 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 		rh_id++;
 	DEBUG_LOG(PFX "%s with rh id: %d\n", step, rh_id);
 	if (!rh->dma_buffer) {
-		paddr = (resource_size_t) (((uint8_t *) DMA_BUFFER_START) + (rh_id * buffer_size));
+		paddr = (resource_size_t) (((uint8_t *) dma_buffer_base) + (rh_id * buffer_size));
 
 		if (!(rh->dma_buffer = memremap(paddr, buffer_size, MEMREMAP_WB))) {
 			printk(KERN_ERR PFX "memremap error in %s\n", __func__);
@@ -752,11 +758,11 @@ static  int __setup_dma_buffer(struct rdma_handle *rh)
 	rh->evict_buffer = rh->dma_buffer;
 	rh->evict_dma_addr = rh->dma_addr;
 
-	rh->rb = ring_buffer_create(rh->rpc_buffer, rh->rpc_dma_addr, DMA_BUFFER_SIZE,"dma buffer"); 
+	rh->rb = ring_buffer_create(rh->rpc_buffer, rh->rpc_dma_addr, DMA_BUFFER_SIZE,"dma buffer");
 
 	return 0;
 out_dereg:
-	ib_dereg_mr(rh->mr);
+	ib_dereg_mr_user(rh->mr, NULL);
 
 	printk(KERN_ERR PFX "fail at %s\n", step);
 	return ret;
@@ -1210,6 +1216,7 @@ static int __accept_client(struct rdma_handle *rh)
 	struct rdma_conn_param conn_param = {0};
 	char *step = NULL;
 	int ret;
+	phys_addr_t rm_paddr_base = RM_PADDR_START;
 
 	ret = wait_for_completion_interruptible(&rh->cm_done);
 	if (rh->state != RDMA_ROUTE_RESOLVED) return -EINVAL;
@@ -1259,19 +1266,27 @@ static int __accept_client(struct rdma_handle *rh)
 	ret = __setup_dma_buffer(rh);
 	if (ret) goto out_err;
 
-	rh->mem_mr = rmm_reg_mr(rh, RM_PADDR_START, PADDR_SIZE);
+	rm_paddr_base = get_pmem_paddr_base();
+	pr_alert("[%s] rm_paddr_base: %llu", __func__, rm_paddr_base);
+	if (!rm_paddr_base) {
+		step = "get_pmem_paddr_base";
+		ret = -1;
+		goto out_err;
+	}
+
+	rh->mem_mr = rmm_reg_mr(rh, rm_paddr_base, PADDR_SIZE);
 	ret = wait_for_completion_interruptible(&rh->init_done);
 	if (ret)  {
 		goto out_err;
 	}
-	rh->mem_dma_addr = RM_PADDR_START;
+	rh->mem_dma_addr = rm_paddr_base;
 
 	step = "post send";
 	DEBUG_LOG(PFX "%s\n", step);
 	ret = __send_dma_addr(rh, rh->rpc_dma_addr, DMA_BUFFER_SIZE, rh->mr->rkey);
 	if (ret)  goto out_err;
 
-	ret = __send_dma_addr(rh, RM_PADDR_START, PADDR_SIZE, rh->mem_mr->rkey);
+	ret = __send_dma_addr(rh, rm_paddr_base, PADDR_SIZE, rh->mem_mr->rkey);
 	if (ret)  goto out_err;
 
 	wait_for_completion_interruptible(&rh->init_done);
@@ -1454,7 +1469,7 @@ void clean_rdma_handle(struct rdma_handle *rh)
 		rh->cm_id = NULL;
 	}
 	if (rh->mr && !IS_ERR(rh->mr)) {
-		ib_dereg_mr(rh->mr);
+		ib_dereg_mr_user(rh->mr, NULL);
 		rh->mr = NULL;
 	}
 }
@@ -1712,9 +1727,9 @@ int __init init_rmm_rdma(void)
 	/* allocate memory for cpu servers */
 	for (i = 0; i < MAX_NUM_NODES; i++)
 		vaddr_start_arr[i] = rm_machine_init();
-	
-	/* basic memory initialization */	
-	basic_memory_init(my_nid);
+
+	/* basic memory initialization */
+	/* basic_memory_init(my_nid); */
 #endif /*end for CONFIG_RM */
 
 	rmm_proc = proc_create("rmm", 0666, NULL, &rmm_ops);
